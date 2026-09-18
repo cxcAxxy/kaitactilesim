@@ -1,0 +1,981 @@
+<mujoco model="kaihand_install_ram">
+  <include file="../../shared/mjcf/robot.xml" />
+  <!-- DDR4-sized primitive benchmark. Shared robot, camera and tactile calibration are included unchanged. Socket local X is long axis, Y is thickness, insertion is -Z. -->
+  <option impratio="5">
+    <flag multiccd="disable" />
+  </option>
+  <!-- Task-local effective fingertip patches resist rolling and spinning.
+       Shared pad geometry stays unchanged. The slot keeps condim=3 so its
+       axial load is ordinary sliding friction, not rolling resistance.
+       Firmer patch impedance and friction damping reduce soft-contact creep
+       during fixed-wrist insertion; coefficients and shared pads are unchanged. -->
+  <contact>
+    <pair name="thumb_ram_pcb_upper_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_pcb_upper"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_pcb_lower_left_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_pcb_lower_left"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_pcb_lower_right_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_pcb_lower_right"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_front_0_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_front_0"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_front_1_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_front_1"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_front_2_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_front_2"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_front_3_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_front_3"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_front_4_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_front_4"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_front_5_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_front_5"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_front_6_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_front_6"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_front_7_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_front_7"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_back_0_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_back_0"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_back_1_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_back_1"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_back_2_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_back_2"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_back_3_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_back_3"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_back_4_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_back_4"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_back_5_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_back_5"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_back_6_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_back_6"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="thumb_ram_chip_back_7_patch" geom1="hand_r_thumb_link6_tactile_pad_col" geom2="ram_chip_back_7"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_pcb_upper_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_pcb_upper"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_pcb_lower_left_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_pcb_lower_left"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_pcb_lower_right_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_pcb_lower_right"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_front_0_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_front_0"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_front_1_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_front_1"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_front_2_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_front_2"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_front_3_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_front_3"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_front_4_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_front_4"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_front_5_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_front_5"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_front_6_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_front_6"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_front_7_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_front_7"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_back_0_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_back_0"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_back_1_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_back_1"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_back_2_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_back_2"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_back_3_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_back_3"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_back_4_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_back_4"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_back_5_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_back_5"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_back_6_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_back_6"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+    <pair name="index_ram_chip_back_7_patch" geom1="hand_r_index_link4_tactile_pad_col" geom2="ram_chip_back_7"
+          condim="6" friction="1.1 1.1 0.005 0.004 0.004" solref="0.012 1"
+          solimp="0.99 0.999 0.00055" solreffriction="0.004 1" margin="0.00001" />
+  </contact>
+  <default>
+    <default class="ram_collision">
+      <geom type="box" contype="15363" conaffinity="15363" group="0" condim="4" friction="0.6 0.003 0.0001" margin="0.00001" solref="0.004 1" solimp="0.95 0.99 0.0001" mass="0" />
+    </default>
+    <default class="ram_visual">
+      <geom type="box" contype="0" conaffinity="0" group="1" mass="0" />
+    </default>
+  </default>
+  <asset>
+    <material name="ram_pcb" rgba="0.045 0.32 0.15 1" specular="0.3" shininess="0.3" />
+    <material name="ram_chip" rgba="0.065 0.072 0.078 1" specular="0.3" shininess="0.3" />
+    <material name="ram_socket" rgba="0.105 0.115 0.13 1" specular="0.3" shininess="0.3" />
+    <material name="ram_latch" rgba="0.83 0.81 0.70 1" specular="0.3" shininess="0.3" />
+    <material name="ram_gold" rgba="0.83 0.64 0.24 1" specular="0.3" shininess="0.3" />
+    <material name="ram_silver" rgba="0.60 0.64 0.67 1" specular="0.3" shininess="0.3" />
+    <material name="ram_trace" rgba="0.09 0.42 0.21 1" specular="0.3" shininess="0.3" />
+    <material name="ram_label" rgba="0.86 0.89 0.83 1" specular="0.3" shininess="0.3" />
+    <material name="ram_stand" rgba="0.25 0.31 0.34 1" specular="0.3" shininess="0.3" />
+  </asset>
+  <worldbody>
+    <camera name="ram_closeup" pos="0.64 -0.48 0.93" xyaxes="0.874157276 0.485642931 -0 -0.263959766 0.475127579 0.839392057" fovy="43" />
+    <body name="ram_motherboard" pos=".50 -.15 .686">
+      <geom name="ram_motherboard_pcb" class="ram_collision" pos="0 0 0" size="0.1 0.07 0.0008" material="ram_pcb" />
+      <geom name="ram_motherboard_standoff_0" class="ram_collision" pos="-0.091 -0.061 -0.003" size="0.003 0.0022" material="ram_silver" type="cylinder" />
+      <geom name="ram_motherboard_standoff_1" class="ram_collision" pos="0.091 -0.061 -0.003" size="0.003 0.0022" material="ram_silver" type="cylinder" />
+      <geom name="ram_motherboard_standoff_2" class="ram_collision" pos="-0.091 0.061 -0.003" size="0.003 0.0022" material="ram_silver" type="cylinder" />
+      <geom name="ram_motherboard_standoff_3" class="ram_collision" pos="0.091 0.061 -0.003" size="0.003 0.0022" material="ram_silver" type="cylinder" />
+      <geom name="ram_cpu_package" class="ram_collision" pos="0.002 0.044 0.002" size="0.018 0.016 0.0012" material="ram_socket" />
+      <geom name="ram_cpu_lid_visual" class="ram_visual" pos="0.002 0.044 0.0033" size="0.014 0.012 0.0001" material="ram_silver" />
+      <geom name="ram_motherboard_capacitor_0" class="ram_collision" pos="-0.071 0.042 0.005" size="0.003 0.0042" material="ram_silver" type="cylinder" />
+      <geom name="ram_motherboard_capacitor_1" class="ram_collision" pos="-0.06 0.042 0.005" size="0.003 0.0042" material="ram_silver" type="cylinder" />
+      <geom name="ram_motherboard_capacitor_2" class="ram_collision" pos="-0.049 0.042 0.005" size="0.003 0.0042" material="ram_silver" type="cylinder" />
+      <geom name="ram_motherboard_capacitor_3" class="ram_collision" pos="0.049 0.042 0.005" size="0.003 0.0042" material="ram_silver" type="cylinder" />
+      <geom name="ram_motherboard_capacitor_4" class="ram_collision" pos="0.06 0.042 0.005" size="0.003 0.0042" material="ram_silver" type="cylinder" />
+      <geom name="ram_motherboard_capacitor_5" class="ram_collision" pos="0.071 0.042 0.005" size="0.003 0.0042" material="ram_silver" type="cylinder" />
+      <geom name="ram_board_trace_0_visual" class="ram_visual" pos="-0.07 0.023 0.00082" size="0.00022 0.015 2e-05" material="ram_trace" />
+      <geom name="ram_board_trace_1_visual" class="ram_visual" pos="-0.058 0.023 0.00082" size="0.00022 0.015 2e-05" material="ram_trace" />
+      <geom name="ram_board_trace_2_visual" class="ram_visual" pos="-0.046 0.023 0.00082" size="0.00022 0.015 2e-05" material="ram_trace" />
+      <geom name="ram_board_trace_3_visual" class="ram_visual" pos="-0.034 0.023 0.00082" size="0.00022 0.015 2e-05" material="ram_trace" />
+      <geom name="ram_board_trace_4_visual" class="ram_visual" pos="-0.022 0.023 0.00082" size="0.00022 0.015 2e-05" material="ram_trace" />
+      <geom name="ram_board_trace_5_visual" class="ram_visual" pos="-0.01 0.023 0.00082" size="0.00022 0.015 2e-05" material="ram_trace" />
+      <geom name="ram_board_trace_6_visual" class="ram_visual" pos="0.002 0.023 0.00082" size="0.00022 0.015 2e-05" material="ram_trace" />
+      <geom name="ram_board_trace_7_visual" class="ram_visual" pos="0.014 0.023 0.00082" size="0.00022 0.015 2e-05" material="ram_trace" />
+      <geom name="ram_board_trace_8_visual" class="ram_visual" pos="0.026 0.023 0.00082" size="0.00022 0.015 2e-05" material="ram_trace" />
+      <geom name="ram_board_trace_9_visual" class="ram_visual" pos="0.038 0.023 0.00082" size="0.00022 0.015 2e-05" material="ram_trace" />
+      <geom name="ram_board_trace_10_visual" class="ram_visual" pos="0.05 0.023 0.00082" size="0.00022 0.015 2e-05" material="ram_trace" />
+      <geom name="ram_board_trace_11_visual" class="ram_visual" pos="0.062 0.023 0.00082" size="0.00022 0.015 2e-05" material="ram_trace" />
+    </body>
+    <body name="ram_socket" pos=".50 -.15 .704">
+      <site name="ram_socket_mouth" pos="0 0 0" size=".001" rgba=".15 .9 .35 .8" group="3" />
+      <geom name="ram_socket_base" class="ram_collision" pos="0 0 -0.012" size="0.074 0.0045 0.0048" material="ram_socket" />
+      <geom name="ram_socket_wall_front" class="ram_collision" pos="0 -0.00275 -.003" size=".067675 .00175 .003" material="ram_socket" />
+      <geom name="ram_socket_wall_back" class="ram_collision" pos="0 0.00275 -.003" size=".067675 .00175 .003" material="ram_socket" />
+      <geom name="ram_socket_end_left" class="ram_collision" pos="-0.068675 0 -0.003" size="0.0017 0.0045 0.003" material="ram_socket" />
+      <geom name="ram_socket_end_right" class="ram_collision" pos="0.068675 0 -0.003" size="0.0017 0.0045 0.003" material="ram_socket" />
+      <geom name="ram_socket_backstop" class="ram_collision" pos="0 0 -0.0065" size="0.066975 .001 0.0005" material="ram_socket" priority="1" condim="3" solref="0.012 1" friction="0.15 0.00005 0.00001" />
+      <geom name="ram_socket_key" class="ram_collision" pos="0.005575 0 -0.00425" size="0.0005 .001 0.00175" material="ram_latch" />
+      <!-- Reduced passive contact banks: each yields laterally by about .3 mm
+           against the 1.4 mm PCB. Native Coulomb friction opposes insertion;
+           no object wrench or depth-dependent force signal is synthesized.
+           The 5 g effective bank mass resolves 3000 N/m compliance at 500 Hz. -->
+      <body name="ram_socket_spring_front" pos="0 -0.001 -0.0032">
+        <joint name="ram_socket_spring_front_slide" type="slide" axis="0 -1 0"
+               limited="true" range="0 0.0015" stiffness="3000" springref="0"
+               damping="5" armature="0" />
+        <inertial pos="0 0 0" mass="0.005" diaginertia="1e-8 1e-8 1e-8" />
+        <geom name="ram_socket_spring_front_left" class="ram_collision" type="ellipsoid"
+              pos="-0.04 0 0" size="0.012 0.0006 0.0015" contype="32768" conaffinity="0"
+              priority="2" condim="3" friction="0.35 0.00005 0.00001"
+              solref="0.004 1" solimp="0.98 0.99 0.0001" material="ram_gold" />
+        <geom name="ram_socket_spring_front_right" class="ram_collision" type="ellipsoid"
+              pos="0.04 0 0" size="0.012 0.0006 0.0015" contype="32768" conaffinity="0"
+              priority="2" condim="3" friction="0.35 0.00005 0.00001"
+              solref="0.004 1" solimp="0.98 0.99 0.0001" material="ram_gold" />
+      </body>
+      <body name="ram_socket_spring_back" pos="0 0.001 -0.0032">
+        <joint name="ram_socket_spring_back_slide" type="slide" axis="0 1 0"
+               limited="true" range="0 0.0015" stiffness="3000" springref="0"
+               damping="5" armature="0" />
+        <inertial pos="0 0 0" mass="0.005" diaginertia="1e-8 1e-8 1e-8" />
+        <geom name="ram_socket_spring_back_left" class="ram_collision" type="ellipsoid"
+              pos="-0.04 0 0" size="0.012 0.0006 0.0015" contype="32768" conaffinity="0"
+              priority="2" condim="3" friction="0.35 0.00005 0.00001"
+              solref="0.004 1" solimp="0.98 0.99 0.0001" material="ram_gold" />
+        <geom name="ram_socket_spring_back_right" class="ram_collision" type="ellipsoid"
+              pos="0.04 0 0" size="0.012 0.0006 0.0015" contype="32768" conaffinity="0"
+              priority="2" condim="3" friction="0.35 0.00005 0.00001"
+              solref="0.004 1" solimp="0.98 0.99 0.0001" material="ram_gold" />
+      </body>
+      <geom name="ram_latch_left_pivot" class="ram_collision" pos="-0.073 0 -0.004" size="0.003 0.0048 0.004" material="ram_latch" />
+      <geom name="ram_latch_left_arm" class="ram_collision" pos="-0.0755 0 0.0005" size="0.0025 0.0048 0.0065" material="ram_latch" euler="0 -0.45 0" />
+      <geom name="ram_latch_left_tab" class="ram_collision" pos="-0.078 0 0.006" size="0.004 0.006 0.002" material="ram_latch" />
+      <geom name="ram_latch_right_pivot" class="ram_collision" pos="0.073 0 -0.004" size="0.003 0.0048 0.004" material="ram_latch" />
+      <geom name="ram_latch_right_arm" class="ram_collision" pos="0.0755 0 0.0005" size="0.0025 0.0048 0.0065" material="ram_latch" euler="0 0.45 0" />
+      <geom name="ram_latch_right_tab" class="ram_collision" pos="0.078 0 0.006" size="0.004 0.006 0.002" material="ram_latch" />
+      <geom name="ram_socket_contact_front_000_visual" class="ram_visual" pos="-0.0629 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_001_visual" class="ram_visual" pos="-0.06205 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_002_visual" class="ram_visual" pos="-0.0612 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_003_visual" class="ram_visual" pos="-0.06035 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_004_visual" class="ram_visual" pos="-0.0595 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_005_visual" class="ram_visual" pos="-0.05865 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_006_visual" class="ram_visual" pos="-0.0578 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_007_visual" class="ram_visual" pos="-0.05695 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_008_visual" class="ram_visual" pos="-0.0561 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_009_visual" class="ram_visual" pos="-0.05525 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_010_visual" class="ram_visual" pos="-0.0544 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_011_visual" class="ram_visual" pos="-0.05355 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_012_visual" class="ram_visual" pos="-0.0527 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_013_visual" class="ram_visual" pos="-0.05185 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_014_visual" class="ram_visual" pos="-0.051 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_015_visual" class="ram_visual" pos="-0.05015 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_016_visual" class="ram_visual" pos="-0.0493 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_017_visual" class="ram_visual" pos="-0.04845 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_018_visual" class="ram_visual" pos="-0.0476 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_019_visual" class="ram_visual" pos="-0.04675 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_020_visual" class="ram_visual" pos="-0.0459 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_021_visual" class="ram_visual" pos="-0.04505 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_022_visual" class="ram_visual" pos="-0.0442 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_023_visual" class="ram_visual" pos="-0.04335 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_024_visual" class="ram_visual" pos="-0.0425 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_025_visual" class="ram_visual" pos="-0.04165 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_026_visual" class="ram_visual" pos="-0.0408 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_027_visual" class="ram_visual" pos="-0.03995 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_028_visual" class="ram_visual" pos="-0.0391 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_029_visual" class="ram_visual" pos="-0.03825 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_030_visual" class="ram_visual" pos="-0.0374 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_031_visual" class="ram_visual" pos="-0.03655 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_032_visual" class="ram_visual" pos="-0.0357 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_033_visual" class="ram_visual" pos="-0.03485 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_034_visual" class="ram_visual" pos="-0.034 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_035_visual" class="ram_visual" pos="-0.03315 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_036_visual" class="ram_visual" pos="-0.0323 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_037_visual" class="ram_visual" pos="-0.03145 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_038_visual" class="ram_visual" pos="-0.0306 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_039_visual" class="ram_visual" pos="-0.02975 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_040_visual" class="ram_visual" pos="-0.0289 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_041_visual" class="ram_visual" pos="-0.02805 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_042_visual" class="ram_visual" pos="-0.0272 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_043_visual" class="ram_visual" pos="-0.02635 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_044_visual" class="ram_visual" pos="-0.0255 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_045_visual" class="ram_visual" pos="-0.02465 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_046_visual" class="ram_visual" pos="-0.0238 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_047_visual" class="ram_visual" pos="-0.02295 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_048_visual" class="ram_visual" pos="-0.0221 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_049_visual" class="ram_visual" pos="-0.02125 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_050_visual" class="ram_visual" pos="-0.0204 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_051_visual" class="ram_visual" pos="-0.01955 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_052_visual" class="ram_visual" pos="-0.0187 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_053_visual" class="ram_visual" pos="-0.01785 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_054_visual" class="ram_visual" pos="-0.017 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_055_visual" class="ram_visual" pos="-0.01615 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_056_visual" class="ram_visual" pos="-0.0153 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_057_visual" class="ram_visual" pos="-0.01445 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_058_visual" class="ram_visual" pos="-0.0136 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_059_visual" class="ram_visual" pos="-0.01275 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_060_visual" class="ram_visual" pos="-0.0119 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_061_visual" class="ram_visual" pos="-0.01105 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_062_visual" class="ram_visual" pos="-0.0102 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_063_visual" class="ram_visual" pos="-0.00935 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_064_visual" class="ram_visual" pos="-0.0085 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_065_visual" class="ram_visual" pos="-0.00765 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_066_visual" class="ram_visual" pos="-0.0068 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_067_visual" class="ram_visual" pos="-0.00595 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_068_visual" class="ram_visual" pos="-0.0051 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_069_visual" class="ram_visual" pos="-0.00425 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_070_visual" class="ram_visual" pos="-0.0034 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_071_visual" class="ram_visual" pos="-0.00255 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_072_visual" class="ram_visual" pos="-0.0017 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_073_visual" class="ram_visual" pos="-0.00085 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_074_visual" class="ram_visual" pos="0 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_075_visual" class="ram_visual" pos="0.00085 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_076_visual" class="ram_visual" pos="0.0017 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_077_visual" class="ram_visual" pos="0.00255 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_078_visual" class="ram_visual" pos="0.0034 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_079_visual" class="ram_visual" pos="0.00425 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_080_visual" class="ram_visual" pos="0.0069 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_081_visual" class="ram_visual" pos="0.00775 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_082_visual" class="ram_visual" pos="0.0086 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_083_visual" class="ram_visual" pos="0.00945 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_084_visual" class="ram_visual" pos="0.0103 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_085_visual" class="ram_visual" pos="0.01115 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_086_visual" class="ram_visual" pos="0.012 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_087_visual" class="ram_visual" pos="0.01285 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_088_visual" class="ram_visual" pos="0.0137 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_089_visual" class="ram_visual" pos="0.01455 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_090_visual" class="ram_visual" pos="0.0154 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_091_visual" class="ram_visual" pos="0.01625 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_092_visual" class="ram_visual" pos="0.0171 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_093_visual" class="ram_visual" pos="0.01795 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_094_visual" class="ram_visual" pos="0.0188 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_095_visual" class="ram_visual" pos="0.01965 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_096_visual" class="ram_visual" pos="0.0205 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_097_visual" class="ram_visual" pos="0.02135 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_098_visual" class="ram_visual" pos="0.0222 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_099_visual" class="ram_visual" pos="0.02305 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_100_visual" class="ram_visual" pos="0.0239 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_101_visual" class="ram_visual" pos="0.02475 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_102_visual" class="ram_visual" pos="0.0256 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_103_visual" class="ram_visual" pos="0.02645 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_104_visual" class="ram_visual" pos="0.0273 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_105_visual" class="ram_visual" pos="0.02815 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_106_visual" class="ram_visual" pos="0.029 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_107_visual" class="ram_visual" pos="0.02985 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_108_visual" class="ram_visual" pos="0.0307 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_109_visual" class="ram_visual" pos="0.03155 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_110_visual" class="ram_visual" pos="0.0324 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_111_visual" class="ram_visual" pos="0.03325 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_112_visual" class="ram_visual" pos="0.0341 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_113_visual" class="ram_visual" pos="0.03495 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_114_visual" class="ram_visual" pos="0.0358 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_115_visual" class="ram_visual" pos="0.03665 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_116_visual" class="ram_visual" pos="0.0375 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_117_visual" class="ram_visual" pos="0.03835 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_118_visual" class="ram_visual" pos="0.0392 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_119_visual" class="ram_visual" pos="0.04005 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_120_visual" class="ram_visual" pos="0.0409 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_121_visual" class="ram_visual" pos="0.04175 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_122_visual" class="ram_visual" pos="0.0426 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_123_visual" class="ram_visual" pos="0.04345 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_124_visual" class="ram_visual" pos="0.0443 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_125_visual" class="ram_visual" pos="0.04515 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_126_visual" class="ram_visual" pos="0.046 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_127_visual" class="ram_visual" pos="0.04685 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_128_visual" class="ram_visual" pos="0.0477 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_129_visual" class="ram_visual" pos="0.04855 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_130_visual" class="ram_visual" pos="0.0494 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_131_visual" class="ram_visual" pos="0.05025 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_132_visual" class="ram_visual" pos="0.0511 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_133_visual" class="ram_visual" pos="0.05195 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_134_visual" class="ram_visual" pos="0.0528 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_135_visual" class="ram_visual" pos="0.05365 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_136_visual" class="ram_visual" pos="0.0545 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_137_visual" class="ram_visual" pos="0.05535 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_138_visual" class="ram_visual" pos="0.0562 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_139_visual" class="ram_visual" pos="0.05705 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_140_visual" class="ram_visual" pos="0.0579 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_141_visual" class="ram_visual" pos="0.05875 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_142_visual" class="ram_visual" pos="0.0596 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_front_143_visual" class="ram_visual" pos="0.06045 -0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_000_visual" class="ram_visual" pos="-0.0629 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_001_visual" class="ram_visual" pos="-0.06205 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_002_visual" class="ram_visual" pos="-0.0612 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_003_visual" class="ram_visual" pos="-0.06035 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_004_visual" class="ram_visual" pos="-0.0595 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_005_visual" class="ram_visual" pos="-0.05865 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_006_visual" class="ram_visual" pos="-0.0578 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_007_visual" class="ram_visual" pos="-0.05695 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_008_visual" class="ram_visual" pos="-0.0561 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_009_visual" class="ram_visual" pos="-0.05525 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_010_visual" class="ram_visual" pos="-0.0544 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_011_visual" class="ram_visual" pos="-0.05355 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_012_visual" class="ram_visual" pos="-0.0527 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_013_visual" class="ram_visual" pos="-0.05185 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_014_visual" class="ram_visual" pos="-0.051 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_015_visual" class="ram_visual" pos="-0.05015 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_016_visual" class="ram_visual" pos="-0.0493 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_017_visual" class="ram_visual" pos="-0.04845 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_018_visual" class="ram_visual" pos="-0.0476 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_019_visual" class="ram_visual" pos="-0.04675 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_020_visual" class="ram_visual" pos="-0.0459 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_021_visual" class="ram_visual" pos="-0.04505 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_022_visual" class="ram_visual" pos="-0.0442 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_023_visual" class="ram_visual" pos="-0.04335 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_024_visual" class="ram_visual" pos="-0.0425 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_025_visual" class="ram_visual" pos="-0.04165 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_026_visual" class="ram_visual" pos="-0.0408 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_027_visual" class="ram_visual" pos="-0.03995 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_028_visual" class="ram_visual" pos="-0.0391 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_029_visual" class="ram_visual" pos="-0.03825 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_030_visual" class="ram_visual" pos="-0.0374 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_031_visual" class="ram_visual" pos="-0.03655 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_032_visual" class="ram_visual" pos="-0.0357 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_033_visual" class="ram_visual" pos="-0.03485 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_034_visual" class="ram_visual" pos="-0.034 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_035_visual" class="ram_visual" pos="-0.03315 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_036_visual" class="ram_visual" pos="-0.0323 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_037_visual" class="ram_visual" pos="-0.03145 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_038_visual" class="ram_visual" pos="-0.0306 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_039_visual" class="ram_visual" pos="-0.02975 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_040_visual" class="ram_visual" pos="-0.0289 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_041_visual" class="ram_visual" pos="-0.02805 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_042_visual" class="ram_visual" pos="-0.0272 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_043_visual" class="ram_visual" pos="-0.02635 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_044_visual" class="ram_visual" pos="-0.0255 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_045_visual" class="ram_visual" pos="-0.02465 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_046_visual" class="ram_visual" pos="-0.0238 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_047_visual" class="ram_visual" pos="-0.02295 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_048_visual" class="ram_visual" pos="-0.0221 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_049_visual" class="ram_visual" pos="-0.02125 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_050_visual" class="ram_visual" pos="-0.0204 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_051_visual" class="ram_visual" pos="-0.01955 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_052_visual" class="ram_visual" pos="-0.0187 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_053_visual" class="ram_visual" pos="-0.01785 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_054_visual" class="ram_visual" pos="-0.017 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_055_visual" class="ram_visual" pos="-0.01615 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_056_visual" class="ram_visual" pos="-0.0153 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_057_visual" class="ram_visual" pos="-0.01445 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_058_visual" class="ram_visual" pos="-0.0136 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_059_visual" class="ram_visual" pos="-0.01275 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_060_visual" class="ram_visual" pos="-0.0119 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_061_visual" class="ram_visual" pos="-0.01105 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_062_visual" class="ram_visual" pos="-0.0102 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_063_visual" class="ram_visual" pos="-0.00935 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_064_visual" class="ram_visual" pos="-0.0085 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_065_visual" class="ram_visual" pos="-0.00765 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_066_visual" class="ram_visual" pos="-0.0068 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_067_visual" class="ram_visual" pos="-0.00595 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_068_visual" class="ram_visual" pos="-0.0051 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_069_visual" class="ram_visual" pos="-0.00425 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_070_visual" class="ram_visual" pos="-0.0034 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_071_visual" class="ram_visual" pos="-0.00255 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_072_visual" class="ram_visual" pos="-0.0017 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_073_visual" class="ram_visual" pos="-0.00085 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_074_visual" class="ram_visual" pos="0 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_075_visual" class="ram_visual" pos="0.00085 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_076_visual" class="ram_visual" pos="0.0017 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_077_visual" class="ram_visual" pos="0.00255 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_078_visual" class="ram_visual" pos="0.0034 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_079_visual" class="ram_visual" pos="0.00425 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_080_visual" class="ram_visual" pos="0.0069 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_081_visual" class="ram_visual" pos="0.00775 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_082_visual" class="ram_visual" pos="0.0086 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_083_visual" class="ram_visual" pos="0.00945 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_084_visual" class="ram_visual" pos="0.0103 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_085_visual" class="ram_visual" pos="0.01115 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_086_visual" class="ram_visual" pos="0.012 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_087_visual" class="ram_visual" pos="0.01285 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_088_visual" class="ram_visual" pos="0.0137 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_089_visual" class="ram_visual" pos="0.01455 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_090_visual" class="ram_visual" pos="0.0154 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_091_visual" class="ram_visual" pos="0.01625 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_092_visual" class="ram_visual" pos="0.0171 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_093_visual" class="ram_visual" pos="0.01795 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_094_visual" class="ram_visual" pos="0.0188 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_095_visual" class="ram_visual" pos="0.01965 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_096_visual" class="ram_visual" pos="0.0205 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_097_visual" class="ram_visual" pos="0.02135 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_098_visual" class="ram_visual" pos="0.0222 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_099_visual" class="ram_visual" pos="0.02305 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_100_visual" class="ram_visual" pos="0.0239 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_101_visual" class="ram_visual" pos="0.02475 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_102_visual" class="ram_visual" pos="0.0256 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_103_visual" class="ram_visual" pos="0.02645 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_104_visual" class="ram_visual" pos="0.0273 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_105_visual" class="ram_visual" pos="0.02815 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_106_visual" class="ram_visual" pos="0.029 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_107_visual" class="ram_visual" pos="0.02985 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_108_visual" class="ram_visual" pos="0.0307 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_109_visual" class="ram_visual" pos="0.03155 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_110_visual" class="ram_visual" pos="0.0324 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_111_visual" class="ram_visual" pos="0.03325 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_112_visual" class="ram_visual" pos="0.0341 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_113_visual" class="ram_visual" pos="0.03495 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_114_visual" class="ram_visual" pos="0.0358 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_115_visual" class="ram_visual" pos="0.03665 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_116_visual" class="ram_visual" pos="0.0375 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_117_visual" class="ram_visual" pos="0.03835 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_118_visual" class="ram_visual" pos="0.0392 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_119_visual" class="ram_visual" pos="0.04005 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_120_visual" class="ram_visual" pos="0.0409 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_121_visual" class="ram_visual" pos="0.04175 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_122_visual" class="ram_visual" pos="0.0426 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_123_visual" class="ram_visual" pos="0.04345 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_124_visual" class="ram_visual" pos="0.0443 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_125_visual" class="ram_visual" pos="0.04515 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_126_visual" class="ram_visual" pos="0.046 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_127_visual" class="ram_visual" pos="0.04685 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_128_visual" class="ram_visual" pos="0.0477 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_129_visual" class="ram_visual" pos="0.04855 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_130_visual" class="ram_visual" pos="0.0494 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_131_visual" class="ram_visual" pos="0.05025 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_132_visual" class="ram_visual" pos="0.0511 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_133_visual" class="ram_visual" pos="0.05195 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_134_visual" class="ram_visual" pos="0.0528 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_135_visual" class="ram_visual" pos="0.05365 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_136_visual" class="ram_visual" pos="0.0545 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_137_visual" class="ram_visual" pos="0.05535 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_138_visual" class="ram_visual" pos="0.0562 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_139_visual" class="ram_visual" pos="0.05705 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_140_visual" class="ram_visual" pos="0.0579 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_141_visual" class="ram_visual" pos="0.05875 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_142_visual" class="ram_visual" pos="0.0596 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+      <geom name="ram_socket_contact_back_143_visual" class="ram_visual" pos="0.06045 0.001011 -0.0027" size="0.0002 1.5e-05 0.0025" material="ram_gold" />
+    </body>
+    <body name="ram_presentation_stand" pos=".47 -.29 .680">
+      <geom name="ram_stand_base" class="ram_collision" pos="0 0 0.003" size="0.075 0.024 0.003" material="ram_stand" />
+      <geom name="ram_stand_left_post" class="ram_collision" pos="-0.054 0 0.033" size="0.005 0.009 0.027" material="ram_stand" />
+      <geom name="ram_stand_left_front" class="ram_collision" pos="-0.054 -0.004 0.0615" size="0.005 0.00305 0.0015" material="ram_stand" />
+      <geom name="ram_stand_left_back" class="ram_collision" pos="-0.054 0.004 0.0615" size="0.005 0.00305 0.0015" material="ram_stand" />
+      <geom name="ram_stand_right_post" class="ram_collision" pos="0.054 0 0.033" size="0.005 0.009 0.027" material="ram_stand" />
+      <geom name="ram_stand_right_front" class="ram_collision" pos="0.054 -0.004 0.0615" size="0.005 0.00305 0.0015" material="ram_stand" />
+      <geom name="ram_stand_right_back" class="ram_collision" pos="0.054 0.004 0.0615" size="0.005 0.00305 0.0015" material="ram_stand" />
+    </body>
+    <body name="ram" pos=".47 -.29 .755635">
+      <freejoint name="ram_freejoint" />
+      <inertial pos="0 0 0" mass=".020" diaginertia="1.66e-6 3.12e-5 2.97e-5" />
+      <site name="ram_bottom" pos="0 0 -0.015625" size=".001" rgba="1 .3 .1 .8" group="3" />
+      <site name="ram_grasp" pos="0 0 0.006" size=".001" rgba=".1 .7 1 .8" group="3" />
+      <geom name="ram_pcb_upper" class="ram_collision" pos="0 0 0.0019" size="0.066675 0.0007 0.013725" material="ram_pcb" friction="1.1 .004 .0001" conaffinity="48131" />
+      <geom name="ram_pcb_lower_left" class="ram_collision" pos="-0.030925 0 -0.013725" size="0.03575 0.0007 0.0019" material="ram_pcb" conaffinity="48131" />
+      <geom name="ram_pcb_lower_right" class="ram_collision" pos="0.0365 0 -0.013725" size="0.030175 0.0007 0.0019" material="ram_pcb" conaffinity="48131" />
+      <geom name="ram_chip_front_0" class="ram_collision" pos="-0.056 -0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_front_0_visual" class="ram_visual" pos="-0.056 -0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_front_1" class="ram_collision" pos="-0.041 -0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_front_1_visual" class="ram_visual" pos="-0.041 -0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_front_2" class="ram_collision" pos="-0.026 -0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_front_2_visual" class="ram_visual" pos="-0.026 -0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_front_3" class="ram_collision" pos="-0.011 -0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_front_3_visual" class="ram_visual" pos="-0.011 -0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_front_4" class="ram_collision" pos="0.011 -0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_front_4_visual" class="ram_visual" pos="0.011 -0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_front_5" class="ram_collision" pos="0.026 -0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_front_5_visual" class="ram_visual" pos="0.026 -0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_front_6" class="ram_collision" pos="0.041 -0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_front_6_visual" class="ram_visual" pos="0.041 -0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_front_7" class="ram_collision" pos="0.056 -0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_front_7_visual" class="ram_visual" pos="0.056 -0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_contact_front_000_visual" class="ram_visual" pos="-0.0629 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_001_visual" class="ram_visual" pos="-0.06205 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_002_visual" class="ram_visual" pos="-0.0612 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_003_visual" class="ram_visual" pos="-0.06035 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_004_visual" class="ram_visual" pos="-0.0595 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_005_visual" class="ram_visual" pos="-0.05865 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_006_visual" class="ram_visual" pos="-0.0578 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_007_visual" class="ram_visual" pos="-0.05695 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_008_visual" class="ram_visual" pos="-0.0561 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_009_visual" class="ram_visual" pos="-0.05525 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_010_visual" class="ram_visual" pos="-0.0544 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_011_visual" class="ram_visual" pos="-0.05355 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_012_visual" class="ram_visual" pos="-0.0527 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_013_visual" class="ram_visual" pos="-0.05185 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_014_visual" class="ram_visual" pos="-0.051 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_015_visual" class="ram_visual" pos="-0.05015 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_016_visual" class="ram_visual" pos="-0.0493 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_017_visual" class="ram_visual" pos="-0.04845 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_018_visual" class="ram_visual" pos="-0.0476 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_019_visual" class="ram_visual" pos="-0.04675 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_020_visual" class="ram_visual" pos="-0.0459 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_021_visual" class="ram_visual" pos="-0.04505 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_022_visual" class="ram_visual" pos="-0.0442 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_023_visual" class="ram_visual" pos="-0.04335 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_024_visual" class="ram_visual" pos="-0.0425 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_025_visual" class="ram_visual" pos="-0.04165 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_026_visual" class="ram_visual" pos="-0.0408 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_027_visual" class="ram_visual" pos="-0.03995 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_028_visual" class="ram_visual" pos="-0.0391 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_029_visual" class="ram_visual" pos="-0.03825 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_030_visual" class="ram_visual" pos="-0.0374 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_031_visual" class="ram_visual" pos="-0.03655 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_032_visual" class="ram_visual" pos="-0.0357 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_033_visual" class="ram_visual" pos="-0.03485 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_034_visual" class="ram_visual" pos="-0.034 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_035_visual" class="ram_visual" pos="-0.03315 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_036_visual" class="ram_visual" pos="-0.0323 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_037_visual" class="ram_visual" pos="-0.03145 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_038_visual" class="ram_visual" pos="-0.0306 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_039_visual" class="ram_visual" pos="-0.02975 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_040_visual" class="ram_visual" pos="-0.0289 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_041_visual" class="ram_visual" pos="-0.02805 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_042_visual" class="ram_visual" pos="-0.0272 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_043_visual" class="ram_visual" pos="-0.02635 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_044_visual" class="ram_visual" pos="-0.0255 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_045_visual" class="ram_visual" pos="-0.02465 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_046_visual" class="ram_visual" pos="-0.0238 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_047_visual" class="ram_visual" pos="-0.02295 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_048_visual" class="ram_visual" pos="-0.0221 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_049_visual" class="ram_visual" pos="-0.02125 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_050_visual" class="ram_visual" pos="-0.0204 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_051_visual" class="ram_visual" pos="-0.01955 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_052_visual" class="ram_visual" pos="-0.0187 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_053_visual" class="ram_visual" pos="-0.01785 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_054_visual" class="ram_visual" pos="-0.017 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_055_visual" class="ram_visual" pos="-0.01615 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_056_visual" class="ram_visual" pos="-0.0153 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_057_visual" class="ram_visual" pos="-0.01445 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_058_visual" class="ram_visual" pos="-0.0136 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_059_visual" class="ram_visual" pos="-0.01275 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_060_visual" class="ram_visual" pos="-0.0119 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_061_visual" class="ram_visual" pos="-0.01105 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_062_visual" class="ram_visual" pos="-0.0102 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_063_visual" class="ram_visual" pos="-0.00935 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_064_visual" class="ram_visual" pos="-0.0085 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_065_visual" class="ram_visual" pos="-0.00765 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_066_visual" class="ram_visual" pos="-0.0068 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_067_visual" class="ram_visual" pos="-0.00595 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_068_visual" class="ram_visual" pos="-0.0051 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_069_visual" class="ram_visual" pos="-0.00425 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_070_visual" class="ram_visual" pos="-0.0034 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_071_visual" class="ram_visual" pos="-0.00255 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_072_visual" class="ram_visual" pos="-0.0017 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_073_visual" class="ram_visual" pos="-0.00085 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_074_visual" class="ram_visual" pos="0 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_075_visual" class="ram_visual" pos="0.00085 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_076_visual" class="ram_visual" pos="0.0017 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_077_visual" class="ram_visual" pos="0.00255 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_078_visual" class="ram_visual" pos="0.0034 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_079_visual" class="ram_visual" pos="0.00425 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_080_visual" class="ram_visual" pos="0.0069 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_081_visual" class="ram_visual" pos="0.00775 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_082_visual" class="ram_visual" pos="0.0086 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_083_visual" class="ram_visual" pos="0.00945 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_084_visual" class="ram_visual" pos="0.0103 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_085_visual" class="ram_visual" pos="0.01115 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_086_visual" class="ram_visual" pos="0.012 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_087_visual" class="ram_visual" pos="0.01285 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_088_visual" class="ram_visual" pos="0.0137 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_089_visual" class="ram_visual" pos="0.01455 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_090_visual" class="ram_visual" pos="0.0154 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_091_visual" class="ram_visual" pos="0.01625 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_092_visual" class="ram_visual" pos="0.0171 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_093_visual" class="ram_visual" pos="0.01795 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_094_visual" class="ram_visual" pos="0.0188 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_095_visual" class="ram_visual" pos="0.01965 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_096_visual" class="ram_visual" pos="0.0205 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_097_visual" class="ram_visual" pos="0.02135 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_098_visual" class="ram_visual" pos="0.0222 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_099_visual" class="ram_visual" pos="0.02305 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_100_visual" class="ram_visual" pos="0.0239 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_101_visual" class="ram_visual" pos="0.02475 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_102_visual" class="ram_visual" pos="0.0256 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_103_visual" class="ram_visual" pos="0.02645 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_104_visual" class="ram_visual" pos="0.0273 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_105_visual" class="ram_visual" pos="0.02815 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_106_visual" class="ram_visual" pos="0.029 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_107_visual" class="ram_visual" pos="0.02985 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_108_visual" class="ram_visual" pos="0.0307 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_109_visual" class="ram_visual" pos="0.03155 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_110_visual" class="ram_visual" pos="0.0324 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_111_visual" class="ram_visual" pos="0.03325 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_112_visual" class="ram_visual" pos="0.0341 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_113_visual" class="ram_visual" pos="0.03495 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_114_visual" class="ram_visual" pos="0.0358 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_115_visual" class="ram_visual" pos="0.03665 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_116_visual" class="ram_visual" pos="0.0375 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_117_visual" class="ram_visual" pos="0.03835 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_118_visual" class="ram_visual" pos="0.0392 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_119_visual" class="ram_visual" pos="0.04005 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_120_visual" class="ram_visual" pos="0.0409 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_121_visual" class="ram_visual" pos="0.04175 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_122_visual" class="ram_visual" pos="0.0426 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_123_visual" class="ram_visual" pos="0.04345 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_124_visual" class="ram_visual" pos="0.0443 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_125_visual" class="ram_visual" pos="0.04515 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_126_visual" class="ram_visual" pos="0.046 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_127_visual" class="ram_visual" pos="0.04685 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_128_visual" class="ram_visual" pos="0.0477 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_129_visual" class="ram_visual" pos="0.04855 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_130_visual" class="ram_visual" pos="0.0494 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_131_visual" class="ram_visual" pos="0.05025 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_132_visual" class="ram_visual" pos="0.0511 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_133_visual" class="ram_visual" pos="0.05195 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_134_visual" class="ram_visual" pos="0.0528 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_135_visual" class="ram_visual" pos="0.05365 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_136_visual" class="ram_visual" pos="0.0545 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_137_visual" class="ram_visual" pos="0.05535 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_138_visual" class="ram_visual" pos="0.0562 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_139_visual" class="ram_visual" pos="0.05705 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_140_visual" class="ram_visual" pos="0.0579 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_141_visual" class="ram_visual" pos="0.05875 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_142_visual" class="ram_visual" pos="0.0596 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_front_143_visual" class="ram_visual" pos="0.06045 -0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_resistor_front_0_visual" class="ram_visual" pos="-0.06 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_1_visual" class="ram_visual" pos="-0.0566 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_2_visual" class="ram_visual" pos="-0.0532 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_3_visual" class="ram_visual" pos="-0.0498 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_4_visual" class="ram_visual" pos="-0.0464 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_5_visual" class="ram_visual" pos="-0.043 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_6_visual" class="ram_visual" pos="-0.0396 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_7_visual" class="ram_visual" pos="-0.0362 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_8_visual" class="ram_visual" pos="-0.0328 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_9_visual" class="ram_visual" pos="-0.0294 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_10_visual" class="ram_visual" pos="-0.026 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_11_visual" class="ram_visual" pos="-0.0226 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_12_visual" class="ram_visual" pos="-0.0192 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_13_visual" class="ram_visual" pos="-0.0158 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_14_visual" class="ram_visual" pos="-0.0124 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_15_visual" class="ram_visual" pos="-0.009 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_16_visual" class="ram_visual" pos="-0.0056 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_17_visual" class="ram_visual" pos="-0.0022 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_18_visual" class="ram_visual" pos="0.0012 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_19_visual" class="ram_visual" pos="0.0046 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_20_visual" class="ram_visual" pos="0.008 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_21_visual" class="ram_visual" pos="0.0114 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_22_visual" class="ram_visual" pos="0.0148 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_23_visual" class="ram_visual" pos="0.0182 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_24_visual" class="ram_visual" pos="0.0216 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_25_visual" class="ram_visual" pos="0.025 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_26_visual" class="ram_visual" pos="0.0284 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_27_visual" class="ram_visual" pos="0.0318 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_28_visual" class="ram_visual" pos="0.0352 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_29_visual" class="ram_visual" pos="0.0386 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_30_visual" class="ram_visual" pos="0.042 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_31_visual" class="ram_visual" pos="0.0454 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_32_visual" class="ram_visual" pos="0.0488 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_33_visual" class="ram_visual" pos="0.0522 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_34_visual" class="ram_visual" pos="0.0556 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_front_35_visual" class="ram_visual" pos="0.059 -0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_trace_front_0_visual" class="ram_visual" pos="-0.062 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_1_visual" class="ram_visual" pos="-0.0556 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_2_visual" class="ram_visual" pos="-0.0492 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_3_visual" class="ram_visual" pos="-0.0428 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_4_visual" class="ram_visual" pos="-0.0364 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_5_visual" class="ram_visual" pos="-0.03 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_6_visual" class="ram_visual" pos="-0.0236 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_7_visual" class="ram_visual" pos="-0.0172 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_8_visual" class="ram_visual" pos="-0.0108 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_9_visual" class="ram_visual" pos="-0.0044 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_10_visual" class="ram_visual" pos="0.002 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_11_visual" class="ram_visual" pos="0.0084 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_12_visual" class="ram_visual" pos="0.0148 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_13_visual" class="ram_visual" pos="0.0212 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_14_visual" class="ram_visual" pos="0.0276 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_15_visual" class="ram_visual" pos="0.034 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_16_visual" class="ram_visual" pos="0.0404 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_17_visual" class="ram_visual" pos="0.0468 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_18_visual" class="ram_visual" pos="0.0532 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_front_19_visual" class="ram_visual" pos="0.0596 -0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_chip_back_0" class="ram_collision" pos="-0.056 0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_back_0_visual" class="ram_visual" pos="-0.056 0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_back_1" class="ram_collision" pos="-0.041 0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_back_1_visual" class="ram_visual" pos="-0.041 0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_back_2" class="ram_collision" pos="-0.026 0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_back_2_visual" class="ram_visual" pos="-0.026 0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_back_3" class="ram_collision" pos="-0.011 0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_back_3_visual" class="ram_visual" pos="-0.011 0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_back_4" class="ram_collision" pos="0.011 0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_back_4_visual" class="ram_visual" pos="0.011 0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_back_5" class="ram_collision" pos="0.026 0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_back_5_visual" class="ram_visual" pos="0.026 0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_back_6" class="ram_collision" pos="0.041 0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_back_6_visual" class="ram_visual" pos="0.041 0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_chip_back_7" class="ram_collision" pos="0.056 0.0012 0.0015" size="0.0056 0.0005 0.006" material="ram_chip" friction="1.1 .004 .0001" />
+      <geom name="ram_chip_mark_back_7_visual" class="ram_visual" pos="0.056 0.001715 0.003" size="0.0038 1.5e-05 0.00013" material="ram_silver" />
+      <geom name="ram_contact_back_000_visual" class="ram_visual" pos="-0.0629 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_001_visual" class="ram_visual" pos="-0.06205 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_002_visual" class="ram_visual" pos="-0.0612 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_003_visual" class="ram_visual" pos="-0.06035 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_004_visual" class="ram_visual" pos="-0.0595 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_005_visual" class="ram_visual" pos="-0.05865 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_006_visual" class="ram_visual" pos="-0.0578 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_007_visual" class="ram_visual" pos="-0.05695 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_008_visual" class="ram_visual" pos="-0.0561 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_009_visual" class="ram_visual" pos="-0.05525 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_010_visual" class="ram_visual" pos="-0.0544 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_011_visual" class="ram_visual" pos="-0.05355 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_012_visual" class="ram_visual" pos="-0.0527 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_013_visual" class="ram_visual" pos="-0.05185 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_014_visual" class="ram_visual" pos="-0.051 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_015_visual" class="ram_visual" pos="-0.05015 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_016_visual" class="ram_visual" pos="-0.0493 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_017_visual" class="ram_visual" pos="-0.04845 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_018_visual" class="ram_visual" pos="-0.0476 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_019_visual" class="ram_visual" pos="-0.04675 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_020_visual" class="ram_visual" pos="-0.0459 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_021_visual" class="ram_visual" pos="-0.04505 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_022_visual" class="ram_visual" pos="-0.0442 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_023_visual" class="ram_visual" pos="-0.04335 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_024_visual" class="ram_visual" pos="-0.0425 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_025_visual" class="ram_visual" pos="-0.04165 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_026_visual" class="ram_visual" pos="-0.0408 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_027_visual" class="ram_visual" pos="-0.03995 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_028_visual" class="ram_visual" pos="-0.0391 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_029_visual" class="ram_visual" pos="-0.03825 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_030_visual" class="ram_visual" pos="-0.0374 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_031_visual" class="ram_visual" pos="-0.03655 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_032_visual" class="ram_visual" pos="-0.0357 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_033_visual" class="ram_visual" pos="-0.03485 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_034_visual" class="ram_visual" pos="-0.034 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_035_visual" class="ram_visual" pos="-0.03315 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_036_visual" class="ram_visual" pos="-0.0323 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_037_visual" class="ram_visual" pos="-0.03145 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_038_visual" class="ram_visual" pos="-0.0306 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_039_visual" class="ram_visual" pos="-0.02975 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_040_visual" class="ram_visual" pos="-0.0289 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_041_visual" class="ram_visual" pos="-0.02805 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_042_visual" class="ram_visual" pos="-0.0272 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_043_visual" class="ram_visual" pos="-0.02635 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_044_visual" class="ram_visual" pos="-0.0255 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_045_visual" class="ram_visual" pos="-0.02465 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_046_visual" class="ram_visual" pos="-0.0238 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_047_visual" class="ram_visual" pos="-0.02295 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_048_visual" class="ram_visual" pos="-0.0221 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_049_visual" class="ram_visual" pos="-0.02125 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_050_visual" class="ram_visual" pos="-0.0204 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_051_visual" class="ram_visual" pos="-0.01955 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_052_visual" class="ram_visual" pos="-0.0187 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_053_visual" class="ram_visual" pos="-0.01785 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_054_visual" class="ram_visual" pos="-0.017 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_055_visual" class="ram_visual" pos="-0.01615 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_056_visual" class="ram_visual" pos="-0.0153 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_057_visual" class="ram_visual" pos="-0.01445 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_058_visual" class="ram_visual" pos="-0.0136 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_059_visual" class="ram_visual" pos="-0.01275 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_060_visual" class="ram_visual" pos="-0.0119 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_061_visual" class="ram_visual" pos="-0.01105 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_062_visual" class="ram_visual" pos="-0.0102 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_063_visual" class="ram_visual" pos="-0.00935 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_064_visual" class="ram_visual" pos="-0.0085 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_065_visual" class="ram_visual" pos="-0.00765 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_066_visual" class="ram_visual" pos="-0.0068 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_067_visual" class="ram_visual" pos="-0.00595 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_068_visual" class="ram_visual" pos="-0.0051 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_069_visual" class="ram_visual" pos="-0.00425 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_070_visual" class="ram_visual" pos="-0.0034 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_071_visual" class="ram_visual" pos="-0.00255 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_072_visual" class="ram_visual" pos="-0.0017 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_073_visual" class="ram_visual" pos="-0.00085 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_074_visual" class="ram_visual" pos="0 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_075_visual" class="ram_visual" pos="0.00085 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_076_visual" class="ram_visual" pos="0.0017 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_077_visual" class="ram_visual" pos="0.00255 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_078_visual" class="ram_visual" pos="0.0034 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_079_visual" class="ram_visual" pos="0.00425 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_080_visual" class="ram_visual" pos="0.0069 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_081_visual" class="ram_visual" pos="0.00775 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_082_visual" class="ram_visual" pos="0.0086 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_083_visual" class="ram_visual" pos="0.00945 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_084_visual" class="ram_visual" pos="0.0103 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_085_visual" class="ram_visual" pos="0.01115 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_086_visual" class="ram_visual" pos="0.012 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_087_visual" class="ram_visual" pos="0.01285 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_088_visual" class="ram_visual" pos="0.0137 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_089_visual" class="ram_visual" pos="0.01455 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_090_visual" class="ram_visual" pos="0.0154 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_091_visual" class="ram_visual" pos="0.01625 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_092_visual" class="ram_visual" pos="0.0171 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_093_visual" class="ram_visual" pos="0.01795 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_094_visual" class="ram_visual" pos="0.0188 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_095_visual" class="ram_visual" pos="0.01965 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_096_visual" class="ram_visual" pos="0.0205 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_097_visual" class="ram_visual" pos="0.02135 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_098_visual" class="ram_visual" pos="0.0222 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_099_visual" class="ram_visual" pos="0.02305 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_100_visual" class="ram_visual" pos="0.0239 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_101_visual" class="ram_visual" pos="0.02475 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_102_visual" class="ram_visual" pos="0.0256 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_103_visual" class="ram_visual" pos="0.02645 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_104_visual" class="ram_visual" pos="0.0273 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_105_visual" class="ram_visual" pos="0.02815 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_106_visual" class="ram_visual" pos="0.029 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_107_visual" class="ram_visual" pos="0.02985 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_108_visual" class="ram_visual" pos="0.0307 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_109_visual" class="ram_visual" pos="0.03155 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_110_visual" class="ram_visual" pos="0.0324 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_111_visual" class="ram_visual" pos="0.03325 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_112_visual" class="ram_visual" pos="0.0341 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_113_visual" class="ram_visual" pos="0.03495 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_114_visual" class="ram_visual" pos="0.0358 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_115_visual" class="ram_visual" pos="0.03665 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_116_visual" class="ram_visual" pos="0.0375 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_117_visual" class="ram_visual" pos="0.03835 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_118_visual" class="ram_visual" pos="0.0392 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_119_visual" class="ram_visual" pos="0.04005 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_120_visual" class="ram_visual" pos="0.0409 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_121_visual" class="ram_visual" pos="0.04175 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_122_visual" class="ram_visual" pos="0.0426 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_123_visual" class="ram_visual" pos="0.04345 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_124_visual" class="ram_visual" pos="0.0443 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_125_visual" class="ram_visual" pos="0.04515 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_126_visual" class="ram_visual" pos="0.046 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_127_visual" class="ram_visual" pos="0.04685 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_128_visual" class="ram_visual" pos="0.0477 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_129_visual" class="ram_visual" pos="0.04855 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_130_visual" class="ram_visual" pos="0.0494 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_131_visual" class="ram_visual" pos="0.05025 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_132_visual" class="ram_visual" pos="0.0511 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_133_visual" class="ram_visual" pos="0.05195 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_134_visual" class="ram_visual" pos="0.0528 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_135_visual" class="ram_visual" pos="0.05365 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_136_visual" class="ram_visual" pos="0.0545 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_137_visual" class="ram_visual" pos="0.05535 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_138_visual" class="ram_visual" pos="0.0562 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_139_visual" class="ram_visual" pos="0.05705 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_140_visual" class="ram_visual" pos="0.0579 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_141_visual" class="ram_visual" pos="0.05875 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_142_visual" class="ram_visual" pos="0.0596 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_contact_back_143_visual" class="ram_visual" pos="0.06045 0.000715 -0.0133" size="0.0003 1.5e-05 0.002" material="ram_gold" />
+      <geom name="ram_resistor_back_0_visual" class="ram_visual" pos="-0.06 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_1_visual" class="ram_visual" pos="-0.0566 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_2_visual" class="ram_visual" pos="-0.0532 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_3_visual" class="ram_visual" pos="-0.0498 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_4_visual" class="ram_visual" pos="-0.0464 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_5_visual" class="ram_visual" pos="-0.043 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_6_visual" class="ram_visual" pos="-0.0396 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_7_visual" class="ram_visual" pos="-0.0362 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_8_visual" class="ram_visual" pos="-0.0328 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_9_visual" class="ram_visual" pos="-0.0294 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_10_visual" class="ram_visual" pos="-0.026 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_11_visual" class="ram_visual" pos="-0.0226 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_12_visual" class="ram_visual" pos="-0.0192 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_13_visual" class="ram_visual" pos="-0.0158 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_14_visual" class="ram_visual" pos="-0.0124 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_15_visual" class="ram_visual" pos="-0.009 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_16_visual" class="ram_visual" pos="-0.0056 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_17_visual" class="ram_visual" pos="-0.0022 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_18_visual" class="ram_visual" pos="0.0012 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_19_visual" class="ram_visual" pos="0.0046 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_20_visual" class="ram_visual" pos="0.008 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_21_visual" class="ram_visual" pos="0.0114 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_22_visual" class="ram_visual" pos="0.0148 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_23_visual" class="ram_visual" pos="0.0182 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_24_visual" class="ram_visual" pos="0.0216 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_25_visual" class="ram_visual" pos="0.025 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_26_visual" class="ram_visual" pos="0.0284 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_27_visual" class="ram_visual" pos="0.0318 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_28_visual" class="ram_visual" pos="0.0352 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_29_visual" class="ram_visual" pos="0.0386 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_30_visual" class="ram_visual" pos="0.042 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_31_visual" class="ram_visual" pos="0.0454 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_32_visual" class="ram_visual" pos="0.0488 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_33_visual" class="ram_visual" pos="0.0522 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_34_visual" class="ram_visual" pos="0.0556 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_resistor_back_35_visual" class="ram_visual" pos="0.059 0.000855 -0.007" size="0.00065 0.00016 0.0003" material="ram_silver" />
+      <geom name="ram_trace_back_0_visual" class="ram_visual" pos="-0.062 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_1_visual" class="ram_visual" pos="-0.0556 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_2_visual" class="ram_visual" pos="-0.0492 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_3_visual" class="ram_visual" pos="-0.0428 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_4_visual" class="ram_visual" pos="-0.0364 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_5_visual" class="ram_visual" pos="-0.03 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_6_visual" class="ram_visual" pos="-0.0236 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_7_visual" class="ram_visual" pos="-0.0172 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_8_visual" class="ram_visual" pos="-0.0108 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_9_visual" class="ram_visual" pos="-0.0044 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_10_visual" class="ram_visual" pos="0.002 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_11_visual" class="ram_visual" pos="0.0084 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_12_visual" class="ram_visual" pos="0.0148 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_13_visual" class="ram_visual" pos="0.0212 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_14_visual" class="ram_visual" pos="0.0276 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_15_visual" class="ram_visual" pos="0.034 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_16_visual" class="ram_visual" pos="0.0404 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_17_visual" class="ram_visual" pos="0.0468 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_18_visual" class="ram_visual" pos="0.0532 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_trace_back_19_visual" class="ram_visual" pos="0.0596 0.000719 0.0108" size="0.0001 1.5e-05 0.003" material="ram_trace" />
+      <geom name="ram_label_visual" class="ram_visual" pos="0.026 -0.00173 0.0015" size="0.0108 2e-05 0.0038" material="ram_label" />
+      <geom name="ram_label_barcode_0_visual" class="ram_visual" pos="0.017 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_1_visual" class="ram_visual" pos="0.0182 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_2_visual" class="ram_visual" pos="0.0194 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_3_visual" class="ram_visual" pos="0.0206 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_4_visual" class="ram_visual" pos="0.0218 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_5_visual" class="ram_visual" pos="0.023 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_6_visual" class="ram_visual" pos="0.0242 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_7_visual" class="ram_visual" pos="0.0254 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_8_visual" class="ram_visual" pos="0.0266 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_9_visual" class="ram_visual" pos="0.0278 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_10_visual" class="ram_visual" pos="0.029 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_11_visual" class="ram_visual" pos="0.0302 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_12_visual" class="ram_visual" pos="0.0314 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_13_visual" class="ram_visual" pos="0.0326 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_14_visual" class="ram_visual" pos="0.0338 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+      <geom name="ram_label_barcode_15_visual" class="ram_visual" pos="0.035 -0.001755 0.002" size="0.00012 1e-05 0.0017" material="ram_chip" />
+    </body>
+  </worldbody>
+  <include file="../../shared/mjcf/control.xml" />
+</mujoco>

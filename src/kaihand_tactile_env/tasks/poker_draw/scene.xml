@@ -1,0 +1,41 @@
+<mujoco model="kaihand_poker_draw">
+  <include file="../../shared/mjcf/robot.xml"/>
+
+  <asset>
+    <material name="poker_felt" rgba="0.05 0.33 0.19 1"/>
+    <material name="card_back" rgba="0.62 0.08 0.10 1"/>
+    <material name="card_face" rgba="0.96 0.94 0.88 1"/>
+  </asset>
+
+  <worldbody>
+    <!-- A 16 cm raised felt table and one face-down poker card. -->
+    <body name="poker_table" pos="0.58 -0.18 0.76">
+      <geom name="poker_table_base" type="box" size="0.115 0.070 0.080"
+            contype="11264" conaffinity="11264" material="table"
+            friction="0.10 0.005 0.0005" priority="2"
+            solref="0.002 1" solimp="0.98 0.995 0.0005"/>
+      <geom name="poker_table_top" type="box" pos="0 0 0.0805"
+            size="0.115 0.070 0.0005" contype="11264" conaffinity="11264"
+            material="poker_felt" friction="0.10 0.005 0.0005" priority="2"
+            solref="0.002 1" solimp="0.98 0.995 0.0005"/>
+    </body>
+
+    <!-- Standard poker-card footprint: 63 x 88 mm, face-down at reset. -->
+    <body name="card" pos="0.58 -0.16 0.84175">
+      <joint name="card_freejoint" type="free" damping="0.002"/>
+      <geom name="card_core_geom" type="box" size="0.0315 0.0440 0.00055"
+            mass="0.004" contype="12289" conaffinity="12289"
+            friction="1.40 0.02 0.002" priority="1" margin="0.00035"
+            solref="0.002 1" solimp="0.98 0.995 0.0005 0.5 2"
+            material="card_face"/>
+      <geom name="card_back_visual" type="box" pos="0 0 0.00062"
+            size="0.0305 0.0430 0.00008" contype="0" conaffinity="0"
+            material="card_back"/>
+      <geom name="card_face_visual" type="box" pos="0 0 -0.00062"
+            size="0.0305 0.0430 0.00008" contype="0" conaffinity="0"
+            material="card_face"/>
+    </body>
+  </worldbody>
+
+  <include file="../../shared/mjcf/control.xml"/>
+</mujoco>

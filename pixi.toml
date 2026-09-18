@@ -1,0 +1,89 @@
+[workspace]
+name = "kaihand-tactile-env"
+version = "0.1.0"
+description = "Pure-MuJoCo tactile manipulation and data collection environment for dual-arm KaiHand."
+channels = ["https://prefix.dev/conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = "3.11.*"
+pytest = ">=9,<10"
+ruff = ">=0.6,<1"
+
+[pypi-dependencies]
+kaihand-tactile-env = { path = ".", editable = true }
+h5py = ">=3.12,<4"
+imageio-ffmpeg = ">=0.6,<1"
+matplotlib = ">=3.10,<4"
+mujoco = ">=3.3,<4"
+numpy = ">=2,<3"
+pillow = ">=11,<13"
+msgpack = ">=1.1,<2"
+websockets = ">=16,<17"
+
+[tasks]
+view-whiteboard-wipe = { cmd = "python scripts/workcell/view_whiteboard_wipe.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", LP_NUM_THREADS = "4" }, description = "Inspect the independent 45-degree whiteboard scene" }
+run-whiteboard-wipe = { cmd = "python scripts/workcell/view_whiteboard_wipe.py --run-task", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", LP_NUM_THREADS = "4" }, description = "Pick up the eraser, wipe the board, and put it down" }
+check-whiteboard-wipe = { cmd = "python scripts/workcell/view_whiteboard_wipe.py --headless", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Headless whiteboard startup check" }
+record-whiteboard-example = { cmd = "python scripts/workcell/record_whiteboard_example.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", LP_NUM_THREADS = "4", MUJOCO_GL = "egl", MPLCONFIGDIR = "/tmp/whiteboard_matplotlib" }, description = "Capture native 500 Hz tactile and 10 fps whiteboard camera review" }
+collect = { cmd = "python scripts/collect/collect.py", description = "Unified server collection for all seven tasks; see scripts/collect/README.md" }
+convert-dataset = { cmd = "python scripts/convert/convert.py", description = "Unified Raw to EgoSteer, pi0.5 or EgoTouch conversion; caller supplies paths, task and cameras" }
+evaluate-policy = { cmd = "python scripts/evaluate/evaluate.py", description = "Unified task/model policy evaluation dispatcher with manifest camera-contract validation" }
+view-install-ram = { cmd = "python scripts/workcell/view_install_ram.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Inspect the independent realistic-size DIMM installation scene" }
+run-install-ram = { cmd = "python scripts/workcell/view_install_ram.py --run-task", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Run RAM grasp, alignment, insertion and release" }
+check-install-ram = { cmd = "python scripts/workcell/view_install_ram.py --headless --duration 2", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Headless RAM scene startup check" }
+record-install-ram-example = { cmd = "python scripts/workcell/record_install_ram_example.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "4", MUJOCO_GL = "egl", LIBGL_ALWAYS_SOFTWARE = "1" }, description = "Record datasets/install_ram_example with shared cameras, tactile, curves and video" }
+view-vase-wipe = { cmd = "python scripts/workcell/view_vase_wipe.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Inspect the independent shallow-vase and compliant sponge scene" }
+run-vase-wipe = { cmd = "python scripts/workcell/view_vase_wipe.py --run-task", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Run pregrasped sponge insertion, tactile wiping and withdrawal" }
+refresh-light-bulb-example = { cmd = "python scripts/workcell/refresh_light_bulb_example.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", MUJOCO_GL = "egl" }, description = "Refresh datasets/light_bulb_example with one validated five-finger episode, videos and raw force curves" }
+run-bulb-screw = { cmd = "python scripts/workcell/view_bulb_screw.py --run-task", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Run fast five-finger bulb pickup, alignment, screwing, release and seating verification" }
+view-bulb-screw = { cmd = "python scripts/workcell/view_bulb_screw.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Inspect the independent bulb screwing scene" }
+scene-bulb-screw = { cmd = "python scripts/workcell/view_bulb_screw.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Inspect the fourth task scene" }
+check-bulb-screw = { cmd = "python scripts/workcell/view_bulb_screw.py --headless --duration 2", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Headless bulb scene and tactile startup check" }
+demo-bulb-screw = { cmd = "python scripts/workcell/view_bulb_screw.py --mechanics-demo", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "External-torque mechanics demonstration; not an automatic robot policy" }
+test-bulb-screw = { cmd = "pytest -q tests/test_bulb_screw.py tests/test_bulb_execution.py", env = { PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1", OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Serial bulb scene, tactile and full automatic robot episode checks" }
+run-usb-insert = { cmd = "python scripts/workcell/view_usb_insert.py --run-task --plug-for-insertion", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Run one automatic USB grasp and insertion from the calibrated pinky-forward initial pose" }
+record-usb = { cmd = "python scripts/workcell/record_usb_dataset.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "1", MUJOCO_GL = "egl", LIBGL_ALWAYS_SOFTWARE = "1" }, description = "USB-only raw HDF5 capture with 1-2 workers, independent pose/noise seeds, 500 Hz tactile, optional 30 Hz RGB and complete SE3" }
+check-usb-cleaning = { cmd = "python scripts/workcell/check_usb_cleaning.py --with-actuator-audit", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "1" }, description = "Serial offline USB clock, action-response, missing/duplicate-frame and trajectory checks" }
+review-usb-tactile = { cmd = "python scripts/workcell/review_usb_tactile.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Extract physical tactile onset/release RGB contact sheets without rerunning simulation" }
+test-usb-data = { cmd = "pytest -q tests/test_usb_dataset_recording.py tests/test_usb_buffered_h5.py tests/test_tict_usb.py tests/test_tict_package.py tests/test_tict_contract.py tests/test_tict_randomization_audit.py tests/test_tict_precontact_audit.py tests/test_usb_cleaning.py tests/test_usb_action_audit.py tests/test_usb_tactile_review.py", env = { PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1", OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Serial USB capture, Cleaning, tactile-image review, T-ICT source and delivery checks" }
+check-usb-random = { cmd = "python scripts/workcell/evaluate_usb_randomization.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Evaluate seeded USB XY/yaw randomization, boundary poses and motion quality without rendering" }
+view-usb-insert = { cmd = "python scripts/workcell/view_usb_insert.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Inspect the independent USB-A insertion scene" }
+scene-usb-insert = { cmd = "python scripts/workcell/view_usb_insert.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Inspect the independent USB-A insertion scene" }
+check-usb-insert = { cmd = "python scripts/workcell/view_usb_insert.py --headless --duration 2", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Headless USB-A scene and tactile startup check" }
+test-usb-insert = { cmd = "pytest -q tests/test_usb_scene.py tests/test_usb_insertion.py tests/test_usb_view_shutdown.py tests/test_usb_auto_cli.py tests/test_usb_execution.py tests/test_usb_randomization.py tests/test_usb_grasp_randomization.py tests/test_usb_randomization_eval.py tests/test_usb_precontact_noise.py", env = { PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1", OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Serial USB scene, randomized poses, tactile noise cutoff, real insertion, CLI and viewer checks" }
+view-pick-place = { cmd = "python scripts/workcell/view_workcell.py --task pick-place", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Run the independent pick-and-place scene" }
+view-poker-draw = { cmd = "python scripts/workcell/view_workcell.py --task poker-draw", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Run the independent poker-draw scene" }
+scene-pick-place = { cmd = "python scripts/workcell/view_workcell.py --scene pick-place", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Inspect the pick-and-place scene" }
+scene-poker-draw = { cmd = "python scripts/workcell/view_workcell.py --scene poker-draw", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Inspect the poker-draw scene" }
+record-pick-place = { cmd = "python scripts/workcell/record_dataset.py --scene pick-place", description = "Record pick-and-place into datasets/pick_place" }
+record-poker-draw = { cmd = "python scripts/workcell/record_dataset.py --scene poker-draw", description = "Record poker-draw into datasets/poker_draw" }
+collect-poker = { cmd = "python scripts/workcell/collect_poker_batch.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Bounded poker batch: verified hardware or explicit CPU software EGL, three-camera 30Hz RGB, lossless buffered HDF5, one instance by default" }
+record-poker-mid = { cmd = "python scripts/workcell/record_dataset.py --scene poker-draw --preset middle-force-v1 --cameras head left_wrist right_wrist --rgb-only --camera-hz 30 --workers 1", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "1", MUJOCO_GL = "egl", LIBGL_ALWAYS_SOFTWARE = "1" }, description = "Serial zero-noise middle-force full-task HDF5 capture with three-camera 30 Hz RGB and full SE3" }
+record-poker-random = { cmd = "python scripts/workcell/record_dataset.py --scene poker-draw --preset middle-force-randomized-v1 --cameras head left_wrist right_wrist --rgb-only --camera-hz 30 --workers 1", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "1", MUJOCO_GL = "egl", LIBGL_ALWAYS_SOFTWARE = "1" }, description = "Serial three-camera 30 Hz middle-force capture with bounded initial card XY/yaw randomization (default +/-2mm XY, zero yaw)" }
+check-poker-random = { cmd = "python scripts/workcell/validate_poker_randomization.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "1" }, description = "Small serial renderer-free full-task screening of initial card XY/yaw variation" }
+record-poker-precontact = { cmd = "python scripts/workcell/record_dataset.py --scene poker-draw --preset middle-force-precontact-v1 --cameras head left_wrist right_wrist --rgb-only --camera-hz 30 --workers 1", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "1", MUJOCO_GL = "egl", LIBGL_ALWAYS_SOFTWARE = "1" }, description = "Serial experimental three-camera 30 Hz capture with initial card +/-4mm XY, +/-0.5deg yaw and tiny right-arm Gaussian noise latched off on first tactile contact" }
+check-poker-precontact = { cmd = "python scripts/workcell/validate_poker_randomization.py --precontact-noise", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "1" }, description = "Renderer-free serial check of precontact-only command noise; full500Hz perturbation trace saved" }
+test-scenes = { cmd = "pytest -q tests/test_scene_models.py tests/test_task_structure.py tests/test_task_recording.py tests/test_view_startup.py tests/test_replay_episode.py tests/test_offline_replay.py tests/test_poker_draw.py::test_poker_scene_is_isolated_from_pick_place 'tests/test_poker_draw.py::test_poker_draw_reaches_edge_contacts_face_and_lifts[None]' 'tests/test_workcell.py::test_pick_place_returns_arm_home_and_places_cylinder[None]'", env = { PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1", OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Serial headless checks for shared robot, task isolation, native replay, and multimodal replay" }
+view = { cmd = "python scripts/workcell/view_workcell.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Open the dual-arm tactile workcell" }
+poker-friction = { cmd = "python scripts/workcell/experiment_poker_friction.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Serial headless poker table-friction and pressure experiments" }
+poker-pressure-window = { cmd = "python scripts/workcell/experiment_poker_pressure_window.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Opt-in short or table-edge poker pressure sweep with a bounded horizontal arm servo wrench" }
+poker-mid-full = { cmd = "python scripts/workcell/validate_poker_mid_full.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "One serial zero-noise middle-force full draw, pinch and inspection acceptance run" }
+dashboard = { cmd = "python scripts/workcell/tactile_dashboard.py", description = "Open the 2x5 fingertip dashboard and grasp controls" }
+tactile-dashboard = { cmd = "python scripts/workcell/tactile_dashboard.py", description = "Alias for the tactile dashboard" }
+grasp = { cmd = "python scripts/workcell/run_grasp.py", description = "Execute one known-state grasp" }
+record = { cmd = "python scripts/workcell/record_dataset.py", description = "Record synchronized HDF5 episodes" }
+validate = { cmd = "python scripts/workcell/validate_episode.py", description = "Validate an HDF5 episode" }
+replay = { cmd = "python scripts/workcell/replay_episode.py", description = "Replay any task HDF5 natively or export synchronized cameras, tactile heatmaps and curves" }
+render = { cmd = "python scripts/workcell/render_workcell.py", description = "Render RGB, depth and segmentation snapshots" }
+compare-tactile = { cmd = "python scripts/workcell/compare_tactile_streams.py", description = "Compare probe and solver tactile streams" }
+convert-egosteer = { cmd = "python scripts/workcell/convert_to_egosteer.py", description = "Convert recorded HDF5 episodes to EgoSteer WebDataset" }
+convert-tict = { cmd = "python scripts/workcell/convert_to_tict.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Export full wrist/fingertip SE3 and signed tactile into the documented T-ICT release" }
+package-tict = { cmd = "python scripts/workcell/package_tict.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Offline T-ICT assembly with explicit session splits, train-only statistics and portable RGB path rebasing" }
+validate-tict = { cmd = "python scripts/workcell/validate_tict.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Check the local T-ICT release contract and every H50 action window" }
+audit-tict-source = { cmd = "python scripts/workcell/audit_tict_source.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Cross-check every T-ICT pose, pixel, signed tactile sample and provenance against its HDF5 source" }
+export-poker-review = { cmd = "python scripts/workcell/export_poker_review.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "1" }, description = "Offline head/right-wrist and right-hand Fn/Ft review MP4/PNGs from one HDF5; legacy overhead supported, no simulation" }
+validate-egosteer = { cmd = "python scripts/workcell/validate_egosteer_dataset.py", description = "Validate an EgoSteer WebDataset export" }
+egosteer-rollout = { cmd = "python scripts/workcell/run_egosteer_policy.py", description = "Run the remote EgoSteer policy in the local MuJoCo workcell" }
+egosteer-poker-rollout = { cmd = "python scripts/workcell/run_poker_egosteer_policy.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "1" }, description = "Poker model rollout with contact-conditioned Cartesian budget and tactile feedback" }
+test = { cmd = "pytest -q", env = { PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1" }, description = "Run environment tests" }
