@@ -80,14 +80,24 @@ class KnownStateGraspPlanner:
   def __init__(self, simulation: ArmHandSimulation) -> None:
     self.sim = simulation
 
+  @staticmethod
+  def _grasp_seed(side):
+    # Grasp calibration is independent of the common idle/reset posture.
+    sign = 1 if side == "left" else -1
+    return np.deg2rad([sign * 55, -65, -sign * 70, -60, sign * 60, 0, 0])
+
   def candidates(self, object_name: str, side: str) -> tuple[GraspCandidate, ...]:
     _validate_object_and_side(object_name, side)
     object_position = self.sim.object_pose(object_name)[:3]
-    _, home_rotation = self.sim.current_pose_matrix(side)
+    scratch = mujoco.MjData(self.sim.model)
+    scratch.qpos[:] = self.sim.data.qpos
+    scratch.qpos[self.sim._arm_qpos[side]] = self._grasp_seed(side)
+    mujoco.mj_kinematics(self.sim.model, scratch)
+    home_rotation = scratch.site(f"{side}_ee_site").xmat.reshape(3, 3)
     hand_body_id = self.sim.model.body(f"hand_{side[0]}_base_link").id
-    home_hand_rotation = self.sim.data.xmat[hand_body_id].reshape(3, 3)
+    home_hand_rotation = scratch.xmat[hand_body_id].reshape(3, 3)
     ee_to_hand = home_rotation.T @ home_hand_rotation
-    # The palm normal is hand-local +Y and points world +Z at home (palm up).
+    # At the calibrated reference pose, hand-local +Y points world +Z (palm up).
     # Rotate the right palm 90 degrees about world X so its normal points
     # horizontally toward +Y: palm vertical and facing the upright cylinder.
     # Mirror the rotation for the left hand.
@@ -109,7 +119,7 @@ class KnownStateGraspPlanner:
           side,
           position,
           rotation,
-          seed=self.sim.arm_goal[side],
+          seed=self._grasp_seed(side),
           max_iterations=300,
           position_tolerance=0.006,
           orientation_tolerance=0.04,
@@ -160,7 +170,8 @@ class KnownStateGraspPlanner:
         1.4,
       ),
     )
-    seed = self.sim.arm_goal[side]
+    seed = self._grasp_seed(side)
+    previous_waypoint = self.sim.arm_goal[side]
     waypoints: list[JointWaypoint] = []
     for phase, position, duration in positions:
       result = self.sim.solve_ik(
@@ -175,11 +186,12 @@ class KnownStateGraspPlanner:
       _require_ik(result, phase)
       if phase in {"ready", "pregrasp", "lift", "transfer"} and not self.path_clear(
         side,
-        seed,
+        previous_waypoint,
         result.joint_positions,
         allowed_object=object_name if phase == "lift" else None,
       ):
         raise RuntimeError(f"planned path to {phase} is in collision")
+      previous_waypoint = result.joint_positions
       waypoints.append(
         JointWaypoint(
           phase=phase,
@@ -348,7 +360,7 @@ class GraspExecutor:
     )
     for waypoint in plan.waypoints[: approach_index + 1]:
       self.sim.set_arm_joint_goal(plan.side, waypoint.joint_positions)
-      settle = waypoint.phase == "approach"
+      settle = waypoint.phase in {"ready", "approach"}
       maximum_height = max(
         maximum_height,
         self._advance_until_goals(
@@ -358,7 +370,10 @@ class GraspExecutor:
           plan.side,
           arm=True,
           hand=False,
-          arm_tolerance=0.05 if not settle else 0.012,
+          arm_tolerance=0.001
+          if waypoint.phase == "ready"
+          else (0.05 if not settle else 0.012),
+          arm_velocity_tolerance=0.01 if waypoint.phase == "ready" else 0.08,
           settle=settle,
         ),
       )
@@ -388,6 +403,7 @@ class GraspExecutor:
           arm=True,
           hand=False,
           arm_tolerance=0.05 if not settle else 0.012,
+          arm_velocity_tolerance=0.01 if waypoint.phase == "ready" else 0.08,
           settle=settle,
         ),
       )
@@ -625,7 +641,7 @@ class PickPlaceExecutor(GraspExecutor):
         self._place_with_cartesian_feedback(plan)
       else:
         self.sim.set_arm_joint_goal(plan.side, waypoint.joint_positions)
-        settle = waypoint.phase == "approach"
+        settle = waypoint.phase in {"ready", "approach"}
         self._advance_until_goals(
           waypoint.duration,
           waypoint.phase,
@@ -633,7 +649,10 @@ class PickPlaceExecutor(GraspExecutor):
           plan.side,
           arm=True,
           hand=False,
-          arm_tolerance=0.05 if not settle else 0.012,
+          arm_tolerance=0.001
+          if waypoint.phase == "ready"
+          else (0.05 if not settle else 0.012),
+          arm_velocity_tolerance=0.01 if waypoint.phase == "ready" else 0.08,
           settle=settle,
         )
       phases.append(waypoint.phase)

@@ -579,7 +579,7 @@ def refresh_example(
       "- [原始 HDF5](raw/light_bulb_000000.h5) · [当前检查结果](summary.json)\n\n"
       f"承力停转窗口 {metrics['loaded_stall_window_s'][0]:.2f}–{metrics['loaded_stall_window_s'][1]:.2f} 秒，转角变化 {metrics['stall_rotation_degrees']:.3f}°，最小顺时针手力矩 {metrics['stall_min_torque_nm']:.3f} N·m。\n\n"
       f"首次确认承力拧紧时立即亮灯，首次记录亮灯为 {metrics['bulb_light_on_s']:.2f} 秒，比松手提前 {metrics['bulb_lit_before_release_s']:.2f} 秒；期间手指继续施力，松手后保持亮灯，重置或拧松后熄灭。HDF5 的 bulb_screw/bulb_lit 保存开关状态。\n\n"
-      f"旋入半圈、连续下降 2 mm；五指交替换指，旋拧及换指期间右臂七关节目标保持不变。实际手腕最大转角偏移 {result.maximum_wrist_rotation_deg:.3f}°、位置偏移 {result.maximum_wrist_displacement_m * 1000:.3f} mm，来自执行器柔顺及负载变化。\n\n"
+      f"分 {result.strokes} 段旋入约 100°、连续下降约 {config.THREAD_TRAVEL_M * 1000:.2f} mm；五指交替换指，旋拧及换指期间右臂七关节目标保持不变。实际手腕最大转角偏移 {result.maximum_wrist_rotation_deg:.3f}°、位置偏移 {result.maximum_wrist_displacement_m * 1000:.3f} mm，来自执行器柔顺及负载变化。\n\n"
       f"状态与触觉 100 Hz；四路 Raw RGB（head、left_wrist、right_wrist、bulb_closeup）320×240、{camera_hz} Hz，复核视频 10 Hz；物理 500 Hz。任务监测器在每个积分步后刷新求解，状态、触觉和图像使用同一时刻；初始帧为 0。视频逐帧索引见 review/frames.csv，末帧保留精确终态，固定帧率与末帧显示时长带来少量播放长度差异。\n\n"
       "Fn 为每指 35 个单元之和，|Ft| 为局部两轴有符号切向力先求和再取模；原始值不裁剪、不滤波、不插值。热图固定色标可能饱和。各指在承力拧紧阶段（tighten）的平均 Fn/Ft 均高于松动旋入阶段；亮灯后固定目标握持（hold_tight）单独记录，不混入旋拧均值。该握持段仍要求每指 Fn ≥ 4 N、顺时针力矩 ≥ 0.1 N·m。换指和松手应卸载，力并非全程单调增长。\n\n"
       "旋拧目标在每个 2 ms 物理步连续推进；交替松开、复位和重新接触期间，支撑组继续闭环调节握力。拧紧确认使用每个物理步的原始接触力。summary.json 中 turn_force_variation 统计松动旋入段内部的原始力标准差与相邻采样跳变量，不混入换指卸载和末端增力。\n\n"

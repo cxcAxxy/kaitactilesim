@@ -18,16 +18,16 @@ SCOURING_PANEL = 1  # axis * 2 + side: X, positive side
 
 
 def points():
-  """Rest mesh: one exact 60 × 54 × 120 mm rectangular cuboid.
+  """Rest mesh: one exact 45 × 62 × 110 mm rectangular cuboid.
 
-  Keep the upper grasp nodes and extend the cleaning end for rim clearance.
+  The +X cleaning face is 62 × 110 mm while the side thickness is 45 mm.
   """
   return np.array(
     [
       (x, y, z)
-      for x in np.linspace(-0.033, 0.027, SHAPE[0])
-      for y in np.linspace(-0.027, 0.027, SHAPE[1])
-      for z in (-0.090, -0.072, -0.054, -0.036, -0.018, 0.0, 0.015, 0.030)
+      for x in np.linspace(-0.0245, 0.0205, SHAPE[0])
+      for y in np.linspace(-0.031, 0.031, SHAPE[1])
+      for z in (-0.080, -0.064, -0.048, -0.032, -0.016, 0.0, 0.015, 0.030)
     ]
   )
 

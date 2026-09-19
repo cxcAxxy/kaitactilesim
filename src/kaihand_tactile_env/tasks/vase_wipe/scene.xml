@@ -9,8 +9,8 @@
     <camera name="vase_closeup" pos="0.87 -0.7 1.2" xyaxes="0.76822128 0.6401844 -0 -0.32338546 0.38806255 0.86303494" fovy="45" />
     <camera name="vase_inside" pos="0.28 -0.4 1.12" xyaxes="0.51622005 -0.85645599 0 0.45348023 0.27333055 0.84831957" fovy="40" />
     <body name="vase" pos="0.58 -0.18 0.68">
-      <geom name="vase_foot" type="cylinder" size=".051 .008" pos="0 0 .008" class="vase_ceramic" material="vase_clay" rgba=".32 .19 .10 1" />
-      <geom name="vase_floor" type="cylinder" size="0.08982344497607656 .007" pos="0 0 0.093" class="vase_ceramic" material="vase_clay" rgba=".32 .19 .10 1" />
+      <geom name="vase_foot" type="cylinder" size=".051 .008" pos="0 0 .008" class="vase_ceramic" material="vase_clay" rgba="0.84 0.8 0.69 1" />
+      <geom name="vase_floor" type="cylinder" size="0.08982344497607656 .007" pos="0 0 0.093" class="vase_ceramic" material="vase_clay" rgba="0.84 0.8 0.69 1" />
       <geom name="vase_wall_0" type="mesh" mesh="vase_wall_0" group="3" class="vase_ceramic" />
       <geom name="vase_wall_1" type="mesh" mesh="vase_wall_1" group="3" class="vase_ceramic" />
       <geom name="vase_wall_2" type="mesh" mesh="vase_wall_2" group="3" class="vase_ceramic" />
@@ -300,453 +300,453 @@
       <geom name="vase_wall_286" type="mesh" mesh="vase_wall_286" group="3" class="vase_ceramic" />
       <geom name="vase_wall_287" type="mesh" mesh="vase_wall_287" group="3" class="vase_ceramic" />
       <geom name="vase_visual" type="mesh" mesh="vase_shell_mesh" contype="0" conaffinity="0" mass="0" material="vase_glaze" />
-      <geom name="stain_0" type="ellipsoid" pos="0.064923349 -0.0088182884 0.178" quat="0.99772274 0 0 -0.067448754" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_1" type="ellipsoid" pos="0.065254314 -0.0058887966 0.178" quat="0.99898767 0 0 -0.044984814" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_2" type="ellipsoid" pos="0.065453161 -0.002947382 0.178" quat="0.99974689 0 0 -0.022498102" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_3" type="ellipsoid" pos="0.065519489 0 0.178" quat="1 0 0 0" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_4" type="ellipsoid" pos="0.065453161 0.002947382 0.178" quat="0.99974689 0 0 0.022498102" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_5" type="ellipsoid" pos="0.065254314 0.0058887966 0.178" quat="0.99898767 0 0 0.044984814" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_6" type="ellipsoid" pos="0.064923349 0.0088182884 0.178" quat="0.99772274 0 0 0.067448754" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_7" type="ellipsoid" pos="0.062988625 -0.0085555023 0.187" quat="0.99772274 0 0 -0.067448754" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_8" type="ellipsoid" pos="0.063309727 -0.0057133097 0.187" quat="0.99898767 0 0 -0.044984814" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_9" type="ellipsoid" pos="0.063502649 -0.0028595497 0.187" quat="0.99974689 0 0 -0.022498102" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_10" type="ellipsoid" pos="0.063567 0 0.187" quat="1 0 0 0" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_11" type="ellipsoid" pos="0.063502649 0.0028595497 0.187" quat="0.99974689 0 0 0.022498102" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_12" type="ellipsoid" pos="0.063309727 0.0057133097 0.187" quat="0.99898767 0 0 0.044984814" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_13" type="ellipsoid" pos="0.062988625 0.0085555023 0.187" quat="0.99772274 0 0 0.067448754" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_14" type="ellipsoid" pos="0.062469483 -0.0084849892 0.196" quat="0.99772274 0 0 -0.067448754" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_15" type="ellipsoid" pos="0.062787939 -0.0056662215 0.196" quat="0.99898767 0 0 -0.044984814" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_16" type="ellipsoid" pos="0.062979271 -0.0028359817 0.196" quat="0.99974689 0 0 -0.022498102" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_17" type="ellipsoid" pos="0.063043091 0 0.196" quat="1 0 0 0" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_18" type="ellipsoid" pos="0.062979271 0.0028359817 0.196" quat="0.99974689 0 0 0.022498102" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_19" type="ellipsoid" pos="0.062787939 0.0056662215 0.196" quat="0.99898767 0 0 0.044984814" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
-      <geom name="stain_20" type="ellipsoid" pos="0.062469483 0.0084849892 0.196" quat="0.99772274 0 0 0.067448754" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.82 0.025 0.035 1" />
+      <geom name="stain_0" type="ellipsoid" pos="0.062491126 0.0059545812 0.194" quat="0.99887209 0 0 0.04748214" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_1" type="ellipsoid" pos="0.062394781 0.006891243 0.194" quat="0.99848788 0 0 0.054972275" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_2" type="ellipsoid" pos="0.062284397 0.0078263544 0.194" quat="0.99804751 0 0 0.062459318" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_3" type="ellipsoid" pos="0.062159999 0.0087597049 0.194" quat="0.997551 0 0 0.069942847" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_4" type="ellipsoid" pos="0.062021615 0.0096910844 0.194" quat="0.99699838 0 0 0.077422443" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_5" type="ellipsoid" pos="0.061869277 0.010620284 0.194" quat="0.99638967 0 0 0.084897683" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_6" type="ellipsoid" pos="0.061703019 0.011547093 0.194" quat="0.99572492 0 0 0.092368148" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_7" type="ellipsoid" pos="0.062892671 0.0059928431 0.197" quat="0.99887209 0 0 0.04748214" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_8" type="ellipsoid" pos="0.062795707 0.0069355236 0.197" quat="0.99848788 0 0 0.054972275" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_9" type="ellipsoid" pos="0.062684613 0.0078766436 0.197" quat="0.99804751 0 0 0.062459318" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_10" type="ellipsoid" pos="0.062559416 0.0088159915 0.197" quat="0.997551 0 0 0.069942847" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_11" type="ellipsoid" pos="0.062420143 0.0097533557 0.197" quat="0.99699838 0 0 0.077422443" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_12" type="ellipsoid" pos="0.062266826 0.010688526 0.197" quat="0.99638967 0 0 0.084897683" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_13" type="ellipsoid" pos="0.0620995 0.01162129 0.197" quat="0.99572492 0 0 0.092368148" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_14" type="ellipsoid" pos="0.063294216 0.006031105 0.2" quat="0.99887209 0 0 0.04748214" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_15" type="ellipsoid" pos="0.063196632 0.0069798042 0.2" quat="0.99848788 0 0 0.054972275" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_16" type="ellipsoid" pos="0.06308483 0.0079269329 0.2" quat="0.99804751 0 0 0.062459318" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_17" type="ellipsoid" pos="0.062958833 0.0088722781 0.2" quat="0.997551 0 0 0.069942847" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_18" type="ellipsoid" pos="0.062818671 0.0098156271 0.2" quat="0.99699838 0 0 0.077422443" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_19" type="ellipsoid" pos="0.062664375 0.010756768 0.2" quat="0.99638967 0 0 0.084897683" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
+      <geom name="stain_20" type="ellipsoid" pos="0.06249598 0.011695488 0.2" quat="0.99572492 0 0 0.092368148" size=".0010 .0048 .0055" contype="0" conaffinity="0" mass="0" rgba="0.32 0.35 0.38 1" />
     </body>
-    <body name="sponge" pos="0.427 -0.4 0.786">
+    <body name="sponge" pos="0.428 -0.4 0.776">
       <freejoint name="sponge_freejoint" />
       <geom name="sponge_reference" type="sphere" size=".0005" pos="0 0 0" mass=".001" rgba="0 0 0 0" contype="15363" conaffinity="15363" group="3" />
     </body>
-    <body name="sponge_node_0" pos="0.397 -0.427 0.681">
+    <body name="sponge_node_0" pos="0.4055 -0.431 0.681">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_0_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_0_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_0_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_1" pos="0.397 -0.427 0.699">
+    <body name="sponge_node_1" pos="0.4055 -0.431 0.697">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_1_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_1_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_1_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_2" pos="0.397 -0.427 0.717">
+    <body name="sponge_node_2" pos="0.4055 -0.431 0.713">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_2_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_2_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_2_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_3" pos="0.397 -0.427 0.735">
+    <body name="sponge_node_3" pos="0.4055 -0.431 0.729">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_3_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_3_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_3_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_4" pos="0.397 -0.427 0.753">
+    <body name="sponge_node_4" pos="0.4055 -0.431 0.745">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_4_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_4_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_4_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_5" pos="0.397 -0.427 0.771">
+    <body name="sponge_node_5" pos="0.4055 -0.431 0.761">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_5_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_5_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_5_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_6" pos="0.397 -0.427 0.786">
+    <body name="sponge_node_6" pos="0.4055 -0.431 0.776">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_6_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_6_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_6_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_7" pos="0.397 -0.427 0.801">
+    <body name="sponge_node_7" pos="0.4055 -0.431 0.791">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_7_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_7_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_7_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_8" pos="0.397 -0.4 0.681">
+    <body name="sponge_node_8" pos="0.4055 -0.4 0.681">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_8_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_8_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_8_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_9" pos="0.397 -0.4 0.699">
+    <body name="sponge_node_9" pos="0.4055 -0.4 0.697">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_9_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_9_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_9_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_10" pos="0.397 -0.4 0.717">
+    <body name="sponge_node_10" pos="0.4055 -0.4 0.713">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_10_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_10_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_10_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_11" pos="0.397 -0.4 0.735">
+    <body name="sponge_node_11" pos="0.4055 -0.4 0.729">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_11_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_11_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_11_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_12" pos="0.397 -0.4 0.753">
+    <body name="sponge_node_12" pos="0.4055 -0.4 0.745">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_12_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_12_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_12_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_13" pos="0.397 -0.4 0.771">
+    <body name="sponge_node_13" pos="0.4055 -0.4 0.761">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_13_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_13_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_13_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_14" pos="0.397 -0.4 0.786">
+    <body name="sponge_node_14" pos="0.4055 -0.4 0.776">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_14_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_14_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_14_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_15" pos="0.397 -0.4 0.801">
+    <body name="sponge_node_15" pos="0.4055 -0.4 0.791">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_15_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_15_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_15_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_16" pos="0.397 -0.373 0.681">
+    <body name="sponge_node_16" pos="0.4055 -0.369 0.681">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_16_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_16_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_16_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_17" pos="0.397 -0.373 0.699">
+    <body name="sponge_node_17" pos="0.4055 -0.369 0.697">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_17_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_17_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_17_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_18" pos="0.397 -0.373 0.717">
+    <body name="sponge_node_18" pos="0.4055 -0.369 0.713">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_18_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_18_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_18_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_19" pos="0.397 -0.373 0.735">
+    <body name="sponge_node_19" pos="0.4055 -0.369 0.729">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_19_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_19_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_19_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_20" pos="0.397 -0.373 0.753">
+    <body name="sponge_node_20" pos="0.4055 -0.369 0.745">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_20_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_20_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_20_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_21" pos="0.397 -0.373 0.771">
+    <body name="sponge_node_21" pos="0.4055 -0.369 0.761">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_21_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_21_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_21_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_22" pos="0.397 -0.373 0.786">
+    <body name="sponge_node_22" pos="0.4055 -0.369 0.776">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_22_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_22_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_22_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_23" pos="0.397 -0.373 0.801">
+    <body name="sponge_node_23" pos="0.4055 -0.369 0.791">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_23_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_23_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_23_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_24" pos="0.427 -0.427 0.681">
+    <body name="sponge_node_24" pos="0.428 -0.431 0.681">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_24_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_24_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_24_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_25" pos="0.427 -0.427 0.699">
+    <body name="sponge_node_25" pos="0.428 -0.431 0.697">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_25_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_25_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_25_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_26" pos="0.427 -0.427 0.717">
+    <body name="sponge_node_26" pos="0.428 -0.431 0.713">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_26_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_26_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_26_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_27" pos="0.427 -0.427 0.735">
+    <body name="sponge_node_27" pos="0.428 -0.431 0.729">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_27_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_27_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_27_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_28" pos="0.427 -0.427 0.753">
+    <body name="sponge_node_28" pos="0.428 -0.431 0.745">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_28_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_28_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_28_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_29" pos="0.427 -0.427 0.771">
+    <body name="sponge_node_29" pos="0.428 -0.431 0.761">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_29_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_29_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_29_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_30" pos="0.427 -0.427 0.786">
+    <body name="sponge_node_30" pos="0.428 -0.431 0.776">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_30_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_30_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_30_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_31" pos="0.427 -0.427 0.801">
+    <body name="sponge_node_31" pos="0.428 -0.431 0.791">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_31_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_31_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_31_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_32" pos="0.427 -0.4 0.681">
+    <body name="sponge_node_32" pos="0.428 -0.4 0.681">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_32_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_32_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_32_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_33" pos="0.427 -0.4 0.699">
+    <body name="sponge_node_33" pos="0.428 -0.4 0.697">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_33_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_33_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_33_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_34" pos="0.427 -0.4 0.717">
+    <body name="sponge_node_34" pos="0.428 -0.4 0.713">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_34_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_34_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_34_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_35" pos="0.427 -0.4 0.735">
+    <body name="sponge_node_35" pos="0.428 -0.4 0.729">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_35_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_35_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_35_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_36" pos="0.427 -0.4 0.753">
+    <body name="sponge_node_36" pos="0.428 -0.4 0.745">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_36_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_36_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_36_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_37" pos="0.427 -0.4 0.771">
+    <body name="sponge_node_37" pos="0.428 -0.4 0.761">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_37_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_37_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_37_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_39" pos="0.427 -0.4 0.801">
+    <body name="sponge_node_39" pos="0.428 -0.4 0.791">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_39_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_39_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_39_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_40" pos="0.427 -0.373 0.681">
+    <body name="sponge_node_40" pos="0.428 -0.369 0.681">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_40_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_40_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_40_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_41" pos="0.427 -0.373 0.699">
+    <body name="sponge_node_41" pos="0.428 -0.369 0.697">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_41_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_41_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_41_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_42" pos="0.427 -0.373 0.717">
+    <body name="sponge_node_42" pos="0.428 -0.369 0.713">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_42_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_42_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_42_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_43" pos="0.427 -0.373 0.735">
+    <body name="sponge_node_43" pos="0.428 -0.369 0.729">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_43_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_43_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_43_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_44" pos="0.427 -0.373 0.753">
+    <body name="sponge_node_44" pos="0.428 -0.369 0.745">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_44_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_44_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_44_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_45" pos="0.427 -0.373 0.771">
+    <body name="sponge_node_45" pos="0.428 -0.369 0.761">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_45_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_45_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_45_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_46" pos="0.427 -0.373 0.786">
+    <body name="sponge_node_46" pos="0.428 -0.369 0.776">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_46_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_46_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_46_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_47" pos="0.427 -0.373 0.801">
+    <body name="sponge_node_47" pos="0.428 -0.369 0.791">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_47_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_47_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_47_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_48" pos="0.457 -0.427 0.681">
+    <body name="sponge_node_48" pos="0.4505 -0.431 0.681">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_48_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_48_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_48_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_49" pos="0.457 -0.427 0.699">
+    <body name="sponge_node_49" pos="0.4505 -0.431 0.697">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_49_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_49_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_49_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_50" pos="0.457 -0.427 0.717">
+    <body name="sponge_node_50" pos="0.4505 -0.431 0.713">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_50_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_50_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_50_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_51" pos="0.457 -0.427 0.735">
+    <body name="sponge_node_51" pos="0.4505 -0.431 0.729">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_51_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_51_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_51_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_52" pos="0.457 -0.427 0.753">
+    <body name="sponge_node_52" pos="0.4505 -0.431 0.745">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_52_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_52_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_52_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_53" pos="0.457 -0.427 0.771">
+    <body name="sponge_node_53" pos="0.4505 -0.431 0.761">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_53_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_53_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_53_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_54" pos="0.457 -0.427 0.786">
+    <body name="sponge_node_54" pos="0.4505 -0.431 0.776">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_54_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_54_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_54_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_55" pos="0.457 -0.427 0.801">
+    <body name="sponge_node_55" pos="0.4505 -0.431 0.791">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_55_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_55_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_55_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_56" pos="0.457 -0.4 0.681">
+    <body name="sponge_node_56" pos="0.4505 -0.4 0.681">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_56_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_56_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_56_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_57" pos="0.457 -0.4 0.699">
+    <body name="sponge_node_57" pos="0.4505 -0.4 0.697">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_57_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_57_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_57_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_58" pos="0.457 -0.4 0.717">
+    <body name="sponge_node_58" pos="0.4505 -0.4 0.713">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_58_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_58_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_58_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_59" pos="0.457 -0.4 0.735">
+    <body name="sponge_node_59" pos="0.4505 -0.4 0.729">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_59_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_59_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_59_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_60" pos="0.457 -0.4 0.753">
+    <body name="sponge_node_60" pos="0.4505 -0.4 0.745">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_60_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_60_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_60_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_61" pos="0.457 -0.4 0.771">
+    <body name="sponge_node_61" pos="0.4505 -0.4 0.761">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_61_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_61_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_61_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_62" pos="0.457 -0.4 0.786">
+    <body name="sponge_node_62" pos="0.4505 -0.4 0.776">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_62_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_62_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_62_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_63" pos="0.457 -0.4 0.801">
+    <body name="sponge_node_63" pos="0.4505 -0.4 0.791">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_63_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_63_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_63_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_64" pos="0.457 -0.373 0.681">
+    <body name="sponge_node_64" pos="0.4505 -0.369 0.681">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_64_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_64_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_64_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_65" pos="0.457 -0.373 0.699">
+    <body name="sponge_node_65" pos="0.4505 -0.369 0.697">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_65_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_65_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_65_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_66" pos="0.457 -0.373 0.717">
+    <body name="sponge_node_66" pos="0.4505 -0.369 0.713">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_66_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_66_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_66_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_67" pos="0.457 -0.373 0.735">
+    <body name="sponge_node_67" pos="0.4505 -0.369 0.729">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_67_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_67_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_67_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_68" pos="0.457 -0.373 0.753">
+    <body name="sponge_node_68" pos="0.4505 -0.369 0.745">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_68_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_68_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_68_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_69" pos="0.457 -0.373 0.771">
+    <body name="sponge_node_69" pos="0.4505 -0.369 0.761">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_69_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_69_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_69_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_70" pos="0.457 -0.373 0.786">
+    <body name="sponge_node_70" pos="0.4505 -0.369 0.776">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_70_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_70_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
       <joint name="sponge_node_70_2" type="slide" axis="0 0 1" limited="false" damping=".005" />
     </body>
-    <body name="sponge_node_71" pos="0.457 -0.373 0.801">
+    <body name="sponge_node_71" pos="0.4505 -0.369 0.791">
       <inertial pos="0 0 0" mass="0.000591549295774648" diaginertia="1e-8 1e-8 1e-8" />
       <joint name="sponge_node_71_0" type="slide" axis="1 0 0" limited="false" damping=".005" />
       <joint name="sponge_node_71_1" type="slide" axis="0 1 0" limited="false" damping=".005" />
@@ -757,7 +757,7 @@
   <asset>
     <texture name="vase_glaze" type="2d" file="vase_glaze.png" />
     <material name="vase_glaze" texture="vase_glaze" texuniform="false" specular=".28" shininess=".25" />
-    <material name="vase_clay" rgba=".28 .16 .085 1" specular=".1" />
+    <material name="vase_clay" rgba="0.84 0.8 0.69 1" specular=".1" />
     <mesh name="vase_wall_0" vertex="0.049572243 -0.0065263096 0.012 0.049572243 0.0065263096 0.012 0.056512357 0.007439993 0.012 0.056512357 -0.007439993 0.012 0.055620057 -0.0073225194 0.027816092 0.055620057 0.0073225194 0.027816092 0.062560171 0.0082362027 0.027816092 0.062560171 -0.0082362027 0.027816092" face="0 2 1 0 3 2 4 5 6 4 6 7 0 1 5 0 5 4 1 2 6 1 6 5 2 3 7 2 7 6 3 0 4 3 4 7" />
     <mesh name="vase_wall_1" vertex="0.049572243 0.0065263096 0.012 0.046193977 0.019134172 0.012 0.052661133 0.021812956 0.012 0.056512357 0.007439993 0.012 0.055620057 0.0073225194 0.027816092 0.051829642 0.021468541 0.027816092 0.058296799 0.024147325 0.027816092 0.062560171 0.0082362027 0.027816092" face="0 2 1 0 3 2 4 5 6 4 6 7 0 1 5 0 5 4 1 2 6 1 6 5 2 3 7 2 7 6 3 0 4 3 4 7" />
     <mesh name="vase_wall_2" vertex="0.046193977 0.019134172 0.012 0.039667667 0.030438071 0.012 0.04522114 0.034699401 0.012 0.052661133 0.021812956 0.012 0.051829642 0.021468541 0.027816092 0.044507122 0.034151516 0.027816092 0.050060596 0.038412846 0.027816092 0.058296799 0.024147325 0.027816092" face="0 2 1 0 3 2 4 5 6 4 6 7 0 1 5 0 5 4 1 2 6 1 6 5 2 3 7 2 7 6 3 0 4 3 4 7" />
@@ -1056,73 +1056,73 @@
       <elasticity young="20000.0" poisson=".12" damping="0" />
       <edge damping=".0001" />
     </flex>
-    <skin name="sponge_skin" material="sponge_surface" vertex="0.397 -0.427 0.681 0.397 -0.427 0.699 0.397 -0.427 0.717 0.397 -0.427 0.735 0.397 -0.427 0.753 0.397 -0.427 0.771 0.397 -0.427 0.786 0.397 -0.427 0.801 0.397 -0.4 0.681 0.397 -0.4 0.699 0.397 -0.4 0.717 0.397 -0.4 0.735 0.397 -0.4 0.753 0.397 -0.4 0.771 0.397 -0.4 0.786 0.397 -0.4 0.801 0.397 -0.373 0.681 0.397 -0.373 0.699 0.397 -0.373 0.717 0.397 -0.373 0.735 0.397 -0.373 0.753 0.397 -0.373 0.771 0.397 -0.373 0.786 0.397 -0.373 0.801 0.457 -0.427 0.681 0.457 -0.427 0.699 0.457 -0.427 0.717 0.457 -0.427 0.735 0.457 -0.427 0.753 0.457 -0.427 0.771 0.457 -0.427 0.786 0.457 -0.427 0.801 0.457 -0.4 0.681 0.457 -0.4 0.699 0.457 -0.4 0.717 0.457 -0.4 0.735 0.457 -0.4 0.753 0.457 -0.4 0.771 0.457 -0.4 0.786 0.457 -0.4 0.801 0.457 -0.373 0.681 0.457 -0.373 0.699 0.457 -0.373 0.717 0.457 -0.373 0.735 0.457 -0.373 0.753 0.457 -0.373 0.771 0.457 -0.373 0.786 0.457 -0.373 0.801 0.397 -0.427 0.681 0.397 -0.427 0.699 0.397 -0.427 0.717 0.397 -0.427 0.735 0.397 -0.427 0.753 0.397 -0.427 0.771 0.397 -0.427 0.786 0.397 -0.427 0.801 0.427 -0.427 0.681 0.427 -0.427 0.699 0.427 -0.427 0.717 0.427 -0.427 0.735 0.427 -0.427 0.753 0.427 -0.427 0.771 0.427 -0.427 0.786 0.427 -0.427 0.801 0.457 -0.427 0.681 0.457 -0.427 0.699 0.457 -0.427 0.717 0.457 -0.427 0.735 0.457 -0.427 0.753 0.457 -0.427 0.771 0.457 -0.427 0.786 0.457 -0.427 0.801 0.397 -0.373 0.681 0.397 -0.373 0.699 0.397 -0.373 0.717 0.397 -0.373 0.735 0.397 -0.373 0.753 0.397 -0.373 0.771 0.397 -0.373 0.786 0.397 -0.373 0.801 0.427 -0.373 0.681 0.427 -0.373 0.699 0.427 -0.373 0.717 0.427 -0.373 0.735 0.427 -0.373 0.753 0.427 -0.373 0.771 0.427 -0.373 0.786 0.427 -0.373 0.801 0.457 -0.373 0.681 0.457 -0.373 0.699 0.457 -0.373 0.717 0.457 -0.373 0.735 0.457 -0.373 0.753 0.457 -0.373 0.771 0.457 -0.373 0.786 0.457 -0.373 0.801 0.397 -0.427 0.681 0.397 -0.4 0.681 0.397 -0.373 0.681 0.427 -0.427 0.681 0.427 -0.4 0.681 0.427 -0.373 0.681 0.457 -0.427 0.681 0.457 -0.4 0.681 0.457 -0.373 0.681 0.397 -0.427 0.801 0.397 -0.4 0.801 0.397 -0.373 0.801 0.427 -0.427 0.801 0.427 -0.4 0.801 0.427 -0.373 0.801 0.457 -0.427 0.801 0.457 -0.4 0.801 0.457 -0.373 0.801" texcoord="0.00333333333 0.005 0.00333333333 0.075 0.00333333333 0.145 0.00333333333 0.215 0.00333333333 0.285 0.00333333333 0.355 0.00333333333 0.425 0.00333333333 0.495 0.166666667 0.005 0.166666667 0.075 0.166666667 0.145 0.166666667 0.215 0.166666667 0.285 0.166666667 0.355 0.166666667 0.425 0.166666667 0.495 0.33 0.005 0.33 0.075 0.33 0.145 0.33 0.215 0.33 0.285 0.33 0.355 0.33 0.425 0.33 0.495 0.336666667 0.005 0.336666667 0.075 0.336666667 0.145 0.336666667 0.215 0.336666667 0.285 0.336666667 0.355 0.336666667 0.425 0.336666667 0.495 0.5 0.005 0.5 0.075 0.5 0.145 0.5 0.215 0.5 0.285 0.5 0.355 0.5 0.425 0.5 0.495 0.663333333 0.005 0.663333333 0.075 0.663333333 0.145 0.663333333 0.215 0.663333333 0.285 0.663333333 0.355 0.663333333 0.425 0.663333333 0.495 0.67 0.005 0.67 0.075 0.67 0.145 0.67 0.215 0.67 0.285 0.67 0.355 0.67 0.425 0.67 0.495 0.833333333 0.005 0.833333333 0.075 0.833333333 0.145 0.833333333 0.215 0.833333333 0.285 0.833333333 0.355 0.833333333 0.425 0.833333333 0.495 0.996666667 0.005 0.996666667 0.075 0.996666667 0.145 0.996666667 0.215 0.996666667 0.285 0.996666667 0.355 0.996666667 0.425 0.996666667 0.495 0.00333333333 0.505 0.00333333333 0.575 0.00333333333 0.645 0.00333333333 0.715 0.00333333333 0.785 0.00333333333 0.855 0.00333333333 0.925 0.00333333333 0.995 0.166666667 0.505 0.166666667 0.575 0.166666667 0.645 0.166666667 0.715 0.166666667 0.785 0.166666667 0.855 0.166666667 0.925 0.166666667 0.995 0.33 0.505 0.33 0.575 0.33 0.645 0.33 0.715 0.33 0.785 0.33 0.855 0.33 0.925 0.33 0.995 0.336666667 0.505 0.336666667 0.75 0.336666667 0.995 0.5 0.505 0.5 0.75 0.5 0.995 0.663333333 0.505 0.663333333 0.75 0.663333333 0.995 0.67 0.505 0.67 0.75 0.67 0.995 0.833333333 0.505 0.833333333 0.75 0.833333333 0.995 0.996666667 0.505 0.996666667 0.75 0.996666667 0.995" face="0 9 8 0 1 9 1 10 9 1 2 10 2 11 10 2 3 11 3 12 11 3 4 12 4 13 12 4 5 13 5 14 13 5 6 14 6 15 14 6 7 15 8 17 16 8 9 17 9 18 17 9 10 18 10 19 18 10 11 19 11 20 19 11 12 20 12 21 20 12 13 21 13 22 21 13 14 22 14 23 22 14 15 23 24 32 33 24 33 25 25 33 34 25 34 26 26 34 35 26 35 27 27 35 36 27 36 28 28 36 37 28 37 29 29 37 38 29 38 30 30 38 39 30 39 31 32 40 41 32 41 33 33 41 42 33 42 34 34 42 43 34 43 35 35 43 44 35 44 36 36 44 45 36 45 37 37 45 46 37 46 38 38 46 47 38 47 39 48 56 57 48 57 49 49 57 58 49 58 50 50 58 59 50 59 51 51 59 60 51 60 52 52 60 61 52 61 53 53 61 62 53 62 54 54 62 63 54 63 55 56 64 65 56 65 57 57 65 66 57 66 58 58 66 67 58 67 59 59 67 68 59 68 60 60 68 69 60 69 61 61 69 70 61 70 62 62 70 71 62 71 63 72 81 80 72 73 81 73 82 81 73 74 82 74 83 82 74 75 83 75 84 83 75 76 84 76 85 84 76 77 85 77 86 85 77 78 86 78 87 86 78 79 87 80 89 88 80 81 89 81 90 89 81 82 90 82 91 90 82 83 91 83 92 91 83 84 92 84 93 92 84 85 93 85 94 93 85 86 94 86 95 94 86 87 95 96 100 99 96 97 100 97 101 100 97 98 101 99 103 102 99 100 103 100 104 103 100 101 104 105 108 109 105 109 106 106 109 110 106 110 107 108 111 112 108 112 109 109 112 113 109 113 110" inflate=".001" group="0">
-      <bone body="sponge_node_0" bindpos="0.397 -0.427 0.681" bindquat="1 0 0 0" vertid="0 48 96" vertweight="1 1 1" />
-      <bone body="sponge_node_1" bindpos="0.397 -0.427 0.699" bindquat="1 0 0 0" vertid="1 49" vertweight="1 1" />
-      <bone body="sponge_node_2" bindpos="0.397 -0.427 0.717" bindquat="1 0 0 0" vertid="2 50" vertweight="1 1" />
-      <bone body="sponge_node_3" bindpos="0.397 -0.427 0.735" bindquat="1 0 0 0" vertid="3 51" vertweight="1 1" />
-      <bone body="sponge_node_4" bindpos="0.397 -0.427 0.753" bindquat="1 0 0 0" vertid="4 52" vertweight="1 1" />
-      <bone body="sponge_node_5" bindpos="0.397 -0.427 0.771" bindquat="1 0 0 0" vertid="5 53" vertweight="1 1" />
-      <bone body="sponge_node_6" bindpos="0.397 -0.427 0.786" bindquat="1 0 0 0" vertid="6 54" vertweight="1 1" />
-      <bone body="sponge_node_7" bindpos="0.397 -0.427 0.801" bindquat="1 0 0 0" vertid="7 55 105" vertweight="1 1 1" />
-      <bone body="sponge_node_8" bindpos="0.397 -0.4 0.681" bindquat="1 0 0 0" vertid="8 97" vertweight="1 1" />
-      <bone body="sponge_node_9" bindpos="0.397 -0.4 0.699" bindquat="1 0 0 0" vertid="9" vertweight="1" />
-      <bone body="sponge_node_10" bindpos="0.397 -0.4 0.717" bindquat="1 0 0 0" vertid="10" vertweight="1" />
-      <bone body="sponge_node_11" bindpos="0.397 -0.4 0.735" bindquat="1 0 0 0" vertid="11" vertweight="1" />
-      <bone body="sponge_node_12" bindpos="0.397 -0.4 0.753" bindquat="1 0 0 0" vertid="12" vertweight="1" />
-      <bone body="sponge_node_13" bindpos="0.397 -0.4 0.771" bindquat="1 0 0 0" vertid="13" vertweight="1" />
-      <bone body="sponge_node_14" bindpos="0.397 -0.4 0.786" bindquat="1 0 0 0" vertid="14" vertweight="1" />
-      <bone body="sponge_node_15" bindpos="0.397 -0.4 0.801" bindquat="1 0 0 0" vertid="15 106" vertweight="1 1" />
-      <bone body="sponge_node_16" bindpos="0.397 -0.373 0.681" bindquat="1 0 0 0" vertid="16 72 98" vertweight="1 1 1" />
-      <bone body="sponge_node_17" bindpos="0.397 -0.373 0.699" bindquat="1 0 0 0" vertid="17 73" vertweight="1 1" />
-      <bone body="sponge_node_18" bindpos="0.397 -0.373 0.717" bindquat="1 0 0 0" vertid="18 74" vertweight="1 1" />
-      <bone body="sponge_node_19" bindpos="0.397 -0.373 0.735" bindquat="1 0 0 0" vertid="19 75" vertweight="1 1" />
-      <bone body="sponge_node_20" bindpos="0.397 -0.373 0.753" bindquat="1 0 0 0" vertid="20 76" vertweight="1 1" />
-      <bone body="sponge_node_21" bindpos="0.397 -0.373 0.771" bindquat="1 0 0 0" vertid="21 77" vertweight="1 1" />
-      <bone body="sponge_node_22" bindpos="0.397 -0.373 0.786" bindquat="1 0 0 0" vertid="22 78" vertweight="1 1" />
-      <bone body="sponge_node_23" bindpos="0.397 -0.373 0.801" bindquat="1 0 0 0" vertid="23 79 107" vertweight="1 1 1" />
-      <bone body="sponge_node_24" bindpos="0.427 -0.427 0.681" bindquat="1 0 0 0" vertid="56 99" vertweight="1 1" />
-      <bone body="sponge_node_25" bindpos="0.427 -0.427 0.699" bindquat="1 0 0 0" vertid="57" vertweight="1" />
-      <bone body="sponge_node_26" bindpos="0.427 -0.427 0.717" bindquat="1 0 0 0" vertid="58" vertweight="1" />
-      <bone body="sponge_node_27" bindpos="0.427 -0.427 0.735" bindquat="1 0 0 0" vertid="59" vertweight="1" />
-      <bone body="sponge_node_28" bindpos="0.427 -0.427 0.753" bindquat="1 0 0 0" vertid="60" vertweight="1" />
-      <bone body="sponge_node_29" bindpos="0.427 -0.427 0.771" bindquat="1 0 0 0" vertid="61" vertweight="1" />
-      <bone body="sponge_node_30" bindpos="0.427 -0.427 0.786" bindquat="1 0 0 0" vertid="62" vertweight="1" />
-      <bone body="sponge_node_31" bindpos="0.427 -0.427 0.801" bindquat="1 0 0 0" vertid="63 108" vertweight="1 1" />
-      <bone body="sponge_node_32" bindpos="0.427 -0.4 0.681" bindquat="1 0 0 0" vertid="100" vertweight="1" />
-      <bone body="sponge_node_39" bindpos="0.427 -0.4 0.801" bindquat="1 0 0 0" vertid="109" vertweight="1" />
-      <bone body="sponge_node_40" bindpos="0.427 -0.373 0.681" bindquat="1 0 0 0" vertid="80 101" vertweight="1 1" />
-      <bone body="sponge_node_41" bindpos="0.427 -0.373 0.699" bindquat="1 0 0 0" vertid="81" vertweight="1" />
-      <bone body="sponge_node_42" bindpos="0.427 -0.373 0.717" bindquat="1 0 0 0" vertid="82" vertweight="1" />
-      <bone body="sponge_node_43" bindpos="0.427 -0.373 0.735" bindquat="1 0 0 0" vertid="83" vertweight="1" />
-      <bone body="sponge_node_44" bindpos="0.427 -0.373 0.753" bindquat="1 0 0 0" vertid="84" vertweight="1" />
-      <bone body="sponge_node_45" bindpos="0.427 -0.373 0.771" bindquat="1 0 0 0" vertid="85" vertweight="1" />
-      <bone body="sponge_node_46" bindpos="0.427 -0.373 0.786" bindquat="1 0 0 0" vertid="86" vertweight="1" />
-      <bone body="sponge_node_47" bindpos="0.427 -0.373 0.801" bindquat="1 0 0 0" vertid="87 110" vertweight="1 1" />
-      <bone body="sponge_node_48" bindpos="0.457 -0.427 0.681" bindquat="1 0 0 0" vertid="24 64 102" vertweight="1 1 1" />
-      <bone body="sponge_node_49" bindpos="0.457 -0.427 0.699" bindquat="1 0 0 0" vertid="25 65" vertweight="1 1" />
-      <bone body="sponge_node_50" bindpos="0.457 -0.427 0.717" bindquat="1 0 0 0" vertid="26 66" vertweight="1 1" />
-      <bone body="sponge_node_51" bindpos="0.457 -0.427 0.735" bindquat="1 0 0 0" vertid="27 67" vertweight="1 1" />
-      <bone body="sponge_node_52" bindpos="0.457 -0.427 0.753" bindquat="1 0 0 0" vertid="28 68" vertweight="1 1" />
-      <bone body="sponge_node_53" bindpos="0.457 -0.427 0.771" bindquat="1 0 0 0" vertid="29 69" vertweight="1 1" />
-      <bone body="sponge_node_54" bindpos="0.457 -0.427 0.786" bindquat="1 0 0 0" vertid="30 70" vertweight="1 1" />
-      <bone body="sponge_node_55" bindpos="0.457 -0.427 0.801" bindquat="1 0 0 0" vertid="31 71 111" vertweight="1 1 1" />
-      <bone body="sponge_node_56" bindpos="0.457 -0.4 0.681" bindquat="1 0 0 0" vertid="32 103" vertweight="1 1" />
-      <bone body="sponge_node_57" bindpos="0.457 -0.4 0.699" bindquat="1 0 0 0" vertid="33" vertweight="1" />
-      <bone body="sponge_node_58" bindpos="0.457 -0.4 0.717" bindquat="1 0 0 0" vertid="34" vertweight="1" />
-      <bone body="sponge_node_59" bindpos="0.457 -0.4 0.735" bindquat="1 0 0 0" vertid="35" vertweight="1" />
-      <bone body="sponge_node_60" bindpos="0.457 -0.4 0.753" bindquat="1 0 0 0" vertid="36" vertweight="1" />
-      <bone body="sponge_node_61" bindpos="0.457 -0.4 0.771" bindquat="1 0 0 0" vertid="37" vertweight="1" />
-      <bone body="sponge_node_62" bindpos="0.457 -0.4 0.786" bindquat="1 0 0 0" vertid="38" vertweight="1" />
-      <bone body="sponge_node_63" bindpos="0.457 -0.4 0.801" bindquat="1 0 0 0" vertid="39 112" vertweight="1 1" />
-      <bone body="sponge_node_64" bindpos="0.457 -0.373 0.681" bindquat="1 0 0 0" vertid="40 88 104" vertweight="1 1 1" />
-      <bone body="sponge_node_65" bindpos="0.457 -0.373 0.699" bindquat="1 0 0 0" vertid="41 89" vertweight="1 1" />
-      <bone body="sponge_node_66" bindpos="0.457 -0.373 0.717" bindquat="1 0 0 0" vertid="42 90" vertweight="1 1" />
-      <bone body="sponge_node_67" bindpos="0.457 -0.373 0.735" bindquat="1 0 0 0" vertid="43 91" vertweight="1 1" />
-      <bone body="sponge_node_68" bindpos="0.457 -0.373 0.753" bindquat="1 0 0 0" vertid="44 92" vertweight="1 1" />
-      <bone body="sponge_node_69" bindpos="0.457 -0.373 0.771" bindquat="1 0 0 0" vertid="45 93" vertweight="1 1" />
-      <bone body="sponge_node_70" bindpos="0.457 -0.373 0.786" bindquat="1 0 0 0" vertid="46 94" vertweight="1 1" />
-      <bone body="sponge_node_71" bindpos="0.457 -0.373 0.801" bindquat="1 0 0 0" vertid="47 95 113" vertweight="1 1 1" />
+    <skin name="sponge_skin" material="sponge_surface" vertex="0.4055 -0.431 0.681 0.4055 -0.431 0.697 0.4055 -0.431 0.713 0.4055 -0.431 0.729 0.4055 -0.431 0.745 0.4055 -0.431 0.761 0.4055 -0.431 0.776 0.4055 -0.431 0.791 0.4055 -0.4 0.681 0.4055 -0.4 0.697 0.4055 -0.4 0.713 0.4055 -0.4 0.729 0.4055 -0.4 0.745 0.4055 -0.4 0.761 0.4055 -0.4 0.776 0.4055 -0.4 0.791 0.4055 -0.369 0.681 0.4055 -0.369 0.697 0.4055 -0.369 0.713 0.4055 -0.369 0.729 0.4055 -0.369 0.745 0.4055 -0.369 0.761 0.4055 -0.369 0.776 0.4055 -0.369 0.791 0.4505 -0.431 0.681 0.4505 -0.431 0.697 0.4505 -0.431 0.713 0.4505 -0.431 0.729 0.4505 -0.431 0.745 0.4505 -0.431 0.761 0.4505 -0.431 0.776 0.4505 -0.431 0.791 0.4505 -0.4 0.681 0.4505 -0.4 0.697 0.4505 -0.4 0.713 0.4505 -0.4 0.729 0.4505 -0.4 0.745 0.4505 -0.4 0.761 0.4505 -0.4 0.776 0.4505 -0.4 0.791 0.4505 -0.369 0.681 0.4505 -0.369 0.697 0.4505 -0.369 0.713 0.4505 -0.369 0.729 0.4505 -0.369 0.745 0.4505 -0.369 0.761 0.4505 -0.369 0.776 0.4505 -0.369 0.791 0.4055 -0.431 0.681 0.4055 -0.431 0.697 0.4055 -0.431 0.713 0.4055 -0.431 0.729 0.4055 -0.431 0.745 0.4055 -0.431 0.761 0.4055 -0.431 0.776 0.4055 -0.431 0.791 0.428 -0.431 0.681 0.428 -0.431 0.697 0.428 -0.431 0.713 0.428 -0.431 0.729 0.428 -0.431 0.745 0.428 -0.431 0.761 0.428 -0.431 0.776 0.428 -0.431 0.791 0.4505 -0.431 0.681 0.4505 -0.431 0.697 0.4505 -0.431 0.713 0.4505 -0.431 0.729 0.4505 -0.431 0.745 0.4505 -0.431 0.761 0.4505 -0.431 0.776 0.4505 -0.431 0.791 0.4055 -0.369 0.681 0.4055 -0.369 0.697 0.4055 -0.369 0.713 0.4055 -0.369 0.729 0.4055 -0.369 0.745 0.4055 -0.369 0.761 0.4055 -0.369 0.776 0.4055 -0.369 0.791 0.428 -0.369 0.681 0.428 -0.369 0.697 0.428 -0.369 0.713 0.428 -0.369 0.729 0.428 -0.369 0.745 0.428 -0.369 0.761 0.428 -0.369 0.776 0.428 -0.369 0.791 0.4505 -0.369 0.681 0.4505 -0.369 0.697 0.4505 -0.369 0.713 0.4505 -0.369 0.729 0.4505 -0.369 0.745 0.4505 -0.369 0.761 0.4505 -0.369 0.776 0.4505 -0.369 0.791 0.4055 -0.431 0.681 0.4055 -0.4 0.681 0.4055 -0.369 0.681 0.428 -0.431 0.681 0.428 -0.4 0.681 0.428 -0.369 0.681 0.4505 -0.431 0.681 0.4505 -0.4 0.681 0.4505 -0.369 0.681 0.4055 -0.431 0.791 0.4055 -0.4 0.791 0.4055 -0.369 0.791 0.428 -0.431 0.791 0.428 -0.4 0.791 0.428 -0.369 0.791 0.4505 -0.431 0.791 0.4505 -0.4 0.791 0.4505 -0.369 0.791" texcoord="0.00333333333 0.005 0.00333333333 0.075 0.00333333333 0.145 0.00333333333 0.215 0.00333333333 0.285 0.00333333333 0.355 0.00333333333 0.425 0.00333333333 0.495 0.166666667 0.005 0.166666667 0.075 0.166666667 0.145 0.166666667 0.215 0.166666667 0.285 0.166666667 0.355 0.166666667 0.425 0.166666667 0.495 0.33 0.005 0.33 0.075 0.33 0.145 0.33 0.215 0.33 0.285 0.33 0.355 0.33 0.425 0.33 0.495 0.336666667 0.005 0.336666667 0.075 0.336666667 0.145 0.336666667 0.215 0.336666667 0.285 0.336666667 0.355 0.336666667 0.425 0.336666667 0.495 0.5 0.005 0.5 0.075 0.5 0.145 0.5 0.215 0.5 0.285 0.5 0.355 0.5 0.425 0.5 0.495 0.663333333 0.005 0.663333333 0.075 0.663333333 0.145 0.663333333 0.215 0.663333333 0.285 0.663333333 0.355 0.663333333 0.425 0.663333333 0.495 0.67 0.005 0.67 0.075 0.67 0.145 0.67 0.215 0.67 0.285 0.67 0.355 0.67 0.425 0.67 0.495 0.833333333 0.005 0.833333333 0.075 0.833333333 0.145 0.833333333 0.215 0.833333333 0.285 0.833333333 0.355 0.833333333 0.425 0.833333333 0.495 0.996666667 0.005 0.996666667 0.075 0.996666667 0.145 0.996666667 0.215 0.996666667 0.285 0.996666667 0.355 0.996666667 0.425 0.996666667 0.495 0.00333333333 0.505 0.00333333333 0.575 0.00333333333 0.645 0.00333333333 0.715 0.00333333333 0.785 0.00333333333 0.855 0.00333333333 0.925 0.00333333333 0.995 0.166666667 0.505 0.166666667 0.575 0.166666667 0.645 0.166666667 0.715 0.166666667 0.785 0.166666667 0.855 0.166666667 0.925 0.166666667 0.995 0.33 0.505 0.33 0.575 0.33 0.645 0.33 0.715 0.33 0.785 0.33 0.855 0.33 0.925 0.33 0.995 0.336666667 0.505 0.336666667 0.75 0.336666667 0.995 0.5 0.505 0.5 0.75 0.5 0.995 0.663333333 0.505 0.663333333 0.75 0.663333333 0.995 0.67 0.505 0.67 0.75 0.67 0.995 0.833333333 0.505 0.833333333 0.75 0.833333333 0.995 0.996666667 0.505 0.996666667 0.75 0.996666667 0.995" face="0 9 8 0 1 9 1 10 9 1 2 10 2 11 10 2 3 11 3 12 11 3 4 12 4 13 12 4 5 13 5 14 13 5 6 14 6 15 14 6 7 15 8 17 16 8 9 17 9 18 17 9 10 18 10 19 18 10 11 19 11 20 19 11 12 20 12 21 20 12 13 21 13 22 21 13 14 22 14 23 22 14 15 23 24 32 33 24 33 25 25 33 34 25 34 26 26 34 35 26 35 27 27 35 36 27 36 28 28 36 37 28 37 29 29 37 38 29 38 30 30 38 39 30 39 31 32 40 41 32 41 33 33 41 42 33 42 34 34 42 43 34 43 35 35 43 44 35 44 36 36 44 45 36 45 37 37 45 46 37 46 38 38 46 47 38 47 39 48 56 57 48 57 49 49 57 58 49 58 50 50 58 59 50 59 51 51 59 60 51 60 52 52 60 61 52 61 53 53 61 62 53 62 54 54 62 63 54 63 55 56 64 65 56 65 57 57 65 66 57 66 58 58 66 67 58 67 59 59 67 68 59 68 60 60 68 69 60 69 61 61 69 70 61 70 62 62 70 71 62 71 63 72 81 80 72 73 81 73 82 81 73 74 82 74 83 82 74 75 83 75 84 83 75 76 84 76 85 84 76 77 85 77 86 85 77 78 86 78 87 86 78 79 87 80 89 88 80 81 89 81 90 89 81 82 90 82 91 90 82 83 91 83 92 91 83 84 92 84 93 92 84 85 93 85 94 93 85 86 94 86 95 94 86 87 95 96 100 99 96 97 100 97 101 100 97 98 101 99 103 102 99 100 103 100 104 103 100 101 104 105 108 109 105 109 106 106 109 110 106 110 107 108 111 112 108 112 109 109 112 113 109 113 110" inflate=".001" group="0">
+      <bone body="sponge_node_0" bindpos="0.4055 -0.431 0.681" bindquat="1 0 0 0" vertid="0 48 96" vertweight="1 1 1" />
+      <bone body="sponge_node_1" bindpos="0.4055 -0.431 0.697" bindquat="1 0 0 0" vertid="1 49" vertweight="1 1" />
+      <bone body="sponge_node_2" bindpos="0.4055 -0.431 0.713" bindquat="1 0 0 0" vertid="2 50" vertweight="1 1" />
+      <bone body="sponge_node_3" bindpos="0.4055 -0.431 0.729" bindquat="1 0 0 0" vertid="3 51" vertweight="1 1" />
+      <bone body="sponge_node_4" bindpos="0.4055 -0.431 0.745" bindquat="1 0 0 0" vertid="4 52" vertweight="1 1" />
+      <bone body="sponge_node_5" bindpos="0.4055 -0.431 0.761" bindquat="1 0 0 0" vertid="5 53" vertweight="1 1" />
+      <bone body="sponge_node_6" bindpos="0.4055 -0.431 0.776" bindquat="1 0 0 0" vertid="6 54" vertweight="1 1" />
+      <bone body="sponge_node_7" bindpos="0.4055 -0.431 0.791" bindquat="1 0 0 0" vertid="7 55 105" vertweight="1 1 1" />
+      <bone body="sponge_node_8" bindpos="0.4055 -0.4 0.681" bindquat="1 0 0 0" vertid="8 97" vertweight="1 1" />
+      <bone body="sponge_node_9" bindpos="0.4055 -0.4 0.697" bindquat="1 0 0 0" vertid="9" vertweight="1" />
+      <bone body="sponge_node_10" bindpos="0.4055 -0.4 0.713" bindquat="1 0 0 0" vertid="10" vertweight="1" />
+      <bone body="sponge_node_11" bindpos="0.4055 -0.4 0.729" bindquat="1 0 0 0" vertid="11" vertweight="1" />
+      <bone body="sponge_node_12" bindpos="0.4055 -0.4 0.745" bindquat="1 0 0 0" vertid="12" vertweight="1" />
+      <bone body="sponge_node_13" bindpos="0.4055 -0.4 0.761" bindquat="1 0 0 0" vertid="13" vertweight="1" />
+      <bone body="sponge_node_14" bindpos="0.4055 -0.4 0.776" bindquat="1 0 0 0" vertid="14" vertweight="1" />
+      <bone body="sponge_node_15" bindpos="0.4055 -0.4 0.791" bindquat="1 0 0 0" vertid="15 106" vertweight="1 1" />
+      <bone body="sponge_node_16" bindpos="0.4055 -0.369 0.681" bindquat="1 0 0 0" vertid="16 72 98" vertweight="1 1 1" />
+      <bone body="sponge_node_17" bindpos="0.4055 -0.369 0.697" bindquat="1 0 0 0" vertid="17 73" vertweight="1 1" />
+      <bone body="sponge_node_18" bindpos="0.4055 -0.369 0.713" bindquat="1 0 0 0" vertid="18 74" vertweight="1 1" />
+      <bone body="sponge_node_19" bindpos="0.4055 -0.369 0.729" bindquat="1 0 0 0" vertid="19 75" vertweight="1 1" />
+      <bone body="sponge_node_20" bindpos="0.4055 -0.369 0.745" bindquat="1 0 0 0" vertid="20 76" vertweight="1 1" />
+      <bone body="sponge_node_21" bindpos="0.4055 -0.369 0.761" bindquat="1 0 0 0" vertid="21 77" vertweight="1 1" />
+      <bone body="sponge_node_22" bindpos="0.4055 -0.369 0.776" bindquat="1 0 0 0" vertid="22 78" vertweight="1 1" />
+      <bone body="sponge_node_23" bindpos="0.4055 -0.369 0.791" bindquat="1 0 0 0" vertid="23 79 107" vertweight="1 1 1" />
+      <bone body="sponge_node_24" bindpos="0.428 -0.431 0.681" bindquat="1 0 0 0" vertid="56 99" vertweight="1 1" />
+      <bone body="sponge_node_25" bindpos="0.428 -0.431 0.697" bindquat="1 0 0 0" vertid="57" vertweight="1" />
+      <bone body="sponge_node_26" bindpos="0.428 -0.431 0.713" bindquat="1 0 0 0" vertid="58" vertweight="1" />
+      <bone body="sponge_node_27" bindpos="0.428 -0.431 0.729" bindquat="1 0 0 0" vertid="59" vertweight="1" />
+      <bone body="sponge_node_28" bindpos="0.428 -0.431 0.745" bindquat="1 0 0 0" vertid="60" vertweight="1" />
+      <bone body="sponge_node_29" bindpos="0.428 -0.431 0.761" bindquat="1 0 0 0" vertid="61" vertweight="1" />
+      <bone body="sponge_node_30" bindpos="0.428 -0.431 0.776" bindquat="1 0 0 0" vertid="62" vertweight="1" />
+      <bone body="sponge_node_31" bindpos="0.428 -0.431 0.791" bindquat="1 0 0 0" vertid="63 108" vertweight="1 1" />
+      <bone body="sponge_node_32" bindpos="0.428 -0.4 0.681" bindquat="1 0 0 0" vertid="100" vertweight="1" />
+      <bone body="sponge_node_39" bindpos="0.428 -0.4 0.791" bindquat="1 0 0 0" vertid="109" vertweight="1" />
+      <bone body="sponge_node_40" bindpos="0.428 -0.369 0.681" bindquat="1 0 0 0" vertid="80 101" vertweight="1 1" />
+      <bone body="sponge_node_41" bindpos="0.428 -0.369 0.697" bindquat="1 0 0 0" vertid="81" vertweight="1" />
+      <bone body="sponge_node_42" bindpos="0.428 -0.369 0.713" bindquat="1 0 0 0" vertid="82" vertweight="1" />
+      <bone body="sponge_node_43" bindpos="0.428 -0.369 0.729" bindquat="1 0 0 0" vertid="83" vertweight="1" />
+      <bone body="sponge_node_44" bindpos="0.428 -0.369 0.745" bindquat="1 0 0 0" vertid="84" vertweight="1" />
+      <bone body="sponge_node_45" bindpos="0.428 -0.369 0.761" bindquat="1 0 0 0" vertid="85" vertweight="1" />
+      <bone body="sponge_node_46" bindpos="0.428 -0.369 0.776" bindquat="1 0 0 0" vertid="86" vertweight="1" />
+      <bone body="sponge_node_47" bindpos="0.428 -0.369 0.791" bindquat="1 0 0 0" vertid="87 110" vertweight="1 1" />
+      <bone body="sponge_node_48" bindpos="0.4505 -0.431 0.681" bindquat="1 0 0 0" vertid="24 64 102" vertweight="1 1 1" />
+      <bone body="sponge_node_49" bindpos="0.4505 -0.431 0.697" bindquat="1 0 0 0" vertid="25 65" vertweight="1 1" />
+      <bone body="sponge_node_50" bindpos="0.4505 -0.431 0.713" bindquat="1 0 0 0" vertid="26 66" vertweight="1 1" />
+      <bone body="sponge_node_51" bindpos="0.4505 -0.431 0.729" bindquat="1 0 0 0" vertid="27 67" vertweight="1 1" />
+      <bone body="sponge_node_52" bindpos="0.4505 -0.431 0.745" bindquat="1 0 0 0" vertid="28 68" vertweight="1 1" />
+      <bone body="sponge_node_53" bindpos="0.4505 -0.431 0.761" bindquat="1 0 0 0" vertid="29 69" vertweight="1 1" />
+      <bone body="sponge_node_54" bindpos="0.4505 -0.431 0.776" bindquat="1 0 0 0" vertid="30 70" vertweight="1 1" />
+      <bone body="sponge_node_55" bindpos="0.4505 -0.431 0.791" bindquat="1 0 0 0" vertid="31 71 111" vertweight="1 1 1" />
+      <bone body="sponge_node_56" bindpos="0.4505 -0.4 0.681" bindquat="1 0 0 0" vertid="32 103" vertweight="1 1" />
+      <bone body="sponge_node_57" bindpos="0.4505 -0.4 0.697" bindquat="1 0 0 0" vertid="33" vertweight="1" />
+      <bone body="sponge_node_58" bindpos="0.4505 -0.4 0.713" bindquat="1 0 0 0" vertid="34" vertweight="1" />
+      <bone body="sponge_node_59" bindpos="0.4505 -0.4 0.729" bindquat="1 0 0 0" vertid="35" vertweight="1" />
+      <bone body="sponge_node_60" bindpos="0.4505 -0.4 0.745" bindquat="1 0 0 0" vertid="36" vertweight="1" />
+      <bone body="sponge_node_61" bindpos="0.4505 -0.4 0.761" bindquat="1 0 0 0" vertid="37" vertweight="1" />
+      <bone body="sponge_node_62" bindpos="0.4505 -0.4 0.776" bindquat="1 0 0 0" vertid="38" vertweight="1" />
+      <bone body="sponge_node_63" bindpos="0.4505 -0.4 0.791" bindquat="1 0 0 0" vertid="39 112" vertweight="1 1" />
+      <bone body="sponge_node_64" bindpos="0.4505 -0.369 0.681" bindquat="1 0 0 0" vertid="40 88 104" vertweight="1 1 1" />
+      <bone body="sponge_node_65" bindpos="0.4505 -0.369 0.697" bindquat="1 0 0 0" vertid="41 89" vertweight="1 1" />
+      <bone body="sponge_node_66" bindpos="0.4505 -0.369 0.713" bindquat="1 0 0 0" vertid="42 90" vertweight="1 1" />
+      <bone body="sponge_node_67" bindpos="0.4505 -0.369 0.729" bindquat="1 0 0 0" vertid="43 91" vertweight="1 1" />
+      <bone body="sponge_node_68" bindpos="0.4505 -0.369 0.745" bindquat="1 0 0 0" vertid="44 92" vertweight="1 1" />
+      <bone body="sponge_node_69" bindpos="0.4505 -0.369 0.761" bindquat="1 0 0 0" vertid="45 93" vertweight="1 1" />
+      <bone body="sponge_node_70" bindpos="0.4505 -0.369 0.776" bindquat="1 0 0 0" vertid="46 94" vertweight="1 1" />
+      <bone body="sponge_node_71" bindpos="0.4505 -0.369 0.791" bindquat="1 0 0 0" vertid="47 95 113" vertweight="1 1 1" />
     </skin>
   </deformable>
   <sensor>

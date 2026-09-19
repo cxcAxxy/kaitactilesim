@@ -293,6 +293,19 @@ class BulbScrewExecutor:
         orientation_tolerance=3e-4,
         posture_weight=0.0,
       )
+      if not result.success:
+        # The shared folded start can reach a different redundant arm branch.
+        # Continue convergence without relaxing the task's pose tolerances.
+        result = self.sim.solve_ik(
+          "right",
+          position,
+          rotation,
+          seed=result.joint_positions,
+          max_iterations=600,
+          position_tolerance=2e-5,
+          orientation_tolerance=3e-4,
+          posture_weight=0.0,
+        )
     finally:
       self.sim.ik_damping = damping
     if not result.success:
@@ -662,6 +675,22 @@ class BulbScrewExecutor:
   def _motion(self):
     if self.sim.thread_engaged:
       raise _TaskFailure("automatic task must start with the free tabletop bulb")
+    if self.finger_count == 2:
+      # The legacy wrist-turn mode needs its calibrated redundant branch.
+      # Roll while the arm is folded, then extend above the bulb; every move
+      # uses actuators and remains part of the recorded hover phase.
+      reference = np.deg2rad([-55, -65, 70, -60, 120, 0, 0])
+      folded = self.sim.arm_goal["right"].copy()
+      folded[4] = reference[4]
+      for target in (folded, reference):
+        start = self.sim.arm_goal["right"].copy()
+        count = round(3.0 / self.sim.timestep)
+        for i in range(1, count + 1):
+          u = i / count
+          alpha = 10 * u**3 - 15 * u**4 + 6 * u**5
+          self.sim.set_arm_joint_goal("right", start + alpha * (target - start))
+          self._step("hover")
+      self._advance(0.4, "hover")
     self.grasp = calibrated_grasp(self.sim, five_finger=self.finger_count == 5)
     pickup = self.timing.pickup_scale
     retreat = self.timing.retreat_scale
@@ -745,7 +774,7 @@ class BulbScrewExecutor:
       if self._strokes:
         self._finger_regrasp()
       start_turns = self._state.clockwise_turns
-      target_turns = min(start_turns + 25 / 360, config.TARGET_TURNS)
+      target_turns = min(start_turns + config.FINGER_STROKE_TURNS, config.TARGET_TURNS)
       for _ in range(90 if self.speed == "fast" else 125):
         error = 2 * np.pi * (target_turns - self._state.clockwise_turns)
         self._finger_step(

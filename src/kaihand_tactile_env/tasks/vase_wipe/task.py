@@ -37,6 +37,19 @@ class WipeState:
   wrist_wall_estimate_n: float
 
 
+def _external_flex_contact_mask(geom, elem):
+  """Exclude MuJoCo's per-tetrahedron inversion-prevention contacts.
+
+  Those internal vertex-to-opposite-face constraints have no geom on either
+  side and exactly one element id. External flex/rigid and true flex surface
+  self-contacts remain in the audit.
+  """
+  geom = np.asarray(geom)
+  elem = np.asarray(elem)
+  internal = np.all(geom < 0, axis=1) & (np.sum(elem >= 0, axis=1) == 1)
+  return ~internal
+
+
 class VaseWipeSimulation(ArmHandSimulation):
   def __init__(self, *, stain_seed=None, **kwargs):
     self.stain_seed = stain_seed
@@ -54,13 +67,25 @@ class VaseWipeSimulation(ArmHandSimulation):
       config.SPONGE_CONTACT_TIME_S,
       1.0,
     )
-    self.model.geom_solimp[:] = self.model.flex_solimp[:] = (
+    self.model.geom_solimp[:] = (
       config.SPONGE_CONTACT_IMPEDANCE,
       config.SPONGE_CONTACT_IMPEDANCE,
       0.001,
       0.5,
       2.0,
     )
+    self.model.flex_solimp[:] = (
+      config.SPONGE_SELF_CONTACT_IMPEDANCE,
+      config.SPONGE_SELF_CONTACT_IMPEDANCE,
+      0.001,
+      0.5,
+      2.0,
+    )
+    # External flex contacts use the rigid participant's 0.99 parameters;
+    # the firmer flex parameters act only on sponge surface self-contact.
+    self.model.geom_priority[:] = 1
+    self.model.flex_priority[:] = 0
+    self.model.geom_friction[:, 0] = np.maximum(self.model.geom_friction[:, 0], 1.1)
     # Split the buffer between participants: both flex/rigid and hand/vase
     # pairs get the same positive margin (MuJoCo adds the two margins).
     self.model.geom_margin[:] = config.SPONGE_CONTACT_MARGIN_M / 2
@@ -172,8 +197,16 @@ class VaseWipeSimulation(ArmHandSimulation):
         [0, -np.cos(angle), np.sin(angle)],
       ]
     )
+    yaw = config.PICKUP_HAND_YAW_OFFSET_RAD
+    target_hand_rotation = (
+      np.array(
+        [[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]]
+      )
+      @ target_hand_rotation
+    )
     # Stand on the broad cleaning end, supported only by the tabletop. The
-    # open hand starts above it; no initial hand/sponge overlap or constraint.
+    # open hand reaches the hover through the executor; no initial overlap
+    # or constraint is introduced at reset.
     tilt_rotation = np.eye(3)
     self.nominal_sponge_rotation = tilt_rotation
     target_hand_rotation = tilt_rotation @ target_hand_rotation
@@ -201,13 +234,17 @@ class VaseWipeSimulation(ArmHandSimulation):
       "right",
       centre + [0, 0, 0.16] + self.wrist_offset,
       self.wrist_rotation,
+      seed=config.ARM_HOME["right"],
       max_iterations=300,
     )
     if not result.success:
       raise RuntimeError(f"tabletop approach IK failed: {result}")
-    self.data.qpos[self._arm_qpos["right"]] = result.joint_positions
-    self.set_arm_joint_goal("right", result.joint_positions)
-    self._arm_command["right"] = result.joint_positions.copy()
+    self.approach_arm = result.joint_positions.copy()
+    pickup_delta = self.approach_arm - config.ARM_HOME["right"]
+    if pickup_delta[4] >= 0 or np.max(np.abs(pickup_delta)) > np.deg2rad(100):
+      raise RuntimeError(
+        "tabletop approach must use the short counterclockwise wrist path"
+      )
     self.grip = np.array(
       [
         0.10848,
@@ -237,11 +274,7 @@ class VaseWipeSimulation(ArmHandSimulation):
     self.open_grip[[5, 9, 13, 17]] *= 0.5
     self.open_grip[[6, 10, 14, 18]] = 0.1
     self.open_grip[[7, 11, 15, 19]] = 0.0
-    self.set_hand_joint_targets(HAND_JOINT_NAMES["right"], self.open_grip)
-    for name, value in zip(HAND_JOINT_NAMES["right"], self.open_grip, strict=True):
-      self.data.qpos[self._qpos_address[name]] = value
-    self.data.qpos[self._thumb_joint6_qpos["right"]] = self.open_grip[3]
-    mujoco.mj_forward(self.model, self.data)
+    # Keep the shared open-hand home pose until the executor starts moving.
 
   def _before_physics_step(self):
     if getattr(self, "grasp_patch", None) is not None:
@@ -295,12 +328,12 @@ class VaseWipeSimulation(ArmHandSimulation):
       for contact_id in rigid[relevant]:
         mujoco.mj_contactForce(self.model, self.data, int(contact_id), wrench)
         load += max(0.0, float(wrench[0]))
-      self.peak_hand_environment_force_n = max(
-        self.peak_hand_environment_force_n, load
-      )
+      self.peak_hand_environment_force_n = max(self.peak_hand_environment_force_n, load)
       if load > 2.0:
         raise RuntimeError(f"Hand struck vase/table at {self.data.time:.4f}s")
     ids = np.flatnonzero(np.any(contacts.flex == self._flex_id, axis=1))
+    if len(ids):
+      ids = ids[_external_flex_contact_mask(contacts.geom[ids], contacts.elem[ids])]
     if not len(ids):
       return
     i = int(ids[np.argmin(contacts.dist[ids])])
@@ -320,7 +353,9 @@ class VaseWipeSimulation(ArmHandSimulation):
     if distance < 0:
       self.penetration_count += 1
       raise RuntimeError(
-        f"Sponge penetration at {self.data.time:.4f}s: {distance * 1000:.6f} mm"
+        f"Sponge penetration at {self.data.time:.4f}s: {distance * 1000:.6f} mm; "
+        f"geom={contact.geom.tolist()}, flex={contact.flex.tolist()}, "
+        f"elem={contact.elem.tolist()}, vert={contact.vert.tolist()}"
       )
 
   def contact_integrity_report(self):
@@ -555,16 +590,13 @@ class VaseWipeExecutor:
         rate = np.clip(
           1.5
           * (
-            config.GRASP_FORCE_TARGETS_N
-            - np.maximum(loads, self._grip_force_filtered)
+            config.GRASP_FORCE_TARGETS_N - np.maximum(loads, self._grip_force_filtered)
           ),
           0,
           0.04,
         )
         progress_cap = self._hold_progress_cap
-      self._grip_progress = np.clip(
-        self._grip_progress + rate * 0.01, 0, progress_cap
-      )
+      self._grip_progress = np.clip(self._grip_progress + rate * 0.01, 0, progress_cap)
       sim.set_hand_joint_targets(
         HAND_JOINT_NAMES["right"],
         sim.open_grip
@@ -652,6 +684,14 @@ class VaseWipeExecutor:
 
   def _pickup(self, grip):
     sim = self.sim
+    from ...shared.approach import approach_waypoint
+
+    for _ in approach_waypoint(
+      sim, sim.approach_arm, sim.open_grip, phase="approach_sponge"
+    ):
+      if self.observer is not None:
+        self.observer(sim, "approach_sponge", sim.measure())
+    self.target = sim.current_pose_matrix("right")[0] - sim.wrist_offset
     self._move(self.target, 0.5, "observe_tabletop")
     initial_load = sim.table_support_force_n
     initial_pad_load = float(sim.forces.read(sim.data).normal_force_n[5:].sum())
@@ -735,7 +775,8 @@ class VaseWipeExecutor:
     from .vision import WallInspection
 
     self.sim.inspection = WallInspection(
-      self.sim.model, stain_padding_m=0.011 if self.sim.stain_seed is not None else 0.007
+      self.sim.model,
+      stain_padding_m=0.011 if self.sim.stain_seed is not None else 0.007,
     )
     try:
       return self._execute_inspected()
@@ -796,7 +837,7 @@ class VaseWipeExecutor:
       bounds = np.array(inspection["residual_bounds_world_m"])
       centre = np.array(inspection["residual_center_world_m"])
       extent = bounds[1] - bounds[0]
-      targeted = inspection["red_pixels"] < 0.95 * inspection["initial_red_pixels"]
+      targeted = inspection["stain_pixels"] < 0.95 * inspection["initial_stain_pixels"]
       # Small pixel residuals still require motion beyond the elastic tool's
       # lost motion. Tiny sweeps can rub the neck while never loading a lower
       # stain. Keep a minimum physical stroke while fitting the whole cuboid
@@ -822,9 +863,7 @@ class VaseWipeExecutor:
       sim.wrist_wall_estimate_n = 0.0
       contact_x = self._contact_target_x(np.array([0.0, cy, cz]))
       retreat_x = contact_x - 0.012
-      self._move(
-        [retreat_x, cy, config.ENTRY_HEIGHT_M], 0.8, f"approach_{pass_index}"
-      )
+      self._move([retreat_x, cy, config.ENTRY_HEIGHT_M], 0.8, f"approach_{pass_index}")
       self._move([retreat_x, cy, cz], 2.0, f"insert_{pass_index}")
       self._move([contact_x + 0.002, cy, cz], 1.0, f"seek_inner_wall_{pass_index}")
       scan_time = 0.0
@@ -843,9 +882,7 @@ class VaseWipeExecutor:
         old_wall_x = self._wall_x_for_tool(self.target)
         if contact:
           scan_time += 0.01
-          dy, dz = self._scan_offsets(
-            scan_time, lateral_amplitude, vertical_amplitude
-          )
+          dy, dz = self._scan_offsets(scan_time, lateral_amplitude, vertical_amplitude)
           self.target[1] = cy + dy
           self.target[2] = cz + dz
         correction = np.clip(
@@ -867,7 +904,14 @@ class VaseWipeExecutor:
         if scan_time + 1e-9 >= wipe_seconds:
           break
       completed_passes = pass_index
-      self._move([retreat_x, cy, cz + 0.006], 1.2, f"unload_{pass_index}")
+      # Release normal load before re-centering Y/Z. A diagonal retreat can
+      # drag the wide sponge edge across the curved wall during unloading.
+      self._move(
+        [retreat_x, self.target[1], self.target[2]],
+        0.6,
+        f"unload_{pass_index}",
+      )
+      self._move([retreat_x, cy, cz + 0.006], 0.6, f"unload_{pass_index}")
       self._move(
         [retreat_x, cy, config.ENTRY_HEIGHT_M],
         2.0,

@@ -236,23 +236,33 @@ def test_face_down_initialization_only_changes_orientation_at_time_zero(simulati
   np.testing.assert_array_equal(simulation.data.qpos, original_qpos)
 
 
-def test_automatic_initialization_only_changes_orientation_at_time_zero(simulation):
+def test_automatic_initialization_uses_equivalent_short_pickup_coordinate(simulation):
   simulation.reset()
   address = int(simulation.model.joint("usb_plug_freejoint").qposadr[0])
+  wrist_address = int(simulation.model.joint("right_arm_joint5").qposadr[0])
   original_qpos = simulation.data.qpos.copy()
   original_qvel = simulation.data.qvel.copy()
   original_goals = simulation.arm_goal
+  original_wrist_pose = simulation.current_pose_matrix("right")
   expected_quaternion = np.asarray(usb_config.AUTO_PLUG_QUATERNION_WXYZ)
   assert np.linalg.norm(expected_quaternion) == pytest.approx(1.0, abs=1e-12)
 
-  initialize_for_insertion(simulation)
+  initialization = initialize_for_insertion(simulation)
 
   expected_qpos = original_qpos.copy()
   expected_qpos[address + 3 : address + 7] = expected_quaternion
+  expected_qpos[wrist_address] += 2 * np.pi
   np.testing.assert_array_equal(simulation.data.qpos, expected_qpos)
   np.testing.assert_array_equal(simulation.data.qvel, original_qvel)
-  for side in ("left", "right"):
-    np.testing.assert_array_equal(simulation.arm_goal[side], original_goals[side])
+  np.testing.assert_array_equal(simulation.arm_goal["left"], original_goals["left"])
+  expected_right_goal = original_goals["right"].copy()
+  expected_right_goal[4] += 2 * np.pi
+  np.testing.assert_array_equal(simulation.arm_goal["right"], expected_right_goal)
+  current_wrist_pose = simulation.current_pose_matrix("right")
+  np.testing.assert_allclose(current_wrist_pose[0], original_wrist_pose[0], atol=1e-14)
+  np.testing.assert_allclose(current_wrist_pose[1], original_wrist_pose[1], atol=1e-14)
+  assert initialization["pickup_joint_wrap"]["physical_pose_changed"] is False
+  assert initialization["pickup_joint_wrap"]["turns"] == 1
   assert simulation.data.time == 0.0
   simulation.reset()
   np.testing.assert_array_equal(simulation.data.qpos, original_qpos)
@@ -499,10 +509,27 @@ def test_real_robot_grasps_lifts_inserts_and_releases_without_object_assistance(
       "hand_r_index_link4_tactile_pad_col",
     )
   ]
+  first_close_checked = False
 
   def observe(simulation, phase):
     nonlocal first_tactile, cutoff_draws
     nonlocal alignment_dwell_s, longest_alignment_dwell_s
+    nonlocal first_close_checked
+    if phase in {"hover", "approach"} or (phase == "close" and not first_close_checked):
+      tips = data.site_xpos[simulation._fingertip_site_ids["right"][:2]]
+      assert np.linalg.norm(tips[1] - tips[0]) > 0.050
+    if phase == "close" and not first_close_checked:
+      from kaihand_tactile_env.tasks.usb_insert.grasp import calibrated_grasp
+
+      pickup = calibrated_grasp(
+        simulation, pinch_tilt_rad=0.05 if motion_profile == "baseline" else 0.06
+      )
+      wrist, rotation = simulation.current_pose_matrix("right")
+      assert np.linalg.norm(wrist - pickup.wrist_position) < 0.003
+      assert (
+        np.linalg.norm(_rotation_vector_world(pickup.wrist_rotation, rotation)) < 0.03
+      )
+      first_close_checked = True
     if phase == "align":
       measured = alignment_monitor.measure()
       stationary_above_socket = (
@@ -546,6 +573,8 @@ def test_real_robot_grasps_lifts_inserts_and_releases_without_object_assistance(
         grip_tangents[finger] += float(np.linalg.norm(force[1:3]))
     grip_force_trace.append(grip_forces)
     grip_tangent_trace.append(grip_tangents)
+    if phase in {"hover", "approach"}:
+      assert max(grip_forces) < 1e-3, "pinch made contact before reaching pickup"
     if noise_seed is not None:
       # Independently read all pad/USB solver forces every physics step up to
       # first signal. Do not reuse the executor's bilateral grip measurement.
@@ -650,6 +679,7 @@ def test_real_robot_grasps_lifts_inserts_and_releases_without_object_assistance(
     assert result.precontact_noise["commands"] == []
 
   assert result.success, result.failure_reason
+  assert first_close_checked
   assert longest_alignment_dwell_s >= 0.6 - 1e-12
   record_property("stationary_alignment_dwell_s", longest_alignment_dwell_s)
   assert result.failure_reason is None
@@ -663,7 +693,10 @@ def test_real_robot_grasps_lifts_inserts_and_releases_without_object_assistance(
   # Physical bottom contact, controlled preload and unloading add a short
   # confirmation to the existing fast transport; no free-travel early exit.
   # Allow the longer descent from the new 10 cm stationary hover.
-  assert result.elapsed_simulation_s <= (25.0 if motion_profile == "fast" else 28.5)
+  # Wide-to-fine closing now occurs stationary at pickup, adding this ramp.
+  assert result.elapsed_simulation_s <= (
+    (25.0 if motion_profile == "fast" else 28.5) + 0.6 * executor.motion.grasp_ramp_s
+  )
   assert 0.03 < result.maximum_lift_m < 0.25
   assert 0.0119 <= result.insertion.insertion_depth_m <= 0.0121
   assert result.insertion.bottom_out_confirmed
@@ -728,6 +761,15 @@ def test_real_robot_grasps_lifts_inserts_and_releases_without_object_assistance(
     "actual_arm_at_2s_rad", arm_positions[round(2 / simulation.timestep) - 1].tolist()
   )
   arm_degrees = np.rad2deg(arm_positions)
+  pickup_frames = np.flatnonzero(
+    np.isin(phases, ("settle", "preshape", "hover", "approach"))
+  )
+  pickup_j5 = arm_degrees[pickup_frames, 4]
+  pickup_j5_travel = float(np.abs(np.diff(pickup_j5)).sum())
+  assert pickup_j5[0] > 180.0
+  assert pickup_j5[-1] < pickup_j5[0]
+  assert pickup_j5_travel < 140.0
+  record_property("pickup_j5_travel_deg", pickup_j5_travel)
   close_frames = np.flatnonzero(phases == "close")
   insert_frames = np.flatnonzero(phases == "insert")
   assert len(close_frames) and len(insert_frames)

@@ -139,7 +139,8 @@ class RamInstallExecutor:
       self._minimum_palm_down_cosine, -float(palm[2])
     )
     if (
-      phase not in {"settle_cradle", "grasp", "preload", "retreat", "verify"}
+      phase
+      not in {"settle_cradle", "approach", "grasp", "preload", "retreat", "verify"}
       and palm[2] > -0.35
     ):
       raise _TaskFailure("palm-down grasp orientation was lost")
@@ -300,20 +301,29 @@ class RamInstallExecutor:
 
   def _motion(self):
     self._advance(0.4, "settle_cradle")
-    # Preshape above the cradle, then descend with a fixed wrist orientation.
+    # Keep a wide pinch above the cradle and throughout the descent. The
+    # narrow calibrated pinch is used only after the wrist reaches the DIMM.
     # All motion goes through the shared joint actuators.
-    start_position, start_rotation = self.sim.current_pose_matrix("right")
+    start_arm = self.sim.arm_goal["right"].copy()
     start_hand = np.array([self.sim._hand_targets["right"][n] for n in self._names])
     above = self.grasp.wrist_position + np.array([0.0, 0.0, 0.08])
-    rotation_vector = _rotation_vector_world(self.grasp.wrist_rotation, start_rotation)
+    hover = self.sim.solve_ik(
+      "right",
+      above,
+      self.grasp.wrist_rotation,
+      seed=self.grasp.arm_joints,
+      max_iterations=500,
+      position_tolerance=0.0003,
+      orientation_tolerance=0.004,
+      posture_weight=0,
+    )
+    if not hover.success:
+      raise _TaskFailure("pickup hover is unreachable from shared home")
     for i in range(1, 201):
       u = i / 200
       alpha = 10 * u**3 - 15 * u**4 + 6 * u**5
-      arm = self._command_ee(
-        start_position + alpha * (above - start_position),
-        _turn(alpha * rotation_vector) @ start_rotation,
-      )
-      hand = start_hand + alpha * (self.grasp.open_hand - start_hand)
+      arm = start_arm + alpha * (hover.joint_positions - start_arm)
+      hand = start_hand + alpha * (self.grasp.approach_hand - start_hand)
       self._ramp_commands(arm, hand, "approach")
     for i in range(1, 151):
       u = i / 150
@@ -322,8 +332,16 @@ class RamInstallExecutor:
         above + alpha * (self.grasp.wrist_position - above),
         self.grasp.wrist_rotation,
       )
-      self._ramp_commands(arm, self.grasp.open_hand, "approach")
+      self._ramp_commands(arm, self.grasp.approach_hand, "approach")
     self._advance(0.4, "settle_cradle")
+    wrist, rotation = self.sim.current_pose_matrix("right")
+    if (
+      np.linalg.norm(wrist - self.grasp.wrist_position) > 0.003
+      or np.linalg.norm(_rotation_vector_world(self.grasp.wrist_rotation, rotation))
+      > 0.03
+    ):
+      raise _TaskFailure("pickup wrist did not arrive before finger closing")
+    self._hand_motion(self.grasp.open_hand, 0.6, "grasp")
     self._hand_motion(self.grasp.contact_hand, 1.2, "grasp")
     for _ in range(100):
       self._ramp_commands(self.sim.arm_goal["right"], self._regulate_grip(), "preload")

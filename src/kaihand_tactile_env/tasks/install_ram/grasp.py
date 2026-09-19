@@ -15,6 +15,7 @@ class RamGrasp:
   arm_joints: np.ndarray
   open_hand: np.ndarray
   contact_hand: np.ndarray
+  approach_hand: np.ndarray
 
 
 def calibrated_grasp(simulation) -> RamGrasp:
@@ -59,6 +60,8 @@ def calibrated_grasp(simulation) -> RamGrasp:
       "right",
       target_position,
       target_rotation,
+      # Preserve the calibrated IK branch independently of shared reset pose.
+      seed=np.deg2rad([-55, -65, 70, -60, 120, 0, 0]),
       max_iterations=500,
       position_tolerance=2e-5,
       orientation_tolerance=3e-4,
@@ -101,10 +104,27 @@ def calibrated_grasp(simulation) -> RamGrasp:
   )
   if opening.position_error > 0.001:
     raise RuntimeError(f"RAM pickup finger IK failed: {opening.position_error:.4g} m")
+  # The old 5 mm-per-side opening is a fine pinch waypoint, not sufficient
+  # travel clearance. Approach with 20 mm per side and close only at the DIMM.
+  wide_targets = targets.copy()
+  wide_targets[0, 1] -= 0.015
+  wide_targets[1, 1] += 0.015
+  wide = simulation.solve_hand_ik(
+    "right",
+    wide_targets,
+    seed=opening.joint_positions,
+    arm_joint_positions=arm.joint_positions,
+    max_iterations=300,
+    position_tolerance=1e-5,
+    posture_weight=0,
+  )
+  if wide.position_error > 0.001:
+    raise RuntimeError(f"RAM approach finger IK failed: {wide.position_error:.4g} m")
   return RamGrasp(
     target_position,
     target_rotation,
     arm.joint_positions,
     opening.joint_positions,
     contact,
+    wide.joint_positions,
   )

@@ -187,7 +187,7 @@
                                 mass="0.68606" diaginertia="0.00173691 0.00153911 0.000745263"/>
                       <joint name="left_arm_joint7" class="arm_joint"
                              range="-1.57079632679 1.57079632679"/>
-                      <geom type="mesh" mesh="tianji_Link7_L" class="arm_visual"
+                      <geom type="mesh" mesh="tianji_Link7_L_shell_visual" class="arm_visual"
                             material="arm_green"/>
                       <geom type="capsule" fromto="0 0 0 0 -0.088 0" size="0.031"
                             class="arm_collision"/>
@@ -288,7 +288,7 @@
                                 mass="0.68606" diaginertia="0.00173691 0.00153911 0.000745263"/>
                       <joint name="right_arm_joint7" class="arm_joint"
                              range="-1.57079632679 1.57079632679"/>
-                      <geom type="mesh" mesh="tianji_Link7_R" class="arm_visual"
+                      <geom type="mesh" mesh="tianji_Link7_R_shell_visual" class="arm_visual"
                             material="arm_green"/>
                       <geom type="capsule" fromto="0 0 0 0 -0.088 0" size="0.031"
                             class="arm_collision"/>

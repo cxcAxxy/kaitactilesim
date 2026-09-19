@@ -2,16 +2,16 @@
 
 import numpy as np
 
+from ...shared.posture import ARM_HOME as ARM_HOME
+
 SCENE_NAME = "whiteboard-wipe"
 OBJECT_NAMES = ("eraser",)
 OBJECT_STABILIZERS = {}
-ARM_HOME = {
-  "left": np.deg2rad([55, -65, -70, -60, -120, 0, 0]),
-  "right": np.deg2rad([-55, -65, 70, -60, 120, 0, 0]),
-}
 DEFAULT_PLAYBACK_SPEED = 1.0
 CONTROL_PERIOD_S = 0.01
 HAND_VELOCITY_GAIN = 1.0
+BOARD_TARGET_FORCE_N = 2.2
+BOARD_PRELOAD_FORCE_N = 1.8
 DEFAULT_XY_JITTER = DEFAULT_YAW_JITTER = 0.0
 SCENE_GEOM_NAMES = ("board_surface", "eraser_handle", "eraser_pad")
 TABLE_HEIGHT = 0.68

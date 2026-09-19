@@ -65,12 +65,15 @@ class WallInspection:
     x0, y0, x1, y1 = self.bounds
     roi = rgb[y0:y1, x0:x1].astype(float)
     r, g, b = roi.transpose(2, 0, 1)
-    red = (r > g + 5) & (r > b + 4) & (r > 1.15 * g) & (g < 1.4 * b + 3)
+    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    # The light-black pigment has a subtle cool cast. Requiring both low
+    # luminance and b > r separates it from warm ivory even in wall shadows.
+    stain = (luminance < 150) & (b > r + 3) & (b >= g - 2)
     current_depth = depth[y0:y1, x0:x1]
     if self.reference_mask is None:
-      if red.sum() < 40:
+      if stain.sum() < 40:
         raise RuntimeError("Initial HEAD inspection cannot resolve the far-wall stains")
-      self.reference_mask = red.copy()
+      self.reference_mask = stain.copy()
       self.reference_depth = current_depth.copy()
     visible = np.isfinite(current_depth) & (
       np.abs(current_depth - self.reference_depth) < 0.006
@@ -79,13 +82,18 @@ class WallInspection:
     # Track the initial stained pixels, including faint residuals made visible
     # by the task's nonlinear pigment-opacity mapping. Depth guards against
     # interpreting sponge occlusion as a clean surface.
-    count = int((red & self.reference_mask).sum())
+    count = int((stain & self.reference_mask).sum())
     valid = visibility >= 0.98
     result = {
       "time_s": float(data.time),
       "camera": "head",
       "valid": valid,
       "visible_fraction": visibility,
+      "stain_pixels": count,
+      "initial_stain_pixels": int(self.reference_mask.sum()),
+      "stain_pixel_fraction": count / int(self.reference_mask.sum()),
+      # Compatibility aliases for existing result consumers. They now count
+      # the configured stain mask rather than asserting a red color semantic.
       "red_pixels": count,
       "initial_red_pixels": int(self.reference_mask.sum()),
       "red_pixel_fraction": count / int(self.reference_mask.sum()),
@@ -97,7 +105,7 @@ class WallInspection:
       else "reinspect",
       "roi_xyxy": [int(v) for v in self.bounds],
     }
-    selected = red & self.reference_mask & visible
+    selected = stain & self.reference_mask & visible
     if selected.any():
       yy, xx = np.nonzero(selected)
       calibration = self.renderer.calibration(data, self.camera)

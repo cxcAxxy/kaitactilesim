@@ -272,7 +272,9 @@ def test_pick_place_returns_arm_home_and_places_cylinder(seed: int | None) -> No
   assert "release_settle" not in result.phases
   assert phase_finished["close"] - phase_started["close"] < 0.5
   assert phase_finished["place"] - phase_started["place"] < 0.5
-  assert simulation.data.time < 3.6
+  # Folded shared home adds travel and a settled ready waypoint. Contact,
+  # release and placement bounds above retain their original limits.
+  assert simulation.data.time < 4.2
   assert result.phases[-1] == "return_home"
   np.testing.assert_allclose(
     simulation.data.qpos[simulation._arm_qpos["right"]],

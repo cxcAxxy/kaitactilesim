@@ -58,6 +58,9 @@
 - Whiteboard：[斜置白板擦拭](whiteboard_wipe.md)
 - USB：[数据 Cleaning](usb_cleaning.md)、[接触力学检查](usb_contact_mechanics.md)、[接触阻力与控制](usb_contact_resistance.md)、[初态随机化](usb_randomization.md)、[接触前控制噪声](usb_precontact_noise.md)
 - 数据复核：[原始数据可视化](data_visualization.md)、[模型评测视频](policy_evaluation_video.md)
+- 场景外观：[White / Silver Lab 外壳与兼容性验证](appearance.md)
+- 抓取动作：[USB 与内存先到位、再夹紧](grasp_timing.md)
+- 机器人初始姿势：[共享双臂对称收臂配置](shared_home.md)
 - PickPlace、Card 和共享工作台的任务细节见项目根目录 [README](../README.md)。
 
 ## 文档维护规则

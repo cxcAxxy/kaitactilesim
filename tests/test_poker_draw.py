@@ -44,8 +44,11 @@ def test_poker_scene_is_isolated_from_pick_place() -> None:
   assert pick_place.model.geom("cylinder_geom").contype[0] != 0
   assert poker.model.geom("card_core_geom").contype[0] != 0
   for side in ("left", "right"):
-    assert _anatomical_palm_normal_z(pick_place, side) > 0.98
-    assert _anatomical_palm_normal_z(poker, side) < -0.98
+    # All tasks now share the inward-facing idle palms; task orientation is
+    # established during the physical approach, not during reset.
+    assert _anatomical_palm_normal_z(pick_place, side) == pytest.approx(
+      _anatomical_palm_normal_z(poker, side)
+    )
   for geom_name in ("poker_table_base", "poker_table_top"):
     geom = poker.model.geom(geom_name)
     assert int(geom.contype[0]) & 1024
@@ -138,6 +141,14 @@ def test_poker_draw_reaches_edge_contacts_face_and_lifts() -> None:
 
   def observe(sim: ArmHandSimulation, phase: str) -> None:
     nonlocal tactile_sample
+    if phase in {
+      "ready_card",
+      "hover_card",
+      "precontact_card",
+      "four_finger_press",
+      "slide_card",
+    }:
+      assert _anatomical_palm_normal_z(sim, "right") < -0.95
     if phase in press_samples:
       press_samples[phase].append(executor._current_card_finger_normal_forces())
     if phase == "slide_card":
@@ -239,7 +250,9 @@ def test_poker_draw_reaches_edge_contacts_face_and_lifts() -> None:
   assert result.retained_at_end
   assert result.final_card_pose[2] > result.edge_card_pose[2] + 0.08
   # The curved draw uses a tilted but still downward-facing palm.
-  assert result.maximum_palm_normal_z < -0.95
+  # Full-episode maximum includes the inward-facing shared home and rotation.
+  assert np.isfinite(result.maximum_palm_normal_z)
+  assert executor._maximum_task_palm_normal_z < -0.95
   assert result.toward_robot_displacement > 0.08
   assert result.edge_card_pose[0] < result.initial_card_pose[0]
   assert result.lateral_card_displacement < 0.015
@@ -391,6 +404,7 @@ def test_raised_palm_keeps_fingertip_support_height() -> None:
       "right",
       sim.object_pose("card")[:3] + offset,
       orientation,
+      seed=np.deg2rad([-55, -65, 70, -60, 120, 0, 0]),
       max_iterations=700,
       position_tolerance=0.00005,
       orientation_tolerance=0.002,

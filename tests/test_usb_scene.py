@@ -229,10 +229,47 @@ def test_usb_is_independent_and_preserves_historical_default(
       simulation.set_scene(scene)
   usb_home = task_config("usb-insert").ARM_HOME
   poker_home = task_config("poker-draw").ARM_HOME
-  assert usb_home is not poker_home
-  for side in ("left", "right"):
-    np.testing.assert_array_equal(usb_home[side], poker_home[side])
-    assert not np.shares_memory(usb_home[side], poker_home[side])
+  assert usb_home is poker_home
+
+
+def test_usb_idle_left_arm_folds_acute_and_holds_clear_of_table():
+  simulation = ArmHandSimulation(scene="usb-insert")
+  model, data = simulation.model, simulation.data
+  previous = mujoco.MjData(model)
+  previous.qpos[:] = data.qpos
+  previous.qpos[simulation._arm_qpos["left"]] = np.deg2rad(
+    [55, -65, -70, -60, -120, 0, 0]
+  )
+  mujoco.mj_forward(model, previous)
+  site = model.site("left_ee_site").id
+  initial_position = data.site_xpos[site].copy()
+  assert initial_position[0] < previous.site_xpos[site, 0] - 0.15
+  shoulder = data.body("left_arm_link2").xpos
+  elbow = data.body("left_arm_link4").xpos
+  wrist = data.body("left_arm_link5").xpos
+  upper, forearm = shoulder - elbow, wrist - elbow
+  angle = np.degrees(
+    np.arccos(upper @ forearm / np.linalg.norm(upper) / np.linalg.norm(forearm))
+  )
+  assert 50 < angle < 85
+  elevation = np.degrees(np.arctan2(forearm[2], np.linalg.norm(forearm[:2])))
+  assert abs(elevation) < 5.0
+  # The upper arm hangs close to the body instead of abducting at the shoulder.
+  assert 0.03 < elbow[1] - shoulder[1] < 0.10
+  assert shoulder[2] - elbow[2] > 0.25
+  np.testing.assert_allclose(data.qpos[simulation._arm_qpos["left"][-2:]], 0)
+  left_bodies = [
+    i for i in range(model.nbody) if (model.body(i).name or "").startswith("hand_l_")
+  ]
+  simulation.step(250)
+  mujoco.mj_forward(model, data)
+  assert np.isfinite(data.qpos).all()
+  np.testing.assert_allclose(data.site_xpos[site], initial_position, atol=0.002)
+  assert data.xpos[left_bodies, 2].min() > 0.80
+  for contact in data.contact:
+    touches_left = [model.geom_bodyid[g] in left_bodies for g in contact.geom]
+    # Existing palm/thumb self-contact is unrelated to shoulder placement.
+    assert not (any(touches_left) and not all(touches_left))
 
 
 @pytest.mark.parametrize("scene", ("pick-place", "poker-draw"))

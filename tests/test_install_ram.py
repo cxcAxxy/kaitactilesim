@@ -175,17 +175,31 @@ def test_full_installation_uses_contacts_and_remains_seated_after_release():
   affinity = simulation.model.geom_conaffinity.copy()
   released = []
   axial_targets = []
+  first_grasp_checked = False
 
   def observe(current, phase):
+    nonlocal first_grasp_checked
     assert np.isfinite(current.data.qpos).all()
     assert np.isfinite(current.data.qvel).all()
     assert not np.any(current.data.xfrc_applied[body])
     assert not np.any(current.data.qfrc_applied[dof : dof + 6])
     if phase == "approach":
       assert np.linalg.norm(current.object_pose("ram")[:3] - object_pose[:3]) < 0.0001
+      wrist, _ = current.current_pose_matrix("right")
+      if np.linalg.norm(wrist - executor.grasp.wrist_position) < 0.015:
+        tips = current.data.site_xpos[current._fingertip_site_ids["right"][:2]]
+        assert np.linalg.norm(tips[1] - tips[0]) > 0.045
+    if phase == "grasp" and not first_grasp_checked:
+      wrist, _ = current.current_pose_matrix("right")
+      tips = current.data.site_xpos[current._fingertip_site_ids["right"][:2]]
+      assert np.linalg.norm(wrist - executor.grasp.wrist_position) < 0.003
+      assert np.linalg.norm(tips[1] - tips[0]) > 0.045
+      first_grasp_checked = True
     if phase == "verify":
       released.append(executor.state.seated)
     if phase in {"insert", "bottom_press"}:
+      palm = current.data.body("hand_r_base_link").xmat.reshape(3, 3)[:, 1]
+      assert -palm[2] > 0.5
       axial_targets.append(
         np.r_[
           executor._command_position[:2],
@@ -197,13 +211,16 @@ def test_full_installation_uses_contacts_and_remains_seated_after_release():
 
   result = executor.run(observer=observe)
   assert result.success, result.reason
+  assert first_grasp_checked
   assert "approach" in result.phases
   assert result.initialization == "open_hands_at_home_then_physical_approach"
   assert result.maximum_lift_m >= 0.02
   assert result.final_state.success
   assert result.final_state.bottom_out_confirmed
   assert result.bottom_press_duration_s >= config.BOTTOM_OUT_HOLD_S
-  assert result.minimum_palm_down_cosine > 0.5
+  # This metric still covers the entire trajectory, including inward-facing
+  # palms at shared home. Palm-down insertion is checked at every step above.
+  assert np.isfinite(result.minimum_palm_down_cosine)
   assert result.final_state.stable_duration_s >= config.SEATED_DWELL_S
   assert max(result.final_fingertip_load_n) < 0.01
   assert released and all(released)

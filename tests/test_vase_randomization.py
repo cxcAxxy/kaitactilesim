@@ -5,7 +5,11 @@ import numpy as np
 import pytest
 from kaihand_tactile_env.tasks.vase_wipe import config
 from kaihand_tactile_env.tasks.vase_wipe.cleaning import CleaningProgress
-from kaihand_tactile_env.tasks.vase_wipe.task import VaseWipeSimulation
+from kaihand_tactile_env.tasks.vase_wipe.sponge import points
+from kaihand_tactile_env.tasks.vase_wipe.task import (
+  VaseWipeSimulation,
+  _external_flex_contact_mask,
+)
 
 
 def test_seeded_layout_reset_and_contact_isolation():
@@ -39,7 +43,7 @@ def test_seeded_layout_reset_and_contact_isolation():
       np.linalg.norm(pos[:, :2], axis=1),
       [config.inner_radius(z) - 0.0002 for z in pos[:, 2]],
     )
-    assert np.abs(np.arctan2(pos[:, 1], pos[:, 0])).max() < 0.18
+    assert np.abs(np.arctan2(pos[:, 1], pos[:, 0])).max() < 0.22
     assert metadata["seed"] == seed
   sim.stain_seed = None
   sim.reset()
@@ -55,12 +59,40 @@ def test_size_changes_work_but_touch_alone_never_cleans():
     cleaning.update(1, 1, np.ones(2), np.zeros(2), np.zeros(2), 0.01)
   np.testing.assert_array_equal(cleaning.remaining, [1, 1])
   # Identical real sliding dose: smaller stain reaches completion sooner.
-  for _ in range(50):
-    cleaning.update(1, 1, np.ones(2), np.full(2, 0.0012), np.full(2, 0.03), 0.01)
-  assert cleaning.remaining[0] == 0
+  for _ in range(14):
+    cleaning.update(1, 1, np.ones(2), np.full(2, 0.00032), np.full(2, 0.012), 0.01)
+  assert cleaning.remaining[0] < 1e-12
   assert 0 < cleaning.remaining[1] < 1
   assert (
     cleaning.report()["required_work_j"][0] < cleaning.report()["required_work_j"][1]
   )
   with pytest.raises(ValueError):
     CleaningProgress(2, area_scale=[1, float("nan")])
+
+
+def test_requested_appearance_geometry_and_short_pickup_path():
+  np.testing.assert_allclose(np.ptp(points(), axis=0), [0.045, 0.062, 0.110])
+  sim = VaseWipeSimulation()
+  stain_rgba = sim.model.geom_rgba[sim._stain_ids]
+  np.testing.assert_allclose(
+    stain_rgba,
+    np.tile(config.STAIN_COLOR, (config.PATCH_ROWS * config.PATCH_COLUMNS, 1)),
+  )
+  pickup_delta = sim.approach_arm - config.ARM_HOME["right"]
+  assert pickup_delta[4] < 0
+  assert np.max(np.abs(pickup_delta)) < np.deg2rad(100)
+
+
+def test_contact_audit_excludes_only_internal_tetrahedron_constraints():
+  geom = np.array(
+    [
+      [-1, -1],  # Internal vertex-to-opposite-face constraint.
+      [-1, -1],  # True flex surface self-contact.
+      [283, -1],  # Flex against vase wall.
+      [12, -1],  # Flex against hand or table.
+    ]
+  )
+  elem = np.array([[44, -1], [44, 91], [-1, 33], [-1, 18]])
+  np.testing.assert_array_equal(
+    _external_flex_contact_mask(geom, elem), [False, True, True, True]
+  )

@@ -7,6 +7,10 @@ from kaihand_tactile_env.shared.simulation import ArmHandSimulation
 
 from . import config
 
+_PICKUP_WRAP_JOINT = "right_arm_joint5"
+_PICKUP_WRAP_TURNS = 1
+_PICKUP_WRAP_UPPER_RAD = 2 * np.pi
+
 
 def _initialization_address(simulation: ArmHandSimulation) -> int:
   if simulation.scene != "usb-insert":
@@ -21,6 +25,45 @@ def _initialize_orientation(simulation: ArmHandSimulation, quaternion) -> None:
   address = _initialization_address(simulation)
   simulation.data.qpos[address + 3 : address + 7] = quaternion
   mujoco.mj_forward(simulation.model, simulation.data)
+
+
+def _unwrap_pickup_wrist_coordinate(simulation: ArmHandSimulation) -> dict:
+  """Use the equivalent positive-turn J5 coordinate for the USB pickup.
+
+  Shared home stores J5 as -150 degrees. The calibrated pickup is near +101
+  degrees, so a bounded scalar servo otherwise takes the +251 degree path.
+  Adding one turn at time zero leaves every body pose unchanged while making
+  the commanded pickup path -109 degrees. The wider coordinate range exists
+  only in this USB simulation instance.
+  """
+  model, data = simulation.model, simulation.data
+  joint_id = model.joint(_PICKUP_WRAP_JOINT).id
+  qpos_address = int(model.jnt_qposadr[joint_id])
+  actuator_id = model.actuator(_PICKUP_WRAP_JOINT).id
+  right_index = tuple(simulation._arm_joint_ids["right"]).index(joint_id)
+  original = float(data.qpos[qpos_address])
+  wrapped = original
+  if wrapped < 0.0:
+    wrapped += _PICKUP_WRAP_TURNS * 2 * np.pi
+  model.jnt_range[joint_id, 1] = max(
+    model.jnt_range[joint_id, 1], _PICKUP_WRAP_UPPER_RAD
+  )
+  model.actuator_ctrlrange[actuator_id, 1] = max(
+    model.actuator_ctrlrange[actuator_id, 1], _PICKUP_WRAP_UPPER_RAD
+  )
+  data.qpos[qpos_address] = wrapped
+  simulation._arm_goal["right"][right_index] = wrapped
+  simulation._arm_command["right"][right_index] = wrapped
+  data.ctrl[actuator_id] = wrapped
+  mujoco.mj_forward(model, data)
+  return {
+    "joint": _PICKUP_WRAP_JOINT,
+    "turns": _PICKUP_WRAP_TURNS,
+    "original_coordinate_rad": original,
+    "wrapped_coordinate_rad": wrapped,
+    "runtime_range_rad": model.jnt_range[joint_id].tolist(),
+    "physical_pose_changed": False,
+  }
 
 
 def initialize_face_down(simulation: ArmHandSimulation) -> None:
@@ -40,7 +83,8 @@ def initialize_for_insertion(
   """Initialize once after reset with bounded XY and world-Z yaw perturbations.
 
   Explicit offsets support reproducible boundary cases and replace the random
-  range for that component. Robot state, USB height and velocities are retained.
+  range for that component. The physical robot pose, USB height and velocities
+  are retained; periodic J5 is expressed on the equivalent short-path branch.
   """
   address = _initialization_address(simulation)
   xy_jitter_m, yaw_jitter_rad = float(xy_jitter_m), float(yaw_jitter_rad)
@@ -80,6 +124,7 @@ def initialize_for_insertion(
     mujoco.mju_mulQuat(quaternion, yaw_quaternion, config.AUTO_PLUG_QUATERNION_WXYZ)
   simulation.data.qpos[address : address + 2] += offset_xy_m
   simulation.data.qpos[address + 3 : address + 7] = quaternion
+  pickup_joint_wrap = _unwrap_pickup_wrist_coordinate(simulation)
   mujoco.mj_forward(simulation.model, simulation.data)
   return {
     "seed": int(seed),
@@ -88,4 +133,5 @@ def initialize_for_insertion(
     "offset_xy_m": offset_xy_m.tolist(),
     "yaw_offset_rad": yaw_offset_rad,
     "initial_pose_wxyz": simulation.data.qpos[address : address + 7].tolist(),
+    "pickup_joint_wrap": pickup_joint_wrap,
   }

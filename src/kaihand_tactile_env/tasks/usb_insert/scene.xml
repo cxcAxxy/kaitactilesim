@@ -45,14 +45,24 @@
   </default>
 
   <asset>
-    <material name="usb_shell_metal" rgba="0.68 0.72 0.76 1"
-              specular="0.65" shininess="0.6"/>
-    <material name="usb_grip_rubber" rgba="0.055 0.075 0.095 1"/>
-    <material name="usb_insulator" rgba="0.12 0.30 0.55 1"/>
-    <material name="usb_fixture" rgba="0.20 0.28 0.34 1"/>
-    <material name="usb_gold" rgba="0.82 0.62 0.20 1"
-              specular="0.55" shininess="0.4"/>
-    <material name="usb_mark" rgba="0.18 0.78 0.84 1"/>
+    <material name="usb_shell_metal" rgba="0.74 0.77 0.80 1"
+              specular="0.70" shininess="0.70"/>
+    <material name="usb_grip_rubber" rgba="0.045 0.050 0.055 1"
+              specular="0.12" shininess="0.18"/>
+    <material name="usb_insulator" rgba="0.08 0.23 0.40 1"
+              specular="0.18" shininess="0.25"/>
+    <material name="usb_fixture" rgba="0.91 0.91 0.89 1"
+              specular="0.18" shininess="0.28"/>
+    <material name="usb_gold" rgba="0.76 0.58 0.24 1"
+              specular="0.65" shininess="0.60"/>
+    <material name="usb_mark" rgba="0.70 0.74 0.78 1"
+              specular="0.15" shininess="0.20"/>
+    <material name="strip_white" rgba="0.94 0.94 0.92 1" specular="0.20" shininess="0.30"/>
+    <material name="strip_base_white" rgba="0.83 0.84 0.82 1" specular="0.15" shininess="0.20"/>
+    <material name="strip_recess" rgba="0.025 0.028 0.030 1" specular="0.05"/>
+    <material name="strip_seam" rgba="0.42 0.44 0.43 1" specular="0.10"/>
+    <mesh name="strip_shell" file="usb_power_strip_shell_visual.STL"/>
+    <mesh name="strip_base" file="usb_power_strip_base_visual.STL"/>
   </asset>
 
   <worldbody>
@@ -185,6 +195,9 @@
       <geom name="usb_plug_contact_4_visual" class="usb_visual"
             pos="0.0215 0.00375 -0.000235" size="0.0045 0.00065 0.000015" material="usb_gold"/>
     </body>
+    <!-- Append display furniture so original robot/socket/plug IDs stay stable.
+         The existing first USB-A bore above is the only mechanical target. -->
+    <include file="power_strip_visual.xml"/>
   </worldbody>
 
   <include file="../../shared/mjcf/control.xml"/>

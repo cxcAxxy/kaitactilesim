@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from ...shared.posture import ARM_HOME as ARM_HOME
+
 SCENE_NAME = "poker-draw"
 OBJECT_NAMES = ("card",)
 SCENE_GEOM_NAMES = (
@@ -14,10 +16,6 @@ SCENE_GEOM_NAMES = (
   "card_face_visual",
 )
 OBJECT_STABILIZERS: dict[tuple[str, str], str] = {}
-ARM_HOME = {
-  "left": np.deg2rad(np.array([55.0, -65.0, -70.0, -60.0, -120.0, 0.0, 0.0])),
-  "right": np.deg2rad(np.array([-55.0, -65.0, 70.0, -60.0, 120.0, 0.0, 0.0])),
-}
 DEFAULT_PLAYBACK_SPEED = 1.25
 # The force baseline is deterministic.  Re-enable pose randomization explicitly
 # for separate robustness experiments, not during friction calibration.

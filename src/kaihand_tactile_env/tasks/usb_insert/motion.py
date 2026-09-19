@@ -7,7 +7,8 @@ from dataclasses import dataclass
 class UsbMotionProfile:
   settle_s: float = 0.4
   preshape_s: float = 1.0
-  hover_s: float = 1.6
+  # Shared folded home requires a longer wrist-roll travel before descent.
+  hover_s: float = 2.1
   approach_s: float = 1.6
   approach_hold_s: float = 0.3
   grasp_ramp_s: float = 1.25
@@ -29,7 +30,7 @@ MOTION_PROFILES = {
   "fast": UsbMotionProfile(
     settle_s=0.25,
     preshape_s=0.7,
-    hover_s=1.35,
+    hover_s=2.1,
     approach_s=1.1,
     approach_hold_s=0.2,
     grasp_ramp_s=1.0,

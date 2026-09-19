@@ -6,7 +6,7 @@ import mujoco
 import numpy as np
 
 from ...shared.contact_tactile import SolverDistributedTactileProvider
-from ...shared.simulation import HAND_JOINT_NAMES, ArmHandSimulation
+from ...shared.simulation import ArmHandSimulation
 from . import config as C
 from . import grasp
 from .cleaning import CleaningProgress
@@ -89,7 +89,8 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
       "right",
       self.pickup_center + [0, 0, 0.12] + self.wrist_offset,
       self.pickup_rotation,
-      seed=C.ARM_HOME["right"],
+      # This is an IK branch seed, not the reset posture.
+      seed=np.deg2rad([-55, -65, 70, -60, 120, 0, 0]),
       max_iterations=500,
       position_tolerance=0.0003,
       orientation_tolerance=0.004,
@@ -97,13 +98,9 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
     )
     if not result.success:
       raise RuntimeError(f"Initial open-hand approach is unreachable: {result}")
-    self.data.qpos[self._arm_qpos["right"]] = result.joint_positions
-    self._arm_command["right"] = result.joint_positions.copy()
-    self.set_arm_joint_goal("right", result.joint_positions)
-    self.set_hand_joint_targets(HAND_JOINT_NAMES["right"], self.open_grip)
-    self.data.qpos[self._hand_qpos["right"]] = self.open_grip
-    self.data.qpos[self._thumb_joint6_qpos["right"]] = self.open_grip[3]
-    mujoco.mj_forward(self.model, self.data)
+    # Reset stays at shared home with both hands open. Execute this approach
+    # through the actuators after recording has begun.
+    self.approach_arm = result.joint_positions.copy()
     self._arm_segments = {}
     self._interpolated_arm_command = {
       side: command.copy() for side, command in self._arm_command.items()
@@ -239,9 +236,16 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
     rotation = self.data.xmat[self.eraser_body].reshape(3, 3)
     points = self.data.geom_xpos[self.ink_ids]
     local = (points - self.data.xpos[self.eraser_body]) @ rotation
+    # A long pen segment may fade only while its whole footprint lies under
+    # the felt, rather than when just its center passes under the eraser.
+    axes = self.data.geom_xmat[self.ink_ids].reshape(-1, 3, 3)[:, :, 2] @ rotation
+    extent = (
+      abs(axes) * self.model.geom_size[self.ink_ids, 1, None]
+      + self.model.geom_size[self.ink_ids, 0, None]
+    )
     covered = (
-      (abs(local[:, 0]) < 0.053)
-      & (abs(local[:, 1]) < 0.024)
+      (abs(local[:, 0]) + extent[:, 0] < 0.053)
+      & (abs(local[:, 1]) + extent[:, 1] < 0.024)
       & (abs(local[:, 2] - C.PAD_BOTTOM[2]) < 0.002)
     )
     velocity = np.zeros(6)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import numpy as np
+from ...shared.posture import ARM_HOME as ARM_HOME
 
 SCENE_NAME = "pick-place"
 OBJECT_NAMES = ("cylinder",)
@@ -16,10 +16,6 @@ SCENE_GEOM_NAMES = (
 )
 OBJECT_STABILIZERS = {
   ("right", "cylinder"): "right_grasp_stabilizer",
-}
-ARM_HOME = {
-  "left": np.deg2rad(np.array([55.0, -65.0, -70.0, -60.0, 60.0, 0.0, 0.0])),
-  "right": np.deg2rad(np.array([-55.0, -65.0, 70.0, -60.0, -60.0, 0.0, 0.0])),
 }
 DEFAULT_PLAYBACK_SPEED = 1.0
 DEFAULT_XY_JITTER = 0.01

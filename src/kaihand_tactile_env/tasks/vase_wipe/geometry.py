@@ -49,7 +49,11 @@ def rebuild():
     shininess=".25",
   )
   ET.SubElement(
-    asset, "material", name="vase_clay", rgba=".28 .16 .085 1", specular=".1"
+    asset,
+    "material",
+    name="vase_clay",
+    rgba=_numbers(config.VASE_CLAY_RGBA),
+    specular=".1",
   )
   ET.SubElement(
     vase,
@@ -58,7 +62,11 @@ def rebuild():
     type="cylinder",
     size=".051 .008",
     pos="0 0 .008",
-    **{"class": "vase_ceramic", "material": "vase_clay", "rgba": ".32 .19 .10 1"},
+    **{
+      "class": "vase_ceramic",
+      "material": "vase_clay",
+      "rgba": _numbers(config.VASE_CLAY_RGBA),
+    },
   )
   ET.SubElement(
     vase,
@@ -67,7 +75,11 @@ def rebuild():
     type="cylinder",
     size=f"{config.inner_radius(config.FLOOR_HEIGHT)} .007",
     pos=f"0 0 {config.FLOOR_HEIGHT - 0.007}",
-    **{"class": "vase_ceramic", "material": "vase_clay", "rgba": ".32 .19 .10 1"},
+    **{
+      "class": "vase_ceramic",
+      "material": "vase_clay",
+      "rgba": _numbers(config.VASE_CLAY_RGBA),
+    },
   )
   cube_faces = [
     0,
@@ -136,7 +148,7 @@ def rebuild():
         group="3",
         **{"class": "vase_ceramic"},
       )
-  # Revolved visual surface: horizontal throwing ridges, rolled lip, brown foot.
+  # Revolved ivory visual surface: horizontal throwing ridges and rolled lip.
   zvalues = np.linspace(profile[0, 0], profile[-1, 0], 70)
   inner = np.interp(zvalues, profile[:, 0], profile[:, 1])
   outer = inner + 0.007 + 0.00035 * np.sin(zvalues * 2 * np.pi / 0.006)
@@ -180,9 +192,10 @@ def rebuild():
   for row, z in enumerate(config.STAIN_HEIGHTS):
     radius = config.inner_radius(z) - 0.0002
     for col in range(config.PATCH_COLUMNS):
-      angle = config.STAIN_ANGLE_RAD + (
-        col - (config.PATCH_COLUMNS - 1) / 2
-      ) * config.STAIN_ANGLE_SPACING_RAD
+      angle = (
+        config.STAIN_ANGLE_RAD
+        + (col - (config.PATCH_COLUMNS - 1) / 2) * config.STAIN_ANGLE_SPACING_RAD
+      )
       ET.SubElement(
         vase,
         "geom",
@@ -243,17 +256,18 @@ def rebuild():
   y = np.arange(h)[:, None]
   bands = 7 * np.sin(y * 2 * np.pi / 31) + 4 * np.sin(y * 2 * np.pi / 9)
   color = (
-    np.array([105.0, 160.0, 140.0])[None, None, :]
+    (255 * np.array(config.VASE_IVORY_RGB))[None, None, :]
     + cloudy[..., None] * 2
-    + noise[..., None] * 6
-    + bands[..., None]
+    + noise[..., None] * 3
+    + 0.35 * bands[..., None]
   )
   dark = rng.random((h, w)) < 0.075
-  color[dark] *= 0.52
-  # Texture vertical coordinates run bottom to top; expose the unglazed foot.
+  color[dark] *= 0.90
+  # Texture vertical coordinates run bottom to top; retain subtle warm ceramic
+  # variation while keeping the whole vase in the ivory family.
   foot = int(h * 0.12)
-  color[:foot] = np.array([102.0, 62.0, 37.0]) + noise[:foot, :, None] * 10
-  color[-7:] = np.array([137.0, 105.0, 71.0]) + noise[-7:, :, None] * 9
+  color[:foot] = np.array([206.0, 195.0, 166.0]) + noise[:foot, :, None] * 4
+  color[-7:] = np.array([218.0, 207.0, 179.0]) + noise[-7:, :, None] * 4
   Image.fromarray(np.uint8(np.clip(color, 0, 255))).save(
     path.with_name("vase_glaze.png")
   )

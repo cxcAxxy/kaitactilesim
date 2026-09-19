@@ -17,6 +17,12 @@
           iterations="80" cone="elliptic"/>
   <visual>
     <global offwidth="1280" offheight="720"/>
+    <quality shadowsize="4096"/>
+    <!-- Default znear clips away wrist-adjacent surfaces at ~42 mm in USB.
+         Keep near surfaces down to ~2 mm without moving any sensor camera. -->
+    <map znear="0.0005"/>
+    <headlight ambient="0.25 0.25 0.25" diffuse="0.4 0.4 0.4"
+               specular="0.3 0.3 0.3"/>
   </visual>
 
   <default>
@@ -55,15 +61,31 @@
   </default>
 
   <asset>
-    <texture name="grid" type="2d" builtin="checker" rgb1="0.12 0.16 0.20"
-             rgb2="0.20 0.25 0.30" width="300" height="300"/>
-    <material name="grid" texture="grid" texrepeat="8 8" texuniform="true"/>
-    <material name="arm_visual" rgba="0.28 0.38 0.52 1"/>
-    <material name="arm_red" rgba="0.72 0.10 0.10 1"/>
-    <material name="arm_green" rgba="0.10 0.62 0.18 1"/>
-    <material name="arm_blue" rgba="0.10 0.24 0.72 1"/>
-    <material name="torso_visual" rgba="0.72 0.74 0.78 1"/>
-    <material name="table" rgba="0.43 0.31 0.21 1"/>
+    <!-- White/silver lab v2: appearance only. Retain historical material names,
+         all geometry, sensor calibration, and physical contact parameters. -->
+    <texture name="lab_sky" type="skybox" builtin="gradient"
+             rgb1="1 1 1" rgb2="1 1 1"
+             width="256" height="1536"/>
+    <texture name="grid" type="2d" builtin="flat" rgb1="0.96 0.96 0.96"
+             rgb2="0.96 0.96 0.96" width="512" height="512"/>
+    <texture name="worktop_finish" type="2d"
+             file="../../assets/workcell/textures/dark_grey_marble_v1.png"/>
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true"
+              specular="0.08" shininess="0.12"/>
+    <material name="arm_visual" rgba="0.94 0.94 0.94 1"
+              specular="0.22" shininess="0.35"/>
+    <material name="arm_red" rgba="0.90 0.90 0.90 1"
+              specular="0.22" shininess="0.35"/>
+    <material name="arm_green" rgba="0.96 0.96 0.96 1"
+              specular="0.22" shininess="0.35"/>
+    <material name="arm_blue" rgba="0.94 0.94 0.94 1"
+              specular="0.22" shininess="0.35"/>
+    <material name="torso_visual" rgba="0.94 0.94 0.94 1"
+              specular="0.22" shininess="0.35"/>
+    <material name="table" texture="worktop_finish" texrepeat="1 1"
+              texuniform="true" specular="0.05" shininess="0.12"/>
+    <material name="table_frame" rgba="0.50 0.52 0.54 1"
+              specular="0.05" shininess="0.12"/>
 
     <mesh name="tianji_base" file="tianji_m6/base/ZJ_Robot_link.STL"/>
     <mesh name="tianji_Base_L" file="tianji_m6/m6/Base_L.STL"/>
@@ -85,8 +107,10 @@
   </asset>
 
   <worldbody>
-    <light name="top" pos="0 0 3" dir="0 0 -1" directional="true"/>
-    <light name="front" pos="2 -1 2" dir="-1 0 -0.5"/>
+    <light name="top" pos="0 0 3" dir="0 0 -1" directional="true"
+           diffuse="0.65 0.65 0.65" specular="0.35 0.35 0.35"/>
+    <light name="front" pos="2 -1 2" dir="-1 0 -0.5" castshadow="false"
+           diffuse="0.35 0.35 0.35" specular="0.20 0.20 0.20"/>
     <!-- Fixed calibrated cameras. MuJoCo cameras look along local -Z. -->
     <camera name="overhead" pos="0.56 0 1.75"
             xyaxes="1 0 0 0 1 0" fovy="52"/>
@@ -96,12 +120,14 @@
           contype="3075" conaffinity="3075" material="grid"
           friction="1.0 0.02 0.002"/>
     <body name="table" pos="0.58 0 0.64">
-      <geom name="tabletop" type="box" size="1.50 1.50 0.04"
+      <!-- Rear edge x=.15: 8 cm ahead of torso surface x=.07 at table height.
+           Retain front edge x=2.08, width, height, and contact parameters. -->
+      <geom name="tabletop" type="box" pos="0.535 0 0" size="0.965 1.50 0.04"
             contype="3075" conaffinity="3075" material="table"
             friction="1.1 0.02 0.002"/>
       <geom name="table_leg_front" type="box" pos="0.42 0 -0.32"
             size="0.06 0.50 0.28" contype="1" conaffinity="1"
-            material="table"/>
+            material="table_frame"/>
     </body>
 
     <body name="torso">
@@ -195,7 +221,7 @@
                                 mass="0.68606" diaginertia="0.00173691 0.00153911 0.000745263"/>
                       <joint name="left_arm_joint7" class="arm_joint"
                              range="-1.57079632679 1.57079632679"/>
-                      <geom type="mesh" mesh="tianji_Link7_L" class="arm_visual"
+                      <geom type="mesh" mesh="tianji_Link7_L_shell_visual" class="arm_visual"
                             material="arm_green"/>
                       <geom type="capsule" fromto="0 0 0 0 -0.088 0" size="0.031"
                             class="arm_collision"/>
@@ -297,7 +323,7 @@
                                 mass="0.68606" diaginertia="0.00173691 0.00153911 0.000745263"/>
                       <joint name="right_arm_joint7" class="arm_joint"
                              range="-1.57079632679 1.57079632679"/>
-                      <geom type="mesh" mesh="tianji_Link7_R" class="arm_visual"
+                      <geom type="mesh" mesh="tianji_Link7_R_shell_visual" class="arm_visual"
                             material="arm_green"/>
                       <geom type="capsule" fromto="0 0 0 0 -0.088 0" size="0.031"
                             class="arm_collision"/>

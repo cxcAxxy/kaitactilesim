@@ -296,12 +296,20 @@ class PokerDrawPlanner:
     pinch_ee_rotation = pinch_hand_rotation @ ee_to_hand.T
 
     card_position = card_pose[:3]
-    current_ee_position, _ = self.sim.current_pose_matrix(side)
+    # The clearance waypoint is calibrated in the workspace, not relative to
+    # the folded idle hand. Evaluate its reference without changing live state.
+    reference = mujoco.MjData(self.sim.model)
+    reference.qpos[:] = self.sim.data.qpos
+    reference.qpos[self.sim._arm_qpos[side]] = np.deg2rad(
+      [-55, -65, 70, -60, 120, 0, 0]
+    )
+    mujoco.mj_kinematics(self.sim.model, reference)
+    current_ee_position = reference.site(f"{side}_ee_site").xpos.copy()
     targets = (
       (
         "clear_card",
         np.array([current_ee_position[0], current_ee_position[1], 1.00]),
-        0.30,
+        3.00,
       ),
       ("ready_card", card_position + np.array([-0.144, 0.004, 0.27825]), 0.45),
       ("hover_card", card_position + np.array([-0.144, 0.004, 0.09825]), 0.55),
@@ -331,7 +339,8 @@ class PokerDrawPlanner:
           )
         ),
       )
-    seed = self.sim.arm_goal[side]
+    # Retain the calibrated IK branch; execution still travels from shared home.
+    seed = np.deg2rad([-55, -65, 70, -60, 120, 0, 0])
     waypoints: list[JointWaypoint] = []
     for phase, position, duration in targets:
       result = self.sim.solve_ik(
@@ -395,6 +404,7 @@ class PokerDrawExecutor:
     self._maximum_card_height = float("-inf")
     self._maximum_card_tilt_degrees = 0.0
     self._maximum_palm_normal_z = float("-inf")
+    self._maximum_task_palm_normal_z = float("-inf")
     self._minimum_supported_card_clearance = float("inf")
     self._minimum_card_back_clearance = float("inf")
     self._sustained_pinch = False
@@ -471,6 +481,7 @@ class PokerDrawExecutor:
     self._maximum_card_height = float(self.sim.object_pose("card")[2])
     self._maximum_card_tilt_degrees = self._card_tilt_degrees()
     self._maximum_palm_normal_z = self._palm_normal_z()
+    self._maximum_task_palm_normal_z = float("-inf")
     self._minimum_supported_card_clearance = self._card_table_clearance()
     self._minimum_card_back_clearance = self._card_back_top_clearance()
     self._sustained_pinch = False
@@ -801,7 +812,8 @@ class PokerDrawExecutor:
       and self._minimum_inspection_card_height >= float(edge_pose[2]) + 0.005
       and terminal_pinch
       and retained
-      and self._maximum_palm_normal_z < -0.95
+      and np.isfinite(self._maximum_task_palm_normal_z)
+      and self._maximum_task_palm_normal_z < -0.95
       and toward_robot_displacement > 0.08
       and lateral_card_displacement < 0.015
       and self._minimum_supported_card_clearance >= -0.0006
@@ -898,8 +910,17 @@ class PokerDrawExecutor:
     self._set_flat_draw_pose()
     seed = self.sim.arm_goal[plan.side]
     for waypoint in plan.waypoints:
-      self.sim.set_arm_joint_goal(plan.side, waypoint.joint_positions)
-      self._advance_fixed(waypoint.duration, waypoint.phase, plan.table_edge_x)
+      if waypoint.phase == "clear_card":
+        self._move_arm_joints_linear(
+          plan,
+          waypoint.joint_positions,
+          seed,
+          duration=waypoint.duration,
+          phase=waypoint.phase,
+        )
+      else:
+        self.sim.set_arm_joint_goal(plan.side, waypoint.joint_positions)
+        self._advance_fixed(waypoint.duration, waypoint.phase, plan.table_edge_x)
       if self.sim.arm_goal_error(plan.side) > 0.08:
         raise RuntimeError(f"{waypoint.phase} arm error remained above 0.08 rad")
       phases.append(waypoint.phase)
@@ -2055,6 +2076,12 @@ class PokerDrawExecutor:
         self._maximum_palm_normal_z,
         self._palm_normal_z(),
       )
+      # The common idle pose faces inward. Enforce palm-down task work after
+      # the initial clear_card reorientation; retain the full recorded maximum.
+      if phase != "clear_card":
+        self._maximum_task_palm_normal_z = max(
+          self._maximum_task_palm_normal_z, self._palm_normal_z()
+        )
     if self.observer is not None:
       self.observer(self.sim, phase)
 

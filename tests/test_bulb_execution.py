@@ -210,13 +210,13 @@ def test_full_robot_episode_without_object_teleports_or_external_wrenches(
       # forces with the old 20 ms step commands had 0.38–0.86 N RMS jumps.
       assert np.all(np.sqrt(np.mean(jumps**2, axis=0)) < 0.2)
     assert released_strokes >= 7
-    assert 8 <= result.strokes <= 12
+    assert result.strokes == 4
     assert result.rotation_driver == config.ROTATION_DRIVER
     assert result.maximum_wrist_rotation_deg < 1.0
     assert result.maximum_wrist_displacement_m < 0.004
   else:
-    assert released_strokes >= 3
-    assert 4 <= result.strokes <= 6
+    assert released_strokes == 2
+    assert result.strokes == 3
     assert result.rotation_driver == "legacy_pinch_wrist"
   assert result.elapsed_s < time_limit
   assert result.grasp_mode == grasp_mode and result.speed == speed
@@ -414,17 +414,23 @@ def test_cli_rejects_incompatible_modes_and_outputs(arguments):
   assert error.value.code == 2
 
 
-def test_tightening_recovery_is_bounded_and_cannot_replace_confirmation(simulation, monkeypatch):
+def test_tightening_recovery_is_bounded_and_cannot_replace_confirmation(
+  simulation, monkeypatch
+):
   simulation.reset()
   executor = BulbScrewExecutor(simulation)
-  executor._command_position, executor._command_rotation = simulation.current_pose_matrix('right')
+  executor._command_position, executor._command_rotation = (
+    simulation.current_pose_matrix("right")
+  )
   steps = []
-  monkeypatch.setattr(executor, '_finger_regrasp', lambda: None)
-  monkeypatch.setattr(executor, '_advance', lambda *args, **kwargs: None)
-  monkeypatch.setattr(executor, '_finger_step', lambda angle_step=0.0, **kwargs: steps.append(angle_step))
-  with pytest.raises(RuntimeError, match='loaded angular stall'):
+  monkeypatch.setattr(executor, "_finger_regrasp", lambda: None)
+  monkeypatch.setattr(executor, "_advance", lambda *args, **kwargs: None)
+  monkeypatch.setattr(
+    executor, "_finger_step", lambda angle_step=0.0, **kwargs: steps.append(angle_step)
+  )
+  with pytest.raises(RuntimeError, match="loaded angular stall"):
     executor._tighten()
-  recovery = steps[round(config.TIGHTENING_DURATION_S / .02):]
+  recovery = steps[round(config.TIGHTENING_DURATION_S / 0.02) :]
   assert len(recovery) == 100
   assert recovery == [0.0] * 100  # Recover grip without commanding more rotation.
   assert not executor._tightening_verified

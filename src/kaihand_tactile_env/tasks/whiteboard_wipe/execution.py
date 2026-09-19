@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from ...shared.approach import approach_waypoint
 from ...shared.simulation import HAND_JOINT_NAMES, _rotation_vector_world
 from . import cleaning
 from . import config as C
@@ -36,13 +37,10 @@ class WhiteboardWipeExecutor:
 
   def tick(self, phase):
     s = self.sim
-    if self.closing or self.holding:
+    if self.closing:
       loads = s.forces.read(s.data).normal_force_n[5:]
-      rate = np.clip(
-        1.2 * (np.array([2.0, 1.5, 1.2, 1.2, 0.8]) - loads),
-        -0.1 if self.closing else 0,
-        0.35 if self.closing else 0.06,
-      )
+      targets = np.array([2.0, 1.5, 1.2, 1.2, 0.8])
+      rate = np.clip(1.2 * (targets - loads), -0.1, 0.35)
       self.progress = np.clip(self.progress + 0.01 * rate, 0, 1.2)
       s.set_hand_joint_targets(
         HAND_JOINT_NAMES["right"],
@@ -54,7 +52,19 @@ class WhiteboardWipeExecutor:
       self.rotation,
       seed=s.arm_goal["right"],
       max_iterations=140,
-      position_tolerance=0.00001 if phase in ("wipe", "support", "release") else 0.0003,
+      position_tolerance=(
+        0.00001
+        if phase
+        in (
+          "wipe",
+          "unload_board",
+          "reposition",
+          "load_board",
+          "support",
+          "release",
+        )
+        else 0.0003
+      ),
       orientation_tolerance=0.004,
       posture_weight=0,
     )
@@ -184,6 +194,10 @@ class WhiteboardWipeExecutor:
         raise RuntimeError(
           "Eraser must initially rest on the table with no finger contact"
         )
+      for _ in approach_waypoint(s, s.approach_arm, s.open_grip, phase="approach"):
+        if self.observer:
+          self.observer(s, "approach")
+      self.position, self.rotation = s.current_pose_matrix("right")
       self.move_wrist(s.pickup_center + s.wrist_offset, 2.0, "approach")
       self.closing = True
       self.move_wrist(self.position, 4.0, "grasp")
@@ -194,6 +208,11 @@ class WhiteboardWipeExecutor:
       wrist, rot = s.current_pose_matrix("right")
       self.tool_offset = rot.T @ (s.object_pose("eraser")[:3] - wrist)
       self.holding = True
+      # Take the eraser's weight gradually before the main lift. This softens
+      # the table-to-finger load transfer visible in the native force trace.
+      self.move_tool(
+        s.pickup_center + [0, 0, 0.025], 2.0, "lift", C.INITIAL_ERASER_ROTATION
+      )
       self.move_tool(
         s.pickup_center + [0, 0, 0.15], 2.5, "lift", C.INITIAL_ERASER_ROTATION
       )
@@ -211,26 +230,127 @@ class WhiteboardWipeExecutor:
       wipe_offset = self.position - s.object_pose("eraser")[:3]
       wipe_rotation = self.rotation.copy()
       depth = 0.002
-      for i in range(4500):
-        # Use the last 10 ms of actual load directly: the extra EMA delayed
-        # unloading, while coarse IK held small depth corrections until they
-        # accumulated into a sudden motion. Keep the 2.5 N wiping target.
-        depth = float(
-          np.clip(depth + 0.000006 * (s.mean_board_force - 2.5), -0.012, 0.005)
+      previous_force = s.mean_board_force
+      # Cover the three widely separated 20 cm lines with alternating sweeps.
+      # Between rows, unload the board smoothly before crossing the 8 cm gap;
+      # dragging across that gap under pressure redistributes the grasp load.
+      path = []
+
+      def add_transition(end):
+        start = path[-1][0] if path else np.zeros(2)
+        # Lift in place, cross the row gap clear of the board, then rebuild
+        # normal load in place. This prevents lateral motion from coinciding
+        # with the load transfer between the board and the grasp.
+        path.extend(
+          (
+            (start, 1.5, 0.0, 0.008, C.BOARD_TARGET_FORCE_N, 0.0, "unload_board"),
+            (end, 3.5, 0.008, 0.008, 0.0, 0.0, "reposition"),
+            (
+              end,
+              2.5,
+              0.008,
+              0.0,
+              0.0,
+              C.BOARD_PRELOAD_FORCE_N,
+              "load_board",
+            ),
+          )
         )
+
+      add_transition(np.array([-0.08, -0.082]))
+      for row, height in enumerate((-0.08, 0.0, 0.08)):
+        edge = 0.082 if row % 2 == 0 else -0.082
+        end = np.array([height, edge])
+        path.append(
+          (
+            end,
+            6.5,
+            0.0,
+            0.0,
+            C.BOARD_TARGET_FORCE_N,
+            C.BOARD_TARGET_FORCE_N,
+            "wipe",
+          )
+        )
+        if row < 2:
+          add_transition(np.array([height + 0.08, edge]))
+      offsets = []
+      reliefs = []
+      force_goals = []
+      wipe_phases = []
+      start = np.zeros(2)
+      for (
+        end,
+        seconds,
+        relief_start,
+        relief_end,
+        force_start,
+        force_end,
+        phase,
+      ) in path:
+        # Every segment starts and ends at rest, with the same quintic blend
+        # applied to lateral position, normal relief, and desired board load.
+        delta = end - start
+        for u in np.linspace(0, 1, round(seconds / C.CONTROL_PERIOD_S) + 1)[1:]:
+          blend = 10 * u**3 - 15 * u**4 + 6 * u**5
+          offsets.append(start + blend * delta)
+          reliefs.append(relief_start + blend * (relief_end - relief_start))
+          force_goals.append(force_start + blend * (force_end - force_start))
+          wipe_phases.append(phase)
+        start = end
+      cursor = 0.0
+      speed_scale = 0.0
+      for i in range(6000):
+        # Retain the original low-gain normal admittance. Regulate path speed
+        # separately so the same stable pressure loop works over the board.
+        force = s.mean_board_force
+        # Slow the tangential path before a rising load outruns the normal
+        # servo. Advance simulation and record real forces during the pause;
+        # never clip measured loads or advance ink without physical sliding.
+        predicted_force = force + 5 * max(0.0, force - previous_force)
+        index = min(int(cursor), len(offsets) - 1)
+        force_goal = force_goals[index]
+        allowed_speed = float(
+          np.clip((force_goal + 0.15 - predicted_force) / 0.10, 0, 1)
+        )
+        speed_scale += np.clip(allowed_speed - speed_scale, -0.10, 0.025)
+        cursor = min(cursor + speed_scale, len(offsets) - 1)
+        index = int(cursor)
+        blend = cursor - index
+        offset = (1 - blend) * offsets[index] + blend * offsets[
+          min(index + 1, len(offsets) - 1)
+        ]
+        relief = (1 - blend) * reliefs[index] + blend * reliefs[
+          min(index + 1, len(reliefs) - 1)
+        ]
+        force_goal = (1 - blend) * force_goals[index] + blend * force_goals[
+          min(index + 1, len(force_goals) - 1)
+        ]
+        depth = float(
+          np.clip(
+            depth + 0.000006 * (force - force_goal),
+            -0.012,
+            0.005,
+          )
+        )
+        previous_force = force
         target = (
           center
-          + depth * C.BOARD_NORMAL
-          + np.array([0, 0.045 * np.sin(2 * np.pi * (i * 0.01) / 4.0), 0])
-          + 0.015 * np.sin(2 * np.pi * (i * 0.01) / 7.0) * C.BOARD_ROTATION[:, 0]
+          + (depth + relief) * C.BOARD_NORMAL
+          + C.BOARD_ROTATION[:, :2] @ offset
         )
         self.position = target + wipe_offset
         self.rotation = wipe_rotation
-        self.tick("wipe")
+        self.tick(wipe_phases[index])
         if i > 300 and np.max(s.remaining) <= 1e-9:
           break
+        if cursor >= len(offsets) - 1:
+          break
       self.move_tool(
-        center + 0.07 * C.BOARD_NORMAL, 1.5, "leave_board", C.WIPE_ROTATION
+        s.object_pose("eraser")[:3] + 0.07 * C.BOARD_NORMAL,
+        1.5,
+        "leave_board",
+        C.WIPE_ROTATION,
       )
       self.move_tool(
         s.pickup_center + [0, 0, 0.15], 3.0, "return", C.INITIAL_ERASER_ROTATION
@@ -287,8 +407,9 @@ class WhiteboardWipeExecutor:
       ].tolist(),
       friction_impedance_ratio=float(s.model.opt.impratio),
       hand_velocity_gain=C.HAND_VELOCITY_GAIN,
-      board_target_force_n=2.5,
+      board_target_force_n=C.BOARD_TARGET_FORCE_N,
       board_depth_gain_m_per_n_tick=0.000006,
+      board_depth_control="integral_with_load_regulated_path_speed",
       contact_control_ik_tolerance_m=0.00001,
       table_approach_speed_m_s=0.002,
       table_target_support_n=float(

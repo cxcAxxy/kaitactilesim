@@ -26,11 +26,15 @@ def test_zero_jitter_preserves_legacy_initialization_exactly(simulation):
   goals = simulation.arm_goal
   record = initialize_for_insertion(simulation)
   address = int(simulation.model.joint("usb_plug_freejoint").qposadr[0])
+  wrist_address = int(simulation.model.joint("right_arm_joint5").qposadr[0])
   before[address + 3 : address + 7] = config.AUTO_PLUG_QUATERNION_WXYZ
+  before[wrist_address] += 2 * np.pi
   np.testing.assert_array_equal(simulation.data.qpos, before)
   np.testing.assert_array_equal(simulation.data.qvel, velocity)
-  for side in goals:
-    np.testing.assert_array_equal(simulation.arm_goal[side], goals[side])
+  np.testing.assert_array_equal(simulation.arm_goal["left"], goals["left"])
+  expected_right_goal = goals["right"].copy()
+  expected_right_goal[4] += 2 * np.pi
+  np.testing.assert_array_equal(simulation.arm_goal["right"], expected_right_goal)
   assert simulation.data.time == 0.0
   assert record["offset_xy_m"] == [0.0, 0.0]
   assert record["yaw_offset_rad"] == 0.0
@@ -60,6 +64,7 @@ def test_explicit_offsets_apply_world_yaw_and_preserve_every_other_state(
   )
   keep = np.ones(len(before), dtype=bool)
   keep[address : address + 7] = False
+  keep[int(simulation.model.joint("right_arm_joint5").qposadr[0])] = False
   np.testing.assert_array_equal(simulation.data.qpos[keep], before[keep])
   np.testing.assert_array_equal(simulation.data.qvel, velocity)
   assert np.linalg.norm(record["initial_pose_wxyz"][3:]) == pytest.approx(1.0)

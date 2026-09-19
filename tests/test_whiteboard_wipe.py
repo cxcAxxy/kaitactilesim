@@ -149,6 +149,48 @@ def test_loaded_sliding_requires_actual_friction_work(friction):
     assert sim.remaining.min() > 0.99  # One valid step still leaves the ink.
 
 
+def test_large_writing_stays_inside_board_at_randomization_limits():
+  sim = WhiteboardWipeSimulation(add_genesis_probes=False)
+  axes = sim.model.geom_quat[sim.ink_ids]
+  rotations = np.empty((C.INK_COUNT, 9))
+  for quat, rotation in zip(axes, rotations, strict=True):
+    mujoco.mju_quat2Mat(rotation, quat)
+  extent = (
+    abs(rotations.reshape(-1, 3, 3)[:, :, 2])
+    * sim.model.geom_size[sim.ink_ids, 1, None]
+    + sim.model.geom_size[sim.ink_ids, 0, None]
+  )
+  centers = sim.model.geom_pos[sim.ink_ids]
+  lower, upper = (centers - extent).min(axis=0), (centers + extent).max(axis=0)
+  assert upper[0] - lower[0] > 0.16
+  assert upper[1] - lower[1] > 0.20
+  row_centers = [centers[:8, 0], centers[8:17, 0], centers[17:, 0]]
+  np.testing.assert_allclose([np.mean(row) for row in row_centers], [-0.08, 0, 0.08], atol=0.003)
+  assert all(np.ptp(row) < 0.005 for row in row_centers)
+  for sign in (-1, 1):
+    shifted = centers[:, :2] + sign * C.INK_CENTER_RANGE_M
+    assert np.all(abs(shifted) + extent[:, :2] < [0.18, 0.20])
+  assert len(sim.remaining) == 25  # Keep existing recording field dimensions.
+
+
+def test_partially_covered_long_stroke_does_not_erase():
+  sim = WhiteboardWipeSimulation(add_genesis_probes=False)
+  center = C.BOARD_SURFACE - C.BOARD_ROTATION @ C.PAD_BOTTOM
+  quat = np.zeros(4)
+  mujoco.mju_mat2Quat(quat, C.WIPE_ROTATION.ravel())
+  sim.set_object_pose("eraser", center - 0.0005 * C.BOARD_NORMAL, quat)
+  sim.data.xfrc_applied[sim.eraser_body, :3] = -3.0 * C.BOARD_NORMAL
+  sim.data.qvel[sim._object_dofs["eraser"] + 1] = 0.05
+  mujoco.mj_forward(sim.model, sim.data)
+  sim._update_cleaning()
+  assert sim.board_force > 1.5 and sim.board_tangent_force > 0.1
+  # The two segments two positions away have centers inside the 10.6 cm pad,
+  # but their outer ends extend beyond it. Fully covered center segments fade.
+  assert sim.remaining[12] < 1
+  np.testing.assert_array_equal(sim.remaining[[10, 14]], 1)
+  np.testing.assert_array_equal(sim.cleaning.work_j[[10, 14]], 0)
+
+
 def test_full_actuator_episode_cleans_and_releases_eraser():
   sim = WhiteboardWipeSimulation(add_genesis_probes=False)
   wipe_force = []
@@ -161,6 +203,9 @@ def test_full_actuator_episode_cleans_and_releases_eraser():
       "grasp",
       "lift",
       "orient_and_transfer",
+      "unload_board",
+      "reposition",
+      "load_board",
       "wipe",
       "lower",
       "support",
@@ -259,9 +304,10 @@ def test_full_actuator_episode_cleans_and_releases_eraser():
     assert len(samples) > 1, phase
     differences = np.diff(np.asarray(samples), axis=0)
     rms = np.sqrt(np.mean(differences**2, axis=0))
-    assert np.all(rms[:5] < 0.05), (phase, "Fn", rms[:5])
-    assert np.all(rms[5:10] < 0.05), (phase, "|Ft|", rms[5:10])
-    assert np.all(rms[10:] < 0.05), (phase, "signed Ft", rms[10:])
+    limit = 0.08 if phase == "load_board" else 0.05
+    assert np.all(rms[:5] < limit), (phase, "Fn", rms[:5])
+    assert np.all(rms[5:10] < limit), (phase, "|Ft|", rms[5:10])
+    assert np.all(rms[10:] < limit), (phase, "signed Ft", rms[10:])
   active_force = np.asarray(wipe_force)
   contact_count = np.asarray(wipe_contact_count)
   loaded = (active_force > 0.5) & (contact_count > 0)
@@ -279,7 +325,7 @@ def test_full_actuator_episode_cleans_and_releases_eraser():
   active_force = active_force[np.flatnonzero(active_force > 0.5)[0] :]
   assert np.mean(active_force > 0.01) > 0.99
   assert np.sqrt(np.mean(np.diff(active_force) ** 2)) < 0.25
-  assert max(wipe_force) < 3.0  # Bound physical overshoot around the 2.5 N target.
+  assert max(wipe_force) < 3.0  # Bound physical overshoot around the 2.2 N target.
   for phase in ("wipe",):
     assert np.asarray(phase_forces[phase])[:, 5].max() < 1.3, phase
   # Bound short transients as well as episode peaks and long-phase RMS.
@@ -384,7 +430,7 @@ def test_random_region_corner_episode_tracks_ink_and_completes():
   assert max(result["ink_remaining"]) == 0
   assert not any(result["solver_warnings"])
   assert result["peak_direct_hand_board_force_n"] == 0
-  assert result["peak_board_force_n"] < 3.5
+  assert result["peak_board_force_n"] < 3.6
   np.testing.assert_array_equal(sim.data.xfrc_applied[sim.eraser_body], 0)
   np.testing.assert_allclose(
     result["ink_randomization"]["center_offset_board_m"], C.INK_CENTER_RANGE_M

@@ -21,6 +21,7 @@ from .cameras import LEGACY_CAPTURE_CAMERA_NAMES
 from .cameras import ROBOT_CAMERA_NAMES as ROBOT_CAMERA_NAMES
 from .cameras import SHARED_CAMERA_NAMES as SHARED_CAMERA_NAMES
 from .cameras import TRAINING_CAMERA_NAMES as TRAINING_CAMERA_NAMES
+from .posture import ARM_HOME as ARM_HOME
 
 SIDES = ("left", "right")
 TASK_CONFIGS = {
@@ -131,7 +132,9 @@ class WorkcellConfig:
   control_hz: int = 100
   camera_hz: int = 30
   cameras: tuple[CameraConfig, ...] = field(
-    default_factory=lambda: tuple(CameraConfig(name) for name in LEGACY_CAPTURE_CAMERA_NAMES)
+    default_factory=lambda: tuple(
+      CameraConfig(name) for name in LEGACY_CAPTURE_CAMERA_NAMES
+    )
   )
   tactile_provider: str = "genesis_probe_bimanual_clean_v1"
 

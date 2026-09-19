@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Author the USB power-strip display shell; no runtime SciPy dependency.
+
+The first USB aperture surrounds the existing mechanical socket at local (0, 0).
+Other apertures are decorative. All generated geoms are non-colliding, massless,
+and appended after existing task bodies so existing body/geom IDs remain stable.
+"""
+
+import hashlib
+import json
+import struct
+from pathlib import Path
+
+import numpy as np
+from scipy.spatial import Delaunay
+
+ROOT = Path(__file__).resolve().parents[2]
+ASSETS = ROOT / "src/kaihand_tactile_env/assets/workcell"
+TASK = ROOT / "src/kaihand_tactile_env/tasks/usb_insert"
+
+
+def rectangle(x, y, hx, hy, degrees=0):
+  points = np.array([[-hx, -hy], [hx, -hy], [hx, hy], [-hx, hy]])
+  a = np.radians(degrees)
+  rotation = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+  return points @ rotation.T + [x, y]
+
+
+def outline():
+  points = []
+  radius = 0.010
+  for center, start in [
+    ((0.272 - radius, 0.038 - radius), 0),
+    ((-0.038 + radius, 0.038 - radius), 90),
+    ((-0.038 + radius, -0.038 + radius), 180),
+    ((0.272 - radius, -0.038 + radius), 270),
+  ]:
+    for a in np.radians(np.linspace(start, start + 90, 13)):
+      points.append(np.array(center) + radius * np.array([np.cos(a), np.sin(a)]))
+  return np.array(points)
+
+
+def inside(points, polygon):
+  edges = np.roll(polygon, -1, axis=0) - polygon
+  offset = points[:, None, :] - polygon
+  cross = edges[:, 0] * offset[:, :, 1] - edges[:, 1] * offset[:, :, 0]
+  return np.all(cross >= -1e-12, axis=1)
+
+
+def cap(loops):
+  # Split boundary segments until every segment is a Delaunay edge. This
+  # constrains all aperture boundaries without a runtime triangulation library.
+  for _ in range(16):
+    points = np.concatenate(loops)
+    triangles = Delaunay(points).simplices
+    edges = {
+      tuple(sorted((int(t[a]), int(t[b]))))
+      for t in triangles
+      for a, b in [(0, 1), (1, 2), (2, 0)]
+    }
+    refined, offset, complete = [], 0, True
+    for loop in loops:
+      new_loop = []
+      for i, p in enumerate(loop):
+        j = (i + 1) % len(loop)
+        new_loop.append(p)
+        if tuple(sorted((offset + i, offset + j))) not in edges:
+          new_loop.append((p + loop[j]) / 2)
+          complete = False
+      refined.append(np.array(new_loop))
+      offset += len(loop)
+    if complete:
+      break
+    loops = refined
+  else:
+    raise RuntimeError("aperture boundary triangulation did not converge")
+  centers = points[triangles].mean(axis=1)
+  keep = inside(centers, loops[0])
+  for hole in loops[1:]:
+    keep &= ~inside(centers, hole)
+  triangles = triangles[keep]
+  return points, triangles, loops
+
+
+def write_shell(path, loops, bottom, top):
+  points, triangles, loops = cap(loops)
+  faces = []
+  for t in triangles:
+    xy = points[t]
+    cross = np.cross(np.r_[xy[1] - xy[0], 0], np.r_[xy[2] - xy[0], 0])[2]
+    if cross < 0:
+      xy = xy[::-1]
+    faces.append(np.column_stack((xy, np.full(3, top))))
+    faces.append(np.column_stack((xy[::-1], np.full(3, bottom))))
+  for index, loop in enumerate(loops):
+    if index:
+      loop = loop[::-1]
+    for a, b in zip(loop, np.roll(loop, -1, axis=0), strict=True):
+      low_a, low_b = np.r_[a, bottom], np.r_[b, bottom]
+      high_a, high_b = np.r_[a, top], np.r_[b, top]
+      faces.extend([[low_a, low_b, high_b], [low_a, high_b, high_a]])
+  faces = np.asarray(faces)
+  normals = np.cross(faces[:, 1] - faces[:, 0], faces[:, 2] - faces[:, 0])
+  norms = np.linalg.norm(normals, axis=1)
+  assert np.all(norms > 1e-14)
+  normals /= norms[:, None]
+  dtype = np.dtype(
+    [("normal", "<f4", (3,)), ("vertices", "<f4", (3, 3)), ("attr", "<u2")]
+  )
+  records = np.zeros(len(faces), dtype=dtype)
+  records["normal"], records["vertices"] = normals, faces
+  path.write_bytes(
+    b"KaiHand power strip visual only".ljust(80, b"\0")
+    + struct.pack("<I", len(faces))
+    + records.tobytes()
+  )
+
+
+def main():
+  holes = [
+    (f"usb_{i}", rectangle(x, 0, 0.0035, 0.0073), x, 0, 0.0035, 0.0073, 0)
+    for i, x in enumerate([0, 0.019, 0.038, 0.057])
+  ]
+  for i, x in enumerate([0.102, 0.156, 0.210]):
+    for j, (dx, y, hx, hy, angle) in enumerate(
+      [
+        (-0.010, -0.008, 0.004, 0.0013, 0),
+        (-0.010, 0.008, 0.004, 0.0013, 0),
+        (0.006, -0.010, 0.004, 0.0013, 30),
+        (0.006, 0.010, 0.004, 0.0013, -30),
+        (0.016, 0, 0.0035, 0.0013, 0),
+      ]
+    ):
+      holes.append(
+        (f"ac_{i}_{j}", rectangle(x + dx, y, hx, hy, angle), x + dx, y, hx, hy, angle)
+      )
+  mesh_dir = ASSETS / "meshes"
+  paths = [
+    mesh_dir / "usb_power_strip_shell_visual.STL",
+    mesh_dir / "usb_power_strip_base_visual.STL",
+  ]
+  write_shell(paths[0], [outline(), *(row[1] for row in holes)], 0.014, 0.0388)
+  write_shell(paths[1], [outline()], 0.001, 0.014)
+  lines = [
+    '<mujoco model="usb_power_strip_visual">',
+    "  <!-- Generated by scripts/workcell/build_usb_power_strip.py. -->",
+    "  <!-- Only usb_socket_mouth is an active target. This body is display-only. -->",
+    '  <body name="usb_power_strip_visual" pos="0.620 -0.180 0.680">',
+    '    <geom name="strip_shell_visual" class="usb_visual" type="mesh" mesh="strip_shell" material="strip_white"/>',
+    '    <geom name="strip_base_visual" class="usb_visual" type="mesh" mesh="strip_base" material="strip_base_white"/>',
+  ]
+  for name, _, x, y, hx, hy, degrees in holes[1:]:
+    # Recessed dark backs make the decorative openings read as real cavities.
+    lines.append(
+      f'    <geom name="strip_{name}_back_visual" class="usb_visual" pos="{x:.6f} {y:.6f} 0.033" size="{hx:.6f} {hy:.6f} 0.0004" euler="0 0 {np.radians(degrees):.8f}" material="strip_recess"/>'
+    )
+  for i, x in enumerate([0.019, 0.038, 0.057], start=1):
+    lines.append(
+      f'    <geom name="strip_usb_{i}_tongue_visual" class="usb_visual" pos="{x + 0.0012:.6f} 0 0.035" size="0.0007 0.0053 0.0013" material="usb_insulator"/>'
+    )
+  lines.extend(
+    [
+      '    <geom name="strip_switch_recess_visual" class="usb_visual" pos="0.248 0 0.039" size="0.011 0.013 0.0004" material="strip_seam"/>',
+      '    <geom name="strip_switch_visual" class="usb_visual" pos="0.248 0 0.040" size="0.0095 0.0115 0.001" euler="0 0.035 0" material="strip_white"/>',
+      '    <geom name="strip_switch_indicator_visual" class="usb_visual" type="cylinder" pos="0.255 0 0.0412" size="0.0011 0.00015" rgba="0.25 0.55 0.33 1"/>',
+      '    <geom name="strip_target_index_visual" class="usb_visual" pos="0 -0.019 0.0389" size="0.0015 0.00035 0.00006" material="strip_seam"/>',
+    ]
+  )
+  cable = [
+    (0.270, 0, 0.018),
+    (0.290, 0, 0.018),
+    (0.320, 0.004, 0.010),
+    (0.350, 0.013, 0.004),
+    (0.385, 0.032, 0.004),
+    (0.420, 0.050, 0.004),
+    (0.470, 0.066, 0.004),
+    (0.520, 0.075, 0.004),
+  ]
+  for i, (a, b) in enumerate(zip(cable[:-1], cable[1:], strict=True)):
+    coords = " ".join(f"{v:.6f}" for v in (*a, *b))
+    radius = 0.0048 if i == 0 else 0.0033
+    lines.append(
+      f'    <geom name="strip_cable_{i}_visual" class="usb_visual" type="capsule" fromto="{coords}" size="{radius}" material="strip_base_white"/>'
+    )
+  lines.extend(["  </body>", "</mujoco>", ""])
+  target = TASK / "power_strip_visual.xml"
+  target.write_text("\n".join(lines))
+  manifest = {
+    "description": "Original procedural white power-strip appearance inspired by the user reference; no electrical simulation.",
+    "active_target": "usb_socket_mouth (first USB-A aperture, local x=0)",
+    "other_apertures": "visual only; no added collision or task targets",
+    "files": {
+      str(p.relative_to(ROOT / "src/kaihand_tactile_env")): hashlib.sha256(
+        p.read_bytes()
+      ).hexdigest()
+      for p in [*paths, target]
+    },
+  }
+  (mesh_dir / "usb_power_strip_visual.json").write_text(
+    json.dumps(manifest, indent=2) + "\n"
+  )
+
+
+if __name__ == "__main__":
+  main()

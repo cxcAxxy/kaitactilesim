@@ -15,6 +15,7 @@ import mujoco
 import numpy as np
 
 from .config import (
+  ARM_HOME,
   OBJECT_NAMES,
   SCENE_NAMES,
   SCENE_OBJECTS,
@@ -43,9 +44,8 @@ FINGERTIP_SITE_NAMES = {
   )
   for side in SIDES
 }
-# Historical imports stay available; task-local settings own these values.
-ARM_HOME = task_config("pick-place").ARM_HOME
-POKER_ARM_HOME = task_config("poker-draw").ARM_HOME
+# Historical imports are aliases of the same shared reset posture.
+POKER_ARM_HOME = ARM_HOME
 
 
 @dataclass(frozen=True)
@@ -256,7 +256,7 @@ class ArmHandSimulation:
     self._hand_targets = {
       side: {name: 0.0 for name in self._hand_actuators[side]} for side in SIDES
     }
-    initial_arm_home = task_config(scene).ARM_HOME
+    initial_arm_home = ARM_HOME
     self._arm_goal = {side: initial_arm_home[side].copy() for side in SIDES}
     self._arm_command = {side: initial_arm_home[side].copy() for side in SIDES}
     self._pose_target_position = {side: np.zeros(3) for side in SIDES}
@@ -370,7 +370,7 @@ class ArmHandSimulation:
       raise ValueError(f"unknown randomized objects: {sorted(unknown)}")
     rng = np.random.default_rng(seed)
     active_objects = set(self.object_names)
-    arm_home = task_config(self.scene).ARM_HOME
+    arm_home = ARM_HOME
     self._configure_scene_geometry()
     for name, address in self._object_qpos.items():
       pose = self._initial_object_pose[name].copy()

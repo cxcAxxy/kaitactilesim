@@ -916,7 +916,9 @@ HDF5 的 `board_contact_center_world_m` 是法向载荷加权的板面受力中�
 
 本任务通过零接触 margin 和较高 CCD 精度稳定板擦接触点，并采用较柔顺的右手速度伺服及每毫秒连续的位置目标。几何、质量、摩擦系数和需要受力滑动的清洁门槛不变；这些修改只作用于当前任务实例，原始触觉未滤波。
 
-贴板深度控制直接使用上一控制周期的实际平均载荷，减小法向修正增益，并收紧接触阶段 IK 容差，减少加压反馈延迟与细小指令积累。目标板面压力仍为 2.5 N。
+笔迹覆盖约 20×16 cm，分为间距约 8 cm 的三行、25 个独立笔画单元。控制器逐行覆盖，长笔画完整落入毛毡范围后才累计清洁量；清洁门槛不变。双臂仍从 shared 对称收臂姿势开始。
+
+贴板深度控制使用低增益反馈和 2.2 N 目标；换行时先卸载、离板横移、再原地加载，实际载荷上升时减慢擦拭路径。触觉与力曲线继续保存未滤波的真实求解器载荷。
 
 放回时先以 2 mm/s 接近桌面，再根据实际支撑力卸载至板擦自重；释放时逐指降低实测法向载荷，并在完全张手前持续消除多余下压力。全部曲线仍来自未经平滑的物理接触解。
 
@@ -931,6 +933,7 @@ HDF5 的 `board_contact_center_world_m` 是法向载荷加权的板面受力中�
       f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>45° 白板擦拭</title>
 <style>body{{max-width:1280px;margin:32px auto;padding:0 24px;background:#101923;color:#e7eef5;font:16px/1.7 system-ui}}video,img,input{{width:100%}}video,img{{background:#080d14;border-radius:10px}}a{{color:#75d7c7}}.inspections{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}}h3{{font-size:16px}}</style>
 <h1>45° 白板擦拭</h1><p>{verdict} · {duration:.2f} s · 平均清除 {cleared:.1%}</p>
+<p>三行大范围笔迹，覆盖约 20×16 cm，行中心间距约 8 cm；从共享双臂初始姿势出发，逐行擦净后放回板擦。</p>
 <p>本次原生记录：500 Hz 状态与触觉，{self.video_fps} fps 相机；头部和右腕原图均为 640×360。</p>
 <h2>初始与完成后</h2><div class="inspections"><section><h3>初始黑色笔迹</h3><img src="review/inspection/00.png"></section><section><h3>执行完成后</h3><img src="review/inspection/01.png"></section></div>
 <h2>机器人相机与触觉</h2><video src="review/review.mp4" controls preload="metadata"></video><p>左上 head，左下 right_wrist；右側为右手五指法向与切向触元力，对应同一时刻的 500 Hz 原始样本。</p>

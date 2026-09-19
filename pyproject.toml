@@ -30,13 +30,14 @@ include = ["kaihand_tactile_env*"]
 [tool.setuptools.package-data]
 kaihand_tactile_env = [
   "shared/mjcf/*.xml",
-  "tasks/*/scene.xml",
+  "tasks/*/*.xml",
   "tasks/*/*.png",
   "assets/workcell/**/*.xml",
   "assets/workcell/**/*.STL",
   "assets/workcell/**/*.stl",
   "assets/workcell/**/*.md",
   "assets/workcell/**/*.json",
+  "assets/workcell/**/*.png",
   "tactile/taxels/*.json",
 ]
 

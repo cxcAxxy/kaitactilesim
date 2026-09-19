@@ -1,6 +1,5 @@
 """Synchronized task-local review, matching the USB/poker example layout."""
 
-import csv
 import hashlib
 import json
 from pathlib import Path
@@ -177,20 +176,11 @@ class Review:
   ):
     self.directory = Path(directory)
     self.directory.mkdir(parents=True, exist_ok=False)
-    for name in (
-      "curves",
-      "raw",
-      "review/raw",
-      "review/frames/head",
-      "review/frames/right_wrist",
-      "review/frames/normal",
-      "review/frames/tangent",
-      "review/frames/composite",
-    ):
+    for name in ("curves", "raw", "review"):
       (self.directory / name).mkdir(parents=True, exist_ok=True)
     self.cameras = tuple(
       CameraConfig(n, width=640, height=360, depth=False, segmentation=False)
-      for n in ("head", "right_wrist", "vase_closeup", "vase_inside")
+      for n in ("head", "right_wrist", "vase_closeup")
     )
     self.renderer = WorkcellRenderer(
       sim.model, self.cameras, visible_geom_groups=(0, 1, 2), shadows=False
@@ -198,14 +188,12 @@ class Review:
     self.writer = _FfmpegPipeWriter(
       self.directory / "review/review.mp4", fps=10, width=1280, height=720
     )
-    self.scene_writer = _FfmpegPipeWriter(
-      self.directory / "review/scene.mp4", fps=10, width=1280, height=400
+    self.global_writer = _FfmpegPipeWriter(
+      self.directory / "review/global.mp4", fps=10, width=1280, height=720
     )
     self.frame_rows, self.samples = [], []
     self.next_sample = 0.002
     self.next_frame = 0.01
-    self.snapshots = {}
-    self._snapshot_wipe_force = -1.0
     self.sim = sim
     sources = (
       sorted(Path(__file__).parent.glob("*.py"))
@@ -318,7 +306,6 @@ class Review:
       return
     self.next_frame += 0.1
     sample = self.samples[-1]
-    index = len(self.frame_rows)
     panels = {}
     for camera in self.cameras:
       panels[camera.name] = Image.fromarray(
@@ -345,45 +332,26 @@ class Review:
     draw.text(
       (8, 368), "RIGHT_WRIST", fill="white", stroke_width=1, stroke_fill="black"
     )
-    panels["composite"] = composite
-    for name in ("head", "right_wrist", "normal", "tangent", "composite"):
-      panels[name].save(self.directory / f"review/frames/{name}/{index:06d}.png")
-    np.savez_compressed(
-      self.directory / f"review/raw/{index:06d}.npz",
-      **{
-        k: v
-        for k, v in sample.items()
-        if k
-        in (
-          "time_s",
-          "normal_taxel_force_n",
-          "tangent_taxel_force_n",
-          "normal_force_n",
-          "tangent_force_n",
-          "tangent_contact_load_n",
-        )
-      },
-    )
     self.writer.write(np.asarray(composite))
-    scene = Image.new("RGB", (1280, 400), "#101923")
-    scene.paste(panels["vase_closeup"], (0, 0))
-    scene.paste(panels["vase_inside"], (640, 0))
+    scene = panels["vase_closeup"].resize((1280, 720), Image.Resampling.BILINEAR)
     draw = ImageDraw.Draw(scene)
-    for x, label in [(8, "SCENE"), (648, "INSIDE | EVALUATION ONLY")]:
-      draw.text((x, 8), label, fill="white", stroke_width=1, stroke_fill="black")
+    draw.rectangle((0, 0, 1280, 34), fill="#101923")
+    draw.rectangle((0, 686, 1280, 720), fill="#101923")
+    draw.text((12, 9), "GLOBAL ROBOT VIEW", fill="white")
     draw.text(
-      (12, 372),
+      (12, 695),
       f"{phase} | {state.timestamp:.2f}s | cleared {state.cleaned_fraction:.1%} | wall Fn {state.wall_normal_force_n:.2f} N / Ft {state.wall_tangent_force_n:.2f} N | deformation {state.deformation_mm:.1f} mm",
       fill="white",
     )
-    self.scene_writer.write(np.asarray(scene))
-    wiping = phase.startswith("tactile_wipe")
-    if not wiping or state.wall_tangent_force_n > self._snapshot_wipe_force:
-      self.snapshots["tactile_wipe" if wiping else phase] = scene.copy()
-      if wiping:
-        self._snapshot_wipe_force = state.wall_tangent_force_n
+    self.global_writer.write(np.asarray(scene))
     self.frame_rows.append(
-      (index, state.timestamp, len(self.samples) - 1, sample["time_s"], phase)
+      (
+        len(self.frame_rows),
+        state.timestamp,
+        len(self.samples) - 1,
+        sample["time_s"],
+        phase,
+      )
     )
 
   def finish(self, result):
@@ -404,49 +372,16 @@ class Review:
     if not validation.valid:
       raise ValueError(f"shared raw validation failed: {validation.errors}")
     self.writer.finish()
-    self.scene_writer.finish()
+    self.global_writer.finish()
     directory = self.directory
     inspection = getattr(self.sim, "inspection", None)
-    inspection_html = ""
     if inspection is not None:
       result["visual_inspections"] = inspection.observations
-      (directory / "review/inspection").mkdir(exist_ok=True)
-      for i, (observation, rgb) in enumerate(
-        zip(inspection.observations, inspection.images, strict=True)
-      ):
-        frame = Image.fromarray(rgb)
-        x0, y0, x1, y1 = observation["roi_xyxy"]
-        zoom = frame.crop((x0, y0, x1, y1)).resize((384, 192), Image.Resampling.NEAREST)
-        frame.paste(zoom, (12, 40))
-        draw = ImageDraw.Draw(frame)
-        draw.rectangle((x0, y0, x1, y1), outline="#ffffff", width=2)
-        draw.text(
-          (12, 12),
-          f"HEAD inspection {i} | {observation['time_s']:.2f}s | {observation['decision']} | red pixels {observation['red_pixels']}",
-          fill="white",
-          stroke_width=1,
-          stroke_fill="black",
-        )
-        path = f"review/inspection/{i:02d}.png"
-        frame.save(directory / path)
-        label = "初始观察" if i == 0 else f"第 {i} 轮擦拭后复查"
-        verdict = (
-          "图像判断已净"
-          if observation["visually_clean"]
-          else "仍有可见污渍，需继续擦拭"
-          if observation["valid"]
-          else "视野被遮挡，不能判为干净"
-        )
-        inspection_html += f'<section><h3>{label} · {observation["time_s"]:.2f} s · {verdict}</h3><img src="{path}" alt="头部相机实际复查图像及污渍区域放大"></section>'
     data = (
       {key: np.asarray([s[key] for s in self.samples]) for key in self.samples[0]}
       if self.samples
       else {}
     )
-    with (directory / "review/frames.csv").open("w") as f:
-      writer = csv.writer(f)
-      writer.writerow(("frame_index", "time_s", "state_index", "force_time_s", "phase"))
-      writer.writerows(self.frame_rows)
     if data:
       self._curves(data)
     self._json("result.json", result)
@@ -467,30 +402,6 @@ class Review:
         "frame_count": len(self.frame_rows),
       },
     )
-    self._json(
-      "review/review.json",
-      {
-        "fps": 10,
-        "resolution": [1280, 720],
-        "frame_count": len(self.frame_rows),
-        "camera_names": ["head", "right_wrist"],
-        "evaluation_video": "scene.mp4",
-        "time_alignment": "frames.csv maps each rendered state to the same 500 Hz force sample",
-        "normal_color_max_n": 0.4,
-        "tangent_color_max_n": 0.05,
-        "raw_clipped": False,
-      },
-    )
-    selected = [
-      self.snapshots[p]
-      for p in ("observe_tabletop", "lift_from_table", "tactile_wipe", "withdraw")
-      if p in self.snapshots
-    ]
-    if selected:
-      sheet = Image.new("RGB", (1280, 400 * len(selected)))
-      for i, frame in enumerate(selected):
-        sheet.paste(frame, (0, 400 * i))
-      sheet.save(directory / "review/preview.png")
     status = (
       "达到清洁标准" if result.get("success") else "未达到清洁标准（保留真实残留）"
     )
@@ -503,39 +414,28 @@ class Review:
     )
     (directory / "index.html").write_text(
       f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>软海绵擦花瓶内壁</title>
-<style>body{{max-width:1280px;margin:32px auto;padding:0 24px;background:#101923;color:#e7eef5;font:16px/1.7 system-ui}}video,img{{width:100%;background:#080d14;border-radius:10px}}a{{color:#75d7c7}}p{{max-width:1000px}}.inspections{{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px}}h3{{font-size:16px}}</style>
+<style>body{{max-width:1280px;margin:32px auto;padding:0 24px;background:#101923;color:#e7eef5;font:16px/1.7 system-ui}}video,img{{width:100%;background:#080d14;border-radius:10px}}a{{color:#75d7c7}}p{{max-width:1000px}}</style>
 <h1>软海绵擦花瓶内壁</h1><p>{status} · 平均清除 {result.get("state", {}).get("cleaned_fraction", 0):.1%} · 合格污渍单元 {result.get("cleaned_patch_count", 0)}/{result.get("patch_count", config.PATCH_ROWS * config.PATCH_COLUMNS)}</p>
 <p>动作记录：{"已完成桌面抓取、入瓶、擦拭和退出" if result.get("motion_completed") else result.get("error", "未完成")}</p>
-<p>海绵初始立放在桌面，机器人张手接近、闭合对握、提起后调整到擦拭姿态。污渍位于远离机器人的内侧壁，采用与青绿釉面反差明显的红色。头部相机先定位污渍；擦拭时海绵遮挡，依赖触觉调节接触；抬手后用实际 RGB 图像复查，深度图排除遮挡误判，未净则重擦。图像中的红色像素比例与验收用的污渍质量残留是两个不同指标。</p>
-<h2>抬手视觉复查</h2><div class="inspections">{inspection_html}</div>
-<h2>机器人相机与触觉</h2><video src="review/review.mp4" controls preload="metadata"></video><p>左：共享 head / right_wrist；右：五指 7×5 法向与切向力。切向合力为先累计有符号 Fx、Fy，再取模。颜色量程固定，原始数据不截断、不平滑。</p>
-<h2>场景与内壁验收视角</h2><video src="review/scene.mp4" controls preload="metadata"></video><p>内壁相机、污渍剩余量和直接内壁力仅用于验收。海绵为完整弹性体积网格，黄色泡沫与绿色百洁层共用变形表面。</p>
-<p>初版握持区采用柔性抗转动接触近似：阻力矩受真实夹持载荷限制，接触丢失时失效。力偶对海绵的合力为零，并向手施加反向力矩；各节点仍可变形。该力矩单独记录在 HDF5，没有伪装成指尖触元接触力。</p>
-<h2>右手五指力曲线</h2><img src="curves/right_hand_force_curves.png" alt="右手五指法向与切向力曲线"><p><a href="curves/right_hand_force_curves.pdf">PDF</a> · <a href="curves/right_hand_forces.csv">500 Hz CSV</a> · <a href="curves/force_statistics.json">力统计</a> · <a href="result.json">清洁结果</a> · <a href="README.md">数据说明</a></p>
+<p>象牙白花瓶的远侧内壁带浅黑色污渍。机器人从共享初始姿势沿短逆时针腕部路径接近桌面上的扁平软海绵，完成抓取、擦拭、抬手复查和退出。</p>
+<h2>顶部相机、右腕相机与触觉</h2><video src="review/review.mp4" controls preload="metadata"></video><p>左：共享 head / right_wrist；右：五指 7×5 法向与切向力。原始数据不截断、不平滑。</p>
+<h2>机器人全局视角</h2><video src="review/global.mp4" controls preload="metadata"></video>
+<h2>右手五指法向与切向力</h2><a href="curves/right_hand_force_curves.pdf"><img src="curves/right_hand_force_curves.png" alt="右手五指法向与切向力曲线"></a><p><a href="curves/right_hand_force_curves.pdf">PDF</a> · <a href="raw/episode.h5">原始 HDF5</a> · <a href="result.json">清洁结果</a></p>
 <h2>接触与形变验收</h2><p>每个物理步检查海绵接触、手与花瓶/桌面的接触，以及弹性单元翻转。穿入计数：{audit["penetration_count"]}；海绵最小接触距离：{distance_label}；最小单元体积比：{audit["minimum_element_volume_ratio"]:.4f}。任意负接触距离或单元翻转都会终止执行，不用裁剪状态或平滑力曲线掩盖失败。详细记录见 result.json 的 contact_integrity。</p>
-<h2>贴壁力与清洁进度</h2><img src="curves/contact_and_cleaning.png" alt="腕部测力、独立内壁验收力和清洁覆盖率"><p>贴壁控制使用本场景新增的适配软体接触的腕部力传感器，避免指尖夹持力重分配干扰接触判断。五指触觉保持原始记录。图中内壁力与清洁进度为独立验收量，不是控制器输入。<a href="curves/contact_and_cleaning.pdf">PDF</a> · <a href="curves/contact_and_cleaning.csv">500 Hz CSV</a></p>
-<h2>阶段预览</h2><img src="review/preview.png" alt="夹持、擦拭、退出三个阶段的场景与内壁视角">
 <h2>清洁标准</h2><p>内壁法向力 {config.MIN_WALL_NORMAL_N:g}–{config.MAX_CLEAN_NORMAL_N:g} N、总摩擦力 ≥{config.MIN_WALL_FRICTION_N:.2f} N；每块污渍分配到的摩擦力 ≥{config.MIN_PATCH_FRICTION_N:g} N、实际滑动速度 ≥{1000 * config.MIN_WIPE_SPEED_M_S:g} mm/s 才累计。标准面积污渍需摩擦功 {1000 * config.PATCH_WORK_REQUIRED_J:g} mJ、滑动距离 {1000 * config.PATCH_STROKE_REQUIRED_M:g} mm、有效时间 {config.PATCH_DWELL_REQUIRED_S:g} s；随机大小时，摩擦功按面积比例、滑动距离按面积比例平方根调整，有效时间不变。进度取三项中最小值。平均残留 ≤{100 * config.MAX_MEAN_DIRT:g}%，且每块残留 ≤{100 * config.MAX_PATCH_DIRT:g}%，抬手视觉复查已净并退出后才判定完成。仅接触、静压或低摩擦不清除。这些是可调任务参数，未做真实材料标定。</p></html>""",
       encoding="utf-8",
     )
     (directory / "README.md").write_text(
       """# Vase wipe example
 
-- `review/review.mp4`: 1280×720, 10 fps; HEAD / RIGHT_WRIST / five normal and tangent taxel maps.
-- `review/scene.mp4`: scene and privileged inside camera, same frame times.
-- `review/frames/{head,right_wrist,normal,tangent,composite}`: lossless PNG frames.
-- `review/raw/*.npz`: signed force taxels at video timestamps; `frames.csv` maps to raw state indices.
-- `curves/right_hand_force_curves.{png,pdf}` and `right_hand_forces.csv`: unfiltered 500 Hz forces, SI units.
-- `curves/contact_and_cleaning.{png,pdf,csv}`: flex-compatible wrist force, independently evaluated wall forces and cleaning coverage. The controller uses the wrist reaction to regulate wall contact; fingertip grip-load redistribution is not mistaken for continued wall contact.
-- `raw/episode.h5`: shared `kaihand_tactile_episode_v1` state/actions/three-camera/task-space/tactile streams at their recorded clocks. Vase deformation, patch residual/work/stroke/dwell and direct wall forces are namespaced under `vase_wipe/`. Contact integrity is checked at every physics step.
-- `result.json`: measured outcome, per-patch cleaning thresholds and exact seeded stain layout. The same layout is stored in HDF5 `metadata_json.stain_randomization`. `manifest.json`: source hashes and rates.
-- `review/inspection/*.png`: actual shared HEAD RGB images after lifting the sponge, with a nearest-neighbor enlarged search region. RGB/depth decisions and times are recorded in `result.json.visual_inspections`.
+This directory contains one physical rollout in the requested four-part format:
 
-Five fingers: thumb, index, middle, ring, little. Fn is the sum of 35 normal taxels. Fx/Fy are signed sums; Ft_resultant = hypot(Fx,Fy). Ft_contact_load is the sum of individual contact magnitudes and is stored separately. No force filtering/clipping; only video colors saturate at their fixed labeled scales. CSV/HDF5 force times coincide with forward-evaluated recorded states. One physical rollout supplies all exports.
+1. `raw/episode.h5`: shared Raw state, action, three-camera, task-space and tactile streams. `result.json` and `manifest.json` describe validation and outcome.
+2. `review/review.mp4`: HEAD + RIGHT_WRIST + five-finger normal/tangential tactile maps, 1280×720 at 10 fps.
+3. `review/global.mp4`: global robot view from the same timestamps, 1280×720 at 10 fps.
+4. `curves/right_hand_force_curves.{png,pdf}`: unfiltered 500 Hz five-finger normal and tangential resultant curves.
 
-The volume has 72 nodes and 168 elastic tetrahedra, with no rigid gripping core or weld to the hand. Green scouring and yellow foam colors are one deforming skin; both use the same approximate elastic material. Shared rigid-geometry penetration probes do not support this flex, so probe depth is deliberately not exported. The task-specific adapter distributes actual native flex contact forces onto the shared 7×5 pad layout.
-
-The sponge initially stands on its broad cleaning end on the tabletop, clear of the open hand. A motor-driven approach, opposing finger closure and verified lift precede wiping; the vase is fixed. Pickup uses the known fixed tabletop location. Table support force is recorded as `table_support_force_n`; `result.json.pickup` reports initial support, initial hand load and measured lift clearance. Far-wall red stains can be seen before wiping and after withdrawing. The controller checks actual shared HEAD RGB/depth between passes; visible red-pixel fraction is not ground-truth stain mass. Pigment opacity is remaining^0.35 to keep small residuals visible. Cleaning is a friction-work task model, not chemistry. Ground-truth stains, inside camera and wall forces are evaluation channels, not controller inputs. See ../../docs/vase_wipe.md for thresholds, limitations and reproduction.
+The sponge is a 45 × 62 × 110 mm elastic cuboid. Its 62 × 110 mm +X cleaning face is dark green and the other five faces are yellow. The ivory vase carries cool light-black stains on the far inner wall. The right arm starts from shared home and uses the short counterclockwise pickup solution. No frame dumps, per-frame NPZ files, extra diagnostic plots, or duplicate force CSV are included; all numeric signals remain in Raw HDF5.
 """,
       encoding="utf-8",
     )
@@ -555,30 +455,6 @@ The sponge initially stands on its broad cleaning end on the tabletop, clear of 
     fn = data["normal_force_n"]
     xy = data["tangent_force_n"]
     ft = np.linalg.norm(xy, axis=-1)
-    with (self.directory / "curves/right_hand_forces.csv").open("w") as f:
-      writer = csv.writer(f)
-      writer.writerow(
-        ["time_s", "phase"]
-        + [
-          f"{finger}_{v}"
-          for finger in FINGERS
-          for v in ("Fn_N", "Fx_N", "Fy_N", "Ft_resultant_N", "Ft_contact_load_N")
-        ]
-      )
-      for i, t in enumerate(times):
-        writer.writerow(
-          [t, data["phase"][i]]
-          + [
-            v
-            for j in range(5)
-            for v in (
-              fn[i, j],
-              *xy[i, j],
-              ft[i, j],
-              data["tangent_contact_load_n"][i, j],
-            )
-          ]
-        )
     fig, axes = plt.subplots(
       2, 1, figsize=(12, 7), sharex=True, constrained_layout=True
     )
@@ -594,73 +470,6 @@ The sponge initially stands on its broad cleaning end on the tabletop, clear of 
     for ext in ("png", "pdf"):
       fig.savefig(self.directory / f"curves/right_hand_force_curves.{ext}", dpi=160)
     plt.close(fig)
-    wrist = data["wrist_force_world_n"][:, 0] - data["wrist_free_baseline_x_n"]
-    wall = data["wall_force_n"]
-    cleared = 1 - data["remaining_dirt"].mean(axis=1)
-    worst = 1 - data["remaining_dirt"].max(axis=1)
-    with (self.directory / "curves/contact_and_cleaning.csv").open("w") as f:
-      writer = csv.writer(f)
-      writer.writerow(
-        (
-          "time_s",
-          "phase",
-          "wrist_Fx_minus_baseline_N",
-          "wall_Fn_N",
-          "wall_Ft_load_N",
-          "mean_cleared",
-          "worst_patch_cleared",
-        )
-      )
-      writer.writerows(
-        zip(
-          times,
-          data["phase"],
-          wrist,
-          wall[:, 0],
-          wall[:, 1],
-          cleared,
-          worst,
-          strict=True,
-        )
-      )
-    fig, axes = plt.subplots(
-      2, 1, figsize=(12, 7), sharex=True, constrained_layout=True
-    )
-    axes[0].plot(
-      times, wrist, label="Flex-compatible wrist Fx - free baseline (raw)", lw=0.8
-    )
-    axes[0].plot(times, wall[:, 0], label="Wall Fn (evaluation)", lw=0.8)
-    axes[0].plot(times, wall[:, 1], label="Wall Ft load (evaluation)", lw=0.8)
-    axes[0].axhline(
-      0.30, color="grey", linestyle=":", label="Minimum wall friction 0.30 N"
-    )
-    axes[0].set_ylabel("Force (N)")
-    axes[1].plot(times, cleared * 100, label="Mean cleared")
-    axes[1].plot(times, worst * 100, label="Worst patch cleared")
-    for observation in getattr(
-      getattr(self.sim, "inspection", None), "observations", ()
-    ):
-      axes[1].axvline(observation["time_s"], color="grey", alpha=0.4, linestyle=":")
-    axes[1].set_ylabel("Cleared (%)")
-    axes[1].set_xlabel("Simulation time (s); dotted lines: visual inspections")
-    for ax in axes:
-      ax.grid(alpha=0.25)
-      ax.legend()
-    for ext in ("png", "pdf"):
-      fig.savefig(self.directory / f"curves/contact_and_cleaning.{ext}", dpi=160)
-    plt.close(fig)
-    self._json(
-      "curves/force_statistics.json",
-      {
-        name: {
-          "peak_Fn_N": float(fn[:, j].max()),
-          "peak_Ft_resultant_N": float(ft[:, j].max()),
-          "mean_Fn_N": float(fn[:, j].mean()),
-          "mean_Ft_resultant_N": float(ft[:, j].mean()),
-        }
-        for j, name in enumerate(FINGERS)
-      },
-    )
 
   def close(self):
     self.sim.physics_observer = None
@@ -668,6 +477,6 @@ The sponge initially stands on its broad cleaning end on the tabletop, clear of 
       if not self.raw_recorder._closed:
         self.raw_recorder.close(finalize=False)
       self.writer.close()
-      self.scene_writer.close()
+      self.global_writer.close()
     finally:
       self.renderer.close()

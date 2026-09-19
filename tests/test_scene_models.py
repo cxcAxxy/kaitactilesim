@@ -112,7 +112,8 @@ TASK_MATERIALS = {
 
 
 @pytest.mark.parametrize(
-  "task", ("pick_place", "poker_draw", "usb_insert", "bulb_screw", "vase_wipe", "install_ram")
+  "task",
+  ("pick_place", "poker_draw", "usb_insert", "bulb_screw", "vase_wipe", "install_ram"),
 )
 def test_all_tasks_inherit_shared_head_and_symmetric_wrist_cameras(task: str) -> None:
   scene_path = PACKAGE_DIR / "tasks" / task / "scene.xml"
@@ -127,7 +128,10 @@ def test_all_tasks_inherit_shared_head_and_symmetric_wrist_cameras(task: str) ->
   assert head.attrib == {"name": "head", "class": "robot_head_camera"}
   wrist_node = robot.find(".//camera[@name='right_wrist']")
   assert wrist_node is not None
-  assert wrist_node.attrib == {"name": "right_wrist", "class": "robot_right_wrist_camera"}
+  assert wrist_node.attrib == {
+    "name": "right_wrist",
+    "class": "robot_right_wrist_camera",
+  }
   left_node = robot.find(".//camera[@name='left_wrist']")
   assert left_node is not None
   assert left_node.attrib == {"name": "left_wrist", "class": "robot_left_wrist_camera"}
@@ -379,10 +383,28 @@ def test_task_models_preserve_legacy_robot_and_keep_objects_isolated() -> None:
       "right_wrist",
     )
 
-    _assert_fields_equal(model, common_fields["body"])
+    for field, expected in common_fields["body"].items():
+      rows = np.arange(len(expected))
+      if field in {"body_ipos", "body_iquat", "body_mass", "body_inertia"}:
+        # The shortened fixed table has newly inferred inertial properties;
+        # it has no joints, while all robot inertial properties are preserved.
+        assert model.body("table").jntnum[0] == 0
+        rows = rows[rows != model.body("table").id]
+      np.testing.assert_array_equal(getattr(model, field)[rows], expected[rows])
     _assert_fields_equal(model, common_fields["joint"])
     _assert_fields_equal(model, common_fields["dof"])
-    _assert_fields_equal(model, common_fields["geom"])
+    expected_geoms = {
+      name: values.copy() for name, values in common_fields["geom"].items()
+    }
+    # Current workcells shorten only the rear table edge; legacy recordings
+    # retain the original slab. Robot geometry and table contact settings match.
+    tabletop = model.geom("tabletop").id
+    expected_geoms["geom_pos"][tabletop] = [0.535, 0.0, 0.0]
+    expected_geoms["geom_size"][tabletop] = [0.965, 1.50, 0.04]
+    expected_geoms["geom_matid"][model.geom("table_leg_front").id] = model.material(
+      "table_frame"
+    ).id
+    _assert_fields_equal(model, expected_geoms)
     _assert_fields_equal(model, common_fields["actuator"])
     np.testing.assert_array_equal(model.qpos0[:common_qpos_count], common_qpos0)
     np.testing.assert_array_equal(

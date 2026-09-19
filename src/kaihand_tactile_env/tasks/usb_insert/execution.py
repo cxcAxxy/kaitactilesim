@@ -715,8 +715,9 @@ class UsbInsertionExecutor:
     grasp = calibrated_grasp(
       self.sim, pinch_tilt_rad=0.05 if self.motion_profile == "baseline" else 0.06
     )
-    self.sim.set_hand_joint_targets(self._hand_names, grasp.open_hand)
-    # Let the fingers finish folding before the arm passes the socket rim.
+    self.sim.set_hand_joint_targets(self._hand_names, grasp.approach_hand)
+    # Keep the pinch wide while travelling; only the unused fingers fold for
+    # rim clearance. The narrow calibrated pinch is commanded after arrival.
     self._advance(self.motion.preshape_s, "preshape")
     hover = self.sim.solve_ik(
       "right",
@@ -743,6 +744,23 @@ class UsbInsertionExecutor:
       grasp.wrist_position, grasp.wrist_rotation, self.motion.approach_s, "approach"
     )
     self._advance(self.motion.approach_hold_s, "approach")
+    wrist, rotation = self.sim.current_pose_matrix("right")
+    if (
+      np.linalg.norm(wrist - grasp.wrist_position) > 0.003
+      or np.linalg.norm(_rotation_vector_world(grasp.wrist_rotation, rotation)) > 0.03
+    ):
+      raise _TaskFailure("pickup wrist did not arrive before finger closing")
+    # Close the wide clearance only while stationary beside the plug. Retain
+    # the original final pinch path and force verification below.
+    count = max(1, round(0.6 * self.motion.grasp_ramp_s / self.sim.timestep))
+    for i in range(1, count + 1):
+      u = i / count
+      alpha = 10 * u**3 - 15 * u**4 + 6 * u**5
+      self.sim.set_hand_joint_targets(
+        self._hand_names,
+        (1 - alpha) * grasp.approach_hand + alpha * grasp.open_hand,
+      )
+      self._step("close")
     stable = 0.0
     for i in range(round(4.0 / self.sim.timestep)):
       alpha = min(1.0, i * self.sim.timestep / self.motion.grasp_ramp_s)

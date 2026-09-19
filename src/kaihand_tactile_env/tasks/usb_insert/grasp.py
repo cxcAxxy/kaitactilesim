@@ -22,6 +22,27 @@ class UsbGrasp:
   open_hand: np.ndarray
   closed_hand: np.ndarray
 
+  @property
+  def approach_hand(self) -> np.ndarray:
+    """Wide (~61 mm tip spacing) approach, before the calibrated fine pinch.
+
+    Only thumb/index are opened farther; the remaining fingers retain their
+    clearance fold. Calibrated in the same hand frame, so XY/yaw jitter does
+    not change this posture or require any object manipulation.
+    """
+    target = self.open_hand.copy()
+    target[:8] = [
+      0.17268758685679134,
+      1.2352736672140932,
+      0.09332785377394695,
+      0.332368433215127,
+      -0.26,
+      0.9112582501864351,
+      0.7412511314666322,
+      -0.0181011256268629,
+    ]
+    return target
+
 
 def calibrated_grasp(simulation, *, pinch_tilt_rad: float = 0.06) -> UsbGrasp:
   """Transport the calibrated pinch with the measured plug's planar pose.

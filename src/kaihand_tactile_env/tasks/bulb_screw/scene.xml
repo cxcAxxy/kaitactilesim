@@ -59,7 +59,7 @@
     </body>
     <body name="bulb_socket" pos="0.620 -0.180 0.730">
       <site name="bulb_socket_mouth" pos="0 0 0.006" size="0.001" group="3" rgba="0 1 0 0.7"/>
-      <!-- Raised solid stop: top z=0.728, a half turn (2 mm) below entry. -->
+      <!-- Raised solid stop: top z=0.728889, 1.111 mm below entry. -->
       <!-- Thin compliant seat pads load progressively over the final 0.4 mm. -->
       <geom name="bulb_socket_cushion_00" type="box" pos="0.0155000000 0.0000000000 0.0062" quat="1.0000000000 0 0 0.0000000000" size="0.0015 0.0028 0.0002" class="bulb_collision" solref="0.03 1" solimp="0.15 0.95 0.0005 0.5 2" friction="0.4 0.001 0.0001" priority="1" rgba="0.20 0.22 0.22 1"/>
       <geom name="bulb_socket_cushion_01" type="box" pos="0.0143201328 0.0059315932 0.0062" quat="0.9807852804 0 0 0.1950903220" size="0.0015 0.0028 0.0002" class="bulb_collision" solref="0.03 1" solimp="0.15 0.95 0.0005 0.5 2" friction="0.4 0.001 0.0001" priority="1" rgba="0.20 0.22 0.22 1"/>
@@ -78,7 +78,7 @@
       <geom name="bulb_socket_cushion_14" type="box" pos="0.0109601551 -0.0109601551 0.0062" quat="-0.9238795325 0 0 0.3826834324" size="0.0015 0.0028 0.0002" class="bulb_collision" solref="0.03 1" solimp="0.15 0.95 0.0005 0.5 2" friction="0.4 0.001 0.0001" priority="1" rgba="0.20 0.22 0.22 1"/>
       <geom name="bulb_socket_cushion_15" type="box" pos="0.0143201328 -0.0059315932 0.0062" quat="-0.9807852804 0 0 0.1950903220" size="0.0015 0.0028 0.0002" class="bulb_collision" solref="0.03 1" solimp="0.15 0.95 0.0005 0.5 2" friction="0.4 0.001 0.0001" priority="1" rgba="0.20 0.22 0.22 1"/>
       <geom name="bulb_socket_backstop" class="bulb_collision" type="cylinder"
-            pos="0 0 -0.007" size="0.0145 0.005" material="bulb_metal"/>
+            pos="0 0 -0.0061111111" size="0.0145 0.005" material="bulb_metal"/>
       <!-- Separate walls leave an open bore, without a spanning convex hull. -->
       <geom name="bulb_socket_wall_00" class="bulb_collision" type="box"
             pos="0.0190000000 0.0000000000 -0.003"
@@ -217,12 +217,12 @@
       <site name="bulb_grasp" pos="0 0 0.070" size="0.002" group="3" rgba="0 0.5 1 0.7"/>
       <geom name="bulb_tip_contact" class="bulb_collision" type="cylinder"
             pos="0 0 0.001" size="0.004 0.001" material="bulb_metal"/>
-      <!-- Short metal base ends at z=8 mm; the ceramic shoulder seats on
-           the socket rim after the full 2 mm stroke. Globe/grasp stay fixed. -->
+      <!-- The shortened threaded base seats after a 1.111 mm stroke.
+           Globe/grasp stay fixed. -->
       <geom name="bulb_screw_base" class="bulb_collision" type="cylinder"
             pos="0 0 0.005" size="0.0125 0.003" material="bulb_metal"/>
       <geom name="bulb_neck" class="bulb_collision" type="cylinder"
-            pos="0 0 0.027" size="0.016 0.019" material="bulb_ceramic"/>
+            pos="0 0 0.0261111111" size="0.016 0.019" material="bulb_ceramic"/>
       <geom name="bulb_globe" class="bulb_collision" type="ellipsoid"
             pos="0 0 0.072" size="0.030 0.030 0.034" material="bulb_frosted"/>
       <geom name="bulb_orientation_mark" class="bulb_visual" type="ellipsoid"
@@ -284,13 +284,13 @@
       <geom name="bulb_thread_crest_027" class="bulb_thread_collision" type="capsule"
             fromto="0.0071112990 -0.0106428110 0.0063750000 0.0090509668 -0.0090509668 0.0065000000" size="0.00055" material="bulb_metal"/>
       <geom name="bulb_thread_crest_028" class="bulb_thread_collision" type="capsule"
-            fromto="0.0090509668 -0.0090509668 0.0065000000 0.0106428110 -0.0071112990 0.0066250000" size="0.00055" material="bulb_metal"/>
+            fromto="0.0090509668 -0.0090509668 0.0065000000 0.0106428110 -0.0071112990 0.0066250000" size="0.00040" material="bulb_metal"/>
       <geom name="bulb_thread_crest_029" class="bulb_thread_collision" type="capsule"
-            fromto="0.0106428110 -0.0071112990 0.0066250000 0.0118256580 -0.0048983479 0.0067500000" size="0.00055" material="bulb_metal"/>
+            fromto="0.0106428110 -0.0071112990 0.0066250000 0.0118256580 -0.0048983479 0.0067500000" size="0.00025" material="bulb_metal"/>
       <geom name="bulb_thread_crest_030" class="bulb_thread_collision" type="capsule"
-            fromto="0.0118256580 -0.0048983479 0.0067500000 0.0125540516 -0.0024971561 0.0068750000" size="0.00055" material="bulb_metal"/>
+            fromto="0.0118256580 -0.0048983479 0.0067500000 0.0125540516 -0.0024971561 0.0068750000" size="0.00010" material="bulb_metal"/>
       <geom name="bulb_thread_crest_031" class="bulb_thread_collision" type="capsule"
-            fromto="0.0125540516 -0.0024971561 0.0068750000 0.0128000000 -0.0000000000 0.0070000000" size="0.00055" material="bulb_metal"/>
+            fromto="0.0125540516 -0.0024971561 0.0068750000 0.0128000000 -0.0000000000 0.0070000000" size="0.00005" material="bulb_metal"/>
     </body>
   </worldbody>
   <equality>
