@@ -40,6 +40,7 @@ from .force_analysis import (
   write_force_analysis,
   write_physics_force_comparison,
 )
+from .global_review import export_global_review
 from .task import RamInstallSimulation
 
 FINGERS = ("thumb", "index", "middle", "ring", "pinky")
@@ -141,6 +142,7 @@ class RamExampleRecorder(EpisodeRecorder):
         }
       )
     super().close(finalize=finalize)
+
 
 def _forces(file):
   group = file["tactile_contact_force"]
@@ -271,8 +273,12 @@ def _audit(file, result):
     raise ValueError("installation has no recorded fingertip/RAM contact")
   if normal[-1].max() > 0.01:
     raise ValueError("fingers remain loaded at terminal release")
-  if "palm_down_cosine" in task and np.min(task["palm_down_cosine"][:]) <= 0:
-    raise ValueError("recorded palm points upward during the revised installation")
+  # Shared home may point the palm upward during the free-space approach.
+  # The forehand requirement applies once the RAM is held and transported.
+  phases = file["commands/phase"].asstr()[:]
+  active = np.isin(phases, ("lift", "transfer", "align", "insert", "bottom_press"))
+  if "palm_down_cosine" in task and np.any(task["palm_down_cosine"][:][active] < 0.35):
+    raise ValueError("recorded palm is not downward during transport/insertion")
   if "bottom_out_confirmed" in task and not bool(task["bottom_out_confirmed"][-1]):
     raise ValueError("terminal result lacks recorded loaded bottom-out confirmation")
   phases = file["commands/phase"].asstr()[:]
@@ -578,7 +584,7 @@ def _documentation(output: Path, summary: dict, *, camera_hz: int):
     "初态为内存条放在被动上料支架，双手在 home 位置张开平放；右手通过执行器运动到支架上方，再下降抓取。"
     "录制包含接近、闭指、抬起、对准、插入和松手。本例只验收标称初始姿态。\n\n"
     "本任务关闭灯光投射阴影，消除腕部近景中的移动阴影斑点；保留共享相机标定、光照和几何遮挡，接触物理不变。\n\n"
-    "- [完整视频](review/review.mp4) · [浏览页](index.html)\n"
+    "- [顶部相机与右腕相机、触觉视频](review/review.mp4) · [机器人全局视频](review/global.mp4) · [浏览页](index.html)\n"
     "- [初态近景](review/ram_closeup_initial.png) · [安装终态近景](review/ram_closeup_final.png)\n"
     "- [右手五指 Fn/Ft 曲线](curves/right_hand_force_curves.png) · [PDF](curves/right_hand_force_curves.pdf) · [CSV](curves/right_hand_forces.csv)\n"
     "- [分阶段力/底挡载荷/插深](curves/insertion_force_stages.png) · [阶段统计](curves/force_stages.json) · [原始切向力前后对照](curves/force_comparison.json)\n"
@@ -636,7 +642,8 @@ def _documentation(output: Path, summary: dict, *, camera_hz: int):
     '<!doctype html><html lang="zh"><meta charset="utf-8"><title>插内存条示例</title>'
     "<style>body{max-width:1280px;margin:24px auto;background:#15171b;color:#eee;font:18px sans-serif}video,img{width:100%}a{color:#8bd}</style>"
     '<h1>插内存条示例</h1><p><a href="README.md">数据说明</a> · <a href="summary.json">验证结果</a></p>'
-    '<video controls src="review/review.mp4"></video>'
+    '<h2>顶部相机与右腕相机、触觉</h2><video controls src="review/review.mp4"></video>'
+    '<h2>机器人全局视角</h2><video controls src="review/global.mp4" poster="review/global_initial.png"></video>'
     '<p>原始分阶段力、卡槽载荷和插入深度</p><img src="curves/insertion_force_stages.png">'
     '<p>阶段原始切向力前后对照</p><a href="curves/force_comparison.json">统计报告</a>'
     + (
@@ -661,6 +668,8 @@ def _provenance(output: Path, model_path: Path):
     for name in (
       "config",
       "simulation",
+      "posture",
+      "taskspace_recording",
       "pickup_randomization",
       "recording",
       "buffered_h5",
@@ -1019,6 +1028,7 @@ def record_example(
       force_diagnostics["source_sha256"] = _sha256(raw)
       timings = json.loads(file.attrs["recording_timing_json"])
       review = _review(file, partial / "review")
+      review["global"] = export_global_review(file, partial / "review")
       _closeups(file, partial / "review")
     processing = partial / "processing"
     processing.mkdir()
@@ -1080,3 +1090,64 @@ def record_example(
       },
     )
     raise
+
+
+def record_compact_example(output: Path, *, replace_existing=False, **kwargs):
+  """Publish the USB-style raw/review/curves layout without retaining old data.
+
+  Replacement is explicit and only happens after the complete new episode and
+  both videos pass validation. Failures before publication leave old data intact.
+  """
+  output = output.expanduser().absolute()
+  work = output.with_name(output.name + ".rendering")
+  staged = output.with_name(output.name + ".compact")
+  backup = output.with_name(output.name + ".replaced")
+  for path in (output, work, staged, backup):
+    if path.is_symlink():
+      raise ValueError(f"refusing a symlink output: {path}")
+  if any(path.exists() for path in (work, staged, backup)):
+    raise FileExistsError("RAM compact staging or replacement path already exists")
+  if output.exists() and not replace_existing:
+    raise FileExistsError("output exists; explicit --replace-existing is required")
+  summary = record_example(work, **kwargs)
+  files = {
+    "raw/install_ram_000000.h5": "raw/install_ram_000000.h5",
+    "raw/install_ram_000000.json": "raw/install_ram_000000.json",
+    "raw/install_ram_000000.result.json": "raw/install_ram_000000.result.json",
+    "review/review.mp4": "review/review.mp4",
+    "review/global.mp4": "review/robot_global_short_path.mp4",
+    "curves/right_hand_force_curves.png": "curves/right_hand_force_curves.png",
+  }
+  for source, target in files.items():
+    destination = staged / target
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(work / source, destination)
+    if _sha256(destination) != _sha256(work / source):
+      raise ValueError(f"compact export differs from verified source: {source}")
+  # Retain audit results inside the existing outcome sidecar, without extra
+  # version folders, frame dumps, or archived examples in the delivery.
+  outcome_path = staged / "raw/install_ram_000000.result.json"
+  outcome = json.loads(outcome_path.read_text())
+  outcome["example_validation"] = {
+    "raw": summary["validation"],
+    "physics": summary["metrics"],
+    "review": summary["review"],
+    "model_fingerprint": summary["model_fingerprint"],
+    "source_sha256": summary["source_sha256"],
+    "layout": "usb_example_raw_review_curves",
+  }
+  _json(outcome_path, outcome)
+  existed = output.exists()
+  if existed:
+    output.rename(backup)
+  try:
+    staged.rename(output)
+  except BaseException:
+    if existed:
+      backup.rename(output)
+    raise
+  if existed:
+    shutil.rmtree(backup)
+  shutil.rmtree(work)
+  print(f"Saved compact RAM example without historical datasets: {output}", flush=True)
+  return summary

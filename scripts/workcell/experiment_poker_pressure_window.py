@@ -491,6 +491,9 @@ def _configure_contact_model(
     # the explicit table-card pair has its own separately stored solref.
     model.pair_solref[pair_id, 0] = settings.contact_time_constant_s
     model.geom_solref[card_id, 0] = settings.contact_time_constant_s
+  if settings.contact_damping_ratio is not None:
+    model.pair_solref[pair_id, 1] = settings.contact_damping_ratio
+    model.geom_solref[card_id, 1] = settings.contact_damping_ratio
   return {
     "table_card_pair_friction": model.pair_friction[pair_id].tolist(),
     "physics_timestep_original_s": original_timestep,
@@ -510,7 +513,7 @@ def _configure_contact_model(
     ],
     "finger_card_nominal_sliding_friction": float(model.geom_friction[card_id, 0]),
     "finger_card_friction_source": "card_core_geom friction with higher contact priority; model parameter, not measured friction",
-    "contact_time_constant_scope": "explicit table-card pair and priority-selected card geom only; no persistent scene changes",
+    "contact_solref_scope": "explicit table-card pair and priority-selected card geom only; no persistent scene changes",
   }
 
 

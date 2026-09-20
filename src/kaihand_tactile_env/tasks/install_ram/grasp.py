@@ -40,7 +40,16 @@ def calibrated_grasp(simulation) -> RamGrasp:
   )
   # Remove the final printed digits' roundoff before using it as a rotation.
   u, _, vt = np.linalg.svd(desired_hand)
-  desired_hand = u @ vt
+  # Approach the opposite face with a forehand pinch. This calibrated
+  # orientation admits a ~102-degree short turn from shared home, instead
+  # of the old ~201-degree sweep through the other wrist IK branch.
+  pitch = np.deg2rad(-80.0)
+  cp, sp = np.cos(pitch), np.sin(pitch)
+  desired_hand = (
+    np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+    @ np.diag([-1.0, -1.0, 1.0])
+    @ (u @ vt)
+  )
   target_rotation = desired_hand @ ee_to_hand.T
   # Pinch near the mass centre: an off-centre point accumulates gravity-driven
   # rotation about the opposing-pad axis and can turn the palm upwards.
@@ -82,7 +91,7 @@ def calibrated_grasp(simulation) -> RamGrasp:
       0.2072302821599501,
       -0.175,
     ],
-    [0.0, 1.45, 1.4, 0.7] * 3,
+    [0.0, 0.5, 1.5, 1.5] * 3,
   ]
   scratch = simulation.ik_data
   scratch.qpos[:] = simulation.data.qpos
@@ -91,8 +100,8 @@ def calibrated_grasp(simulation) -> RamGrasp:
   scratch.qpos[simulation._thumb_joint6_qpos["right"]] = contact[3]
   mujoco.mj_forward(simulation.model, scratch)
   targets = scratch.site_xpos[simulation._fingertip_site_ids["right"]].copy()
-  targets[0, 1] -= 0.005
-  targets[1, 1] += 0.005
+  targets[0, 1] += 0.005
+  targets[1, 1] -= 0.005
   opening = simulation.solve_hand_ik(
     "right",
     targets,
@@ -107,8 +116,8 @@ def calibrated_grasp(simulation) -> RamGrasp:
   # The old 5 mm-per-side opening is a fine pinch waypoint, not sufficient
   # travel clearance. Approach with 20 mm per side and close only at the DIMM.
   wide_targets = targets.copy()
-  wide_targets[0, 1] -= 0.015
-  wide_targets[1, 1] += 0.015
+  wide_targets[0, 1] += 0.015
+  wide_targets[1, 1] -= 0.015
   wide = simulation.solve_hand_ik(
     "right",
     wide_targets,

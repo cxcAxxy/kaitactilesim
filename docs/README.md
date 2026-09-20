@@ -52,6 +52,7 @@
 
 ## 任务与数据质量文档
 
+- Card：[共享配置与四类示例产物](poker_example.md)
 - Bulb：[灯泡旋拧](bulb_screw.md)
 - RAM：[安装任务](install_ram.md)、[尺寸与物理模型](install_ram_dimensions.md)、[原始力诊断](install_ram_force_diagnosis.md)
 - Vase：[花瓶内壁擦拭](vase_wipe.md)

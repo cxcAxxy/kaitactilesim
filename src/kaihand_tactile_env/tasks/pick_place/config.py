@@ -31,14 +31,12 @@ _FINGERTIP_LINKS = (
 _FREE_CLOSE_FORCE_LIMIT = 0.82
 _FREE_CLOSE_CUTOFF_M = 0.002
 _CLOSE_HOLD_OFFSET_RAD = {
-  "thumb": 0.012,
-  "index": 0.014,
-  "middle": 0.012,
-  "ring": 0.012,
-  "pinky": 0.012,
+  "thumb": 0.024,
+  "index": 0.012,
+  "middle": 0.016,
+  "ring": 0.040,
+  "pinky": 0.040,
 }
-_PLACE_INDEX_TARGET_OFFSET_RAD = 0.014
-_PLACE_INDEX_FORCE_LIMIT = 0.50
 
 __all__ = [
   "ARM_HOME",

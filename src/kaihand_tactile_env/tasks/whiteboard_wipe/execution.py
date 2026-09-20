@@ -9,7 +9,7 @@ import numpy as np
 
 from ...shared.approach import approach_waypoint
 from ...shared.simulation import HAND_JOINT_NAMES, _rotation_vector_world
-from . import cleaning
+from . import cleaning, grasp
 from . import config as C
 
 
@@ -34,51 +34,103 @@ class WhiteboardWipeExecutor:
     self.peak_tactile = np.zeros(5)
     self.max_lift = 0.0
     self.pickup_verified = False
+    self.peak_board_phase = None
+    self.peak_board_time_s = None
+    self.observed_peak_board_force = 0.0
+    self.peak_board_eraser_position_board_m = None
+    self.approach_times = []
+    self.approach_joints = []
 
-  def tick(self, phase):
+  def record_approach_state(self):
+    """Retain the actual arm motion used to reject winding or IK branch flips."""
+    time_s = float(self.sim.data.time)
+    if self.approach_times and time_s <= self.approach_times[-1]:
+      return
+    self.approach_times.append(time_s)
+    self.approach_joints.append(
+      self.sim.data.qpos[self.sim._arm_qpos["right"]].copy()
+    )
+
+  def approach_motion(self):
+    joints = np.asarray(self.approach_joints)
+    times = np.asarray(self.approach_times)
+    velocity = np.diff(joints, axis=0) / np.diff(times)[:, None]
+    acceleration = np.diff(velocity, axis=0) / np.diff(times)[1:, None]
+    travel_deg = np.rad2deg(joints[-1] - joints[0])
+    return {
+      "sample_count": int(len(times)),
+      "duration_s": float(times[-1] - times[0]),
+      "joint_travel_deg": travel_deg.tolist(),
+      "wrist_turn_joint5_deg": float(travel_deg[4]),
+      "maximum_joint_speed_deg_s": np.rad2deg(
+        np.max(np.abs(velocity), axis=0)
+      ).tolist(),
+      "maximum_joint_acceleration_deg_s2": np.rad2deg(
+        np.max(np.abs(acceleration), axis=0)
+      ).tolist(),
+    }
+
+  def tick(
+    self, phase, *, period_s=C.CONTROL_PERIOD_S, arm_joint_goal=None
+  ):
     s = self.sim
     if self.closing:
       loads = s.forces.read(s.data).normal_force_n[5:]
       targets = np.array([2.0, 1.5, 1.2, 1.2, 0.8])
       rate = np.clip(1.2 * (targets - loads), -0.1, 0.35)
-      self.progress = np.clip(self.progress + 0.01 * rate, 0, 1.2)
+      self.progress = np.clip(self.progress + period_s * rate, 0, 1.2)
       s.set_hand_joint_targets(
         HAND_JOINT_NAMES["right"],
         s.open_grip + np.repeat(self.progress, 4) * (s.grip - s.open_grip),
       )
-    ik = s.solve_ik(
-      "right",
-      self.position,
-      self.rotation,
-      seed=s.arm_goal["right"],
-      max_iterations=140,
-      position_tolerance=(
-        0.00001
-        if phase
-        in (
-          "wipe",
-          "unload_board",
-          "reposition",
-          "load_board",
-          "support",
-          "release",
+    if arm_joint_goal is None:
+      ik = s.solve_ik(
+        "right",
+        self.position,
+        self.rotation,
+        seed=s.arm_goal["right"],
+        max_iterations=140,
+        position_tolerance=(
+          0.00001
+          if phase
+          in (
+            "wipe",
+            "unload_board",
+            "reposition",
+            "approach_board",
+            "load_board",
+            "support",
+            "release",
+          )
+          else 0.0003
+        ),
+        orientation_tolerance=0.004,
+        posture_weight=0,
+      )
+      if ik.position_error > 0.005 or ik.orientation_error > 0.05:
+        raise RuntimeError(
+          f"{phase}: unreachable wrist ({ik.position_error:.4f} m)"
         )
-        else 0.0003
-      ),
-      orientation_tolerance=0.004,
-      posture_weight=0,
-    )
-    if ik.position_error > 0.005 or ik.orientation_error > 0.05:
-      raise RuntimeError(f"{phase}: unreachable wrist ({ik.position_error:.4f} m)")
-    s.set_arm_joint_goal("right", ik.joint_positions)
+      arm_joint_goal = ik.joint_positions
+    s.set_arm_joint_goal("right", arm_joint_goal)
     s.phase = phase
-    s.step(round(0.01 / s.timestep))
+    s.step(round(period_s / s.timestep))
+    if phase == "approach":
+      self.record_approach_state()
     self.max_lift = max(
       self.max_lift, float(s.object_pose("eraser")[2] - s.pickup_center[2])
     )
     self.peak_tactile = np.maximum(
       self.peak_tactile, s.forces.read(s.data).normal_force_n[5:]
     )
+    if s.board_force > self.observed_peak_board_force:
+      self.observed_peak_board_force = float(s.board_force)
+      self.peak_board_phase = phase
+      self.peak_board_time_s = float(s.data.time)
+      self.peak_board_eraser_position_board_m = (
+        C.BOARD_ROTATION.T
+        @ (s.object_pose("eraser")[:3] - s.ink_surface_center)
+      ).tolist()
     if not self.phases or self.phases[-1] != phase:
       self.phases.append(phase)
     if not np.isfinite(s.data.qpos).all() or any(w.number for w in s.data.warning):
@@ -102,6 +154,34 @@ class WhiteboardWipeExecutor:
       self.position = start + u * (np.asarray(target) - start)
       self.rotation = turn(u * vector) @ rot
       self.tick(phase)
+
+  def move_arm_joints(self, target, seconds, phase):
+    """Move through one IK branch with a zero-velocity quintic joint path."""
+    start = self.sim.arm_goal["right"].copy()
+    count = round(seconds / C.CONTROL_PERIOD_S)
+    times = [float(self.sim.data.time)]
+    joints = [self.sim.data.qpos[self.sim._arm_qpos["right"]].copy()]
+    for i in range(count):
+      u = (i + 1) / count
+      blend = 10 * u**3 - 15 * u**4 + 6 * u**5
+      self.tick(phase, arm_joint_goal=start + blend * (target - start))
+      times.append(float(self.sim.data.time))
+      joints.append(self.sim.data.qpos[self.sim._arm_qpos["right"]].copy())
+    self.position, self.rotation = self.sim.current_pose_matrix("right")
+    values = np.asarray(joints)
+    time_s = np.asarray(times)
+    velocity = np.diff(values, axis=0) / np.diff(time_s)[:, None]
+    acceleration = np.diff(velocity, axis=0) / np.diff(time_s)[1:, None]
+    return {
+      "duration_s": float(time_s[-1] - time_s[0]),
+      "joint_travel_deg": np.rad2deg(values[-1] - values[0]).tolist(),
+      "maximum_joint_speed_deg_s": float(
+        np.rad2deg(np.max(np.abs(velocity)))
+      ),
+      "maximum_joint_acceleration_deg_s2": float(
+        np.rad2deg(np.max(np.abs(acceleration)))
+      ),
+    }
 
   def servo_tool(self, target, rotation, phase):
     s = self.sim
@@ -188,17 +268,28 @@ class WhiteboardWipeExecutor:
     s = self.sim
     reason = "completed"
     released = False
+    approach_motion = None
+    transfer_motion = None
     try:
       self.move_wrist(self.position, 0.4, "observe")
       if s.table_force < 0.2 or s.forces.read(s.data).normal_force_n[5:].sum() > 0.05:
         raise RuntimeError(
           "Eraser must initially rest on the table with no finger contact"
         )
+      self.record_approach_state()
       for _ in approach_waypoint(s, s.approach_arm, s.open_grip, phase="approach"):
+        self.record_approach_state()
         if self.observer:
           self.observer(s, "approach")
       self.position, self.rotation = s.current_pose_matrix("right")
       self.move_wrist(s.pickup_center + s.wrist_offset, 2.0, "approach")
+      approach_motion = self.approach_motion()
+      if not -45.0 < approach_motion["wrist_turn_joint5_deg"] < 0.0:
+        raise RuntimeError("approach: wrist did not use the short counterclockwise branch")
+      if max(approach_motion["maximum_joint_speed_deg_s"]) >= 60.0:
+        raise RuntimeError("approach: arm joint speed is not smooth")
+      if max(approach_motion["maximum_joint_acceleration_deg_s2"]) >= 100.0:
+        raise RuntimeError("approach: arm joint acceleration is not smooth")
       self.closing = True
       self.move_wrist(self.position, 4.0, "grasp")
       loads = s.forces.read(s.data).normal_force_n[5:]
@@ -207,6 +298,9 @@ class WhiteboardWipeExecutor:
       self.closing = False
       wrist, rot = s.current_pose_matrix("right")
       self.tool_offset = rot.T @ (s.object_pose("eraser")[:3] - wrist)
+      self.tool_rotation_offset = (
+        rot.T @ s.data.xmat[s.eraser_body].reshape(3, 3)
+      )
       self.holding = True
       # Take the eraser's weight gradually before the main lift. This softens
       # the table-to-finger load transfer visible in the native force trace.
@@ -221,64 +315,105 @@ class WhiteboardWipeExecutor:
       self.pickup_verified = True
       # Tool bottom faces the board; the handle remains on the robot side.
       center = s.ink_surface_center - C.BOARD_ROTATION @ C.PAD_BOTTOM
-      self.move_tool(
-        center + 0.055 * C.BOARD_NORMAL, 3.0, "orient_and_transfer", C.WIPE_ROTATION
+      ink_y = s.ink_randomization["center_offset_board_m"][1]
+      direction = 1.0 if ink_y >= 0 else -1.0
+      start_y, end_y = -0.120 * direction, 0.080 * direction
+      first_line_start = np.array([-0.070, start_y])
+      second_line_start = np.array([0.070, start_y])
+      first_line_clearance = (
+        center
+        + 0.035 * C.BOARD_NORMAL
+        + C.BOARD_ROTATION[:, :2] @ first_line_start
       )
+      target_wrist_rotation = C.WIPE_ROTATION @ self.tool_rotation_offset.T
+      target_wrist_position = (
+        first_line_clearance - target_wrist_rotation @ self.tool_offset
+      )
+      transfer_ik = s.solve_ik(
+        "right",
+        target_wrist_position,
+        target_wrist_rotation,
+        seed=grasp.BOARD_APPROACH_ARM_SEED,
+        max_iterations=500,
+        position_tolerance=0.0005,
+        orientation_tolerance=0.006,
+        posture_weight=0,
+      )
+      if not transfer_ik.success:
+        raise RuntimeError("orient_and_transfer: short-branch target is unreachable")
+      transfer_motion = self.move_arm_joints(
+        transfer_ik.joint_positions, 5.0, "orient_and_transfer"
+      )
+      if transfer_motion["maximum_joint_speed_deg_s"] >= 70.0:
+        raise RuntimeError("orient_and_transfer: arm joint speed is not smooth")
+      if transfer_motion["maximum_joint_acceleration_deg_s2"] >= 100.0:
+        raise RuntimeError("orient_and_transfer: arm joint acceleration is not smooth")
       self.move_tool(
-        center + 0.002 * C.BOARD_NORMAL, 1.5, "approach_board", C.WIPE_ROTATION
+        center
+        + 0.0005 * C.BOARD_NORMAL
+        + C.BOARD_ROTATION[:, :2] @ first_line_start,
+        0.8,
+        "approach_board",
+        C.WIPE_ROTATION,
       )
       wipe_offset = self.position - s.object_pose("eraser")[:3]
       wipe_rotation = self.rotation.copy()
-      depth = 0.002
-      previous_force = s.mean_board_force
-      # Cover the three widely separated 20 cm lines with alternating sweeps.
-      # Between rows, unload the board smoothly before crossing the 8 cm gap;
-      # dragging across that gap under pressure redistributes the grasp load.
-      path = []
-
-      def add_transition(end):
-        start = path[-1][0] if path else np.zeros(2)
-        # Lift in place, cross the row gap clear of the board, then rebuild
-        # normal load in place. This prevents lateral motion from coinciding
-        # with the load transfer between the board and the grasp.
-        path.extend(
-          (
-            (start, 1.5, 0.0, 0.008, C.BOARD_TARGET_FORCE_N, 0.0, "unload_board"),
-            (end, 3.5, 0.008, 0.008, 0.0, 0.0, "reposition"),
-            (
-              end,
-              2.5,
-              0.008,
-              0.0,
-              0.0,
-              C.BOARD_PRELOAD_FORCE_N,
-              "load_board",
-            ),
-          )
-        )
-
-      add_transition(np.array([-0.08, -0.082]))
-      for row, height in enumerate((-0.08, 0.0, 0.08)):
-        edge = 0.082 if row % 2 == 0 else -0.082
-        end = np.array([height, edge])
-        path.append(
-          (
-            end,
-            6.5,
-            0.0,
-            0.0,
-            C.BOARD_TARGET_FORCE_N,
-            C.BOARD_TARGET_FORCE_N,
-            "wipe",
-          )
-        )
-        if row < 2:
-          add_transition(np.array([height + 0.08, edge]))
+      depth = 0.0005
+      # Start each line on the side with more board clearance, so there is
+      # enough loaded travel to erase the first ink segment without an
+      # on-board reversal. The row change remains unloaded and time-bounded.
+      path = [
+        (
+          np.array([-0.070, end_y]),
+          5.5,
+          0.0,
+          0.0,
+          C.BOARD_TARGET_FORCE_N,
+          C.BOARD_TARGET_FORCE_N,
+          "wipe",
+        ),
+        (
+          np.array([-0.070, end_y]),
+          0.8,
+          0.0,
+          0.003,
+          C.BOARD_TARGET_FORCE_N,
+          0.0,
+          "unload_board",
+        ),
+        (
+          second_line_start,
+          2.5,
+          0.003,
+          0.003,
+          0.0,
+          0.0,
+          "reposition",
+        ),
+        (
+          second_line_start,
+          0.8,
+          0.003,
+          0.001,
+          0.0,
+          0.0,
+          "approach_board",
+        ),
+        (
+          np.array([0.070, end_y]),
+          5.5,
+          0.001,
+          0.0,
+          C.BOARD_TARGET_FORCE_N,
+          C.BOARD_TARGET_FORCE_N,
+          "wipe",
+        ),
+      ]
       offsets = []
       reliefs = []
       force_goals = []
       wipe_phases = []
-      start = np.zeros(2)
+      start = first_line_start
       for (
         end,
         seconds,
@@ -291,61 +426,74 @@ class WhiteboardWipeExecutor:
         # Every segment starts and ends at rest, with the same quintic blend
         # applied to lateral position, normal relief, and desired board load.
         delta = end - start
-        for u in np.linspace(0, 1, round(seconds / C.CONTROL_PERIOD_S) + 1)[1:]:
+        for u in np.linspace(
+          0, 1, round(seconds / C.BOARD_CONTROL_PERIOD_S) + 1
+        )[1:]:
           blend = 10 * u**3 - 15 * u**4 + 6 * u**5
           offsets.append(start + blend * delta)
           reliefs.append(relief_start + blend * (relief_end - relief_start))
           force_goals.append(force_start + blend * (force_end - force_start))
           wipe_phases.append(phase)
         start = end
+      normal_command = depth
+      previous_force = s.mean_board_force
       cursor = 0.0
-      speed_scale = 0.0
-      for i in range(6000):
-        # Retain the original low-gain normal admittance. Regulate path speed
-        # separately so the same stable pressure loop works over the board.
+      for step in range(8 * len(offsets)):
+        # The normal admittance regulates load while the planned tangential
+        # clock advances at its declared rate outside wiping. During wiping,
+        # overload may pause tangential motion briefly while the normal servo
+        # unloads; load/reposition phases never use this gate.
         force = s.mean_board_force
-        # Slow the tangential path before a rising load outruns the normal
-        # servo. Advance simulation and record real forces during the pause;
-        # never clip measured loads or advance ink without physical sliding.
-        predicted_force = force + 5 * max(0.0, force - previous_force)
-        index = min(int(cursor), len(offsets) - 1)
-        force_goal = force_goals[index]
-        allowed_speed = float(
-          np.clip((force_goal + 0.15 - predicted_force) / 0.10, 0, 1)
+        i = min(int(cursor), len(offsets) - 1)
+        fraction = cursor - i
+        following = min(i + 1, len(offsets) - 1)
+        offset = (1 - fraction) * offsets[i] + fraction * offsets[following]
+        relief = (1 - fraction) * reliefs[i] + fraction * reliefs[following]
+        force_goal = (
+          (1 - fraction) * force_goals[i] + fraction * force_goals[following]
         )
-        speed_scale += np.clip(allowed_speed - speed_scale, -0.10, 0.025)
-        cursor = min(cursor + speed_scale, len(offsets) - 1)
-        index = int(cursor)
-        blend = cursor - index
-        offset = (1 - blend) * offsets[index] + blend * offsets[
-          min(index + 1, len(offsets) - 1)
-        ]
-        relief = (1 - blend) * reliefs[index] + blend * reliefs[
-          min(index + 1, len(reliefs) - 1)
-        ]
-        force_goal = (1 - blend) * force_goals[index] + blend * force_goals[
-          min(index + 1, len(force_goals) - 1)
-        ]
+        regulated_force = force + 5.0 * max(0.0, force - previous_force)
+        # Close a free-space gap quickly, then revert to the low-gain contact
+        # admittance before the first measurable load.  This removes seconds
+        # of visually idle approach without driving hard into the board.
+        depth_gain = 0.000006 if force < 0.05 and force_goal > 0.2 else 0.000003
         depth = float(
           np.clip(
-            depth + 0.000006 * (force - force_goal),
+            depth + depth_gain * (regulated_force - force_goal),
             -0.012,
             0.005,
           )
         )
         previous_force = force
+        desired_normal = depth + relief
+        # Limit approach to 1 mm/s even when the relief trajectory and
+        # admittance both request motion into the board.  Motion away from
+        # the board remains immediate, so overloads are relieved promptly.
+        normal_command = max(desired_normal, normal_command - 0.000005)
         target = (
           center
-          + (depth + relief) * C.BOARD_NORMAL
+          + normal_command * C.BOARD_NORMAL
           + C.BOARD_ROTATION[:, :2] @ offset
         )
         self.position = target + wipe_offset
         self.rotation = wipe_rotation
-        self.tick(wipe_phases[index])
-        if i > 300 and np.max(s.remaining) <= 1e-9:
+        phase = wipe_phases[i]
+        if phase == "wipe" and direction * offset[1] < 0.0:
+          # Contact is established while the tool is already moving, before
+          # reaching ink. Label that physical load transfer explicitly so a
+          # force rise is not misreported as unexplained steady wiping noise.
+          phase = "load_board"
+        self.tick(phase, period_s=C.BOARD_CONTROL_PERIOD_S)
+        if step > 300 and np.max(s.remaining) <= 1e-9:
           break
         if cursor >= len(offsets) - 1:
           break
+        path_speed = 1.0
+        if wipe_phases[i] == "wipe":
+          path_speed = float(
+            np.clip((force_goal + 0.15 - regulated_force) / 0.10, 0.0, 1.0)
+          )
+        cursor = min(cursor + path_speed, len(offsets) - 1)
       self.move_tool(
         s.object_pose("eraser")[:3] + 0.07 * C.BOARD_NORMAL,
         1.5,
@@ -384,6 +532,9 @@ class WhiteboardWipeExecutor:
       ink_remaining=s.remaining.tolist(),
       maximum_lift_m=self.max_lift,
       peak_board_force_n=s.peak_board_force,
+      peak_board_force_phase=self.peak_board_phase,
+      peak_board_force_time_s=self.peak_board_time_s,
+      peak_board_eraser_position_board_m=self.peak_board_eraser_position_board_m,
       peak_board_tangent_force_n=s.peak_board_tangent_force,
       peak_direct_hand_board_force_n=s.peak_direct_hand_board_force,
       cleaning=dict(
@@ -408,8 +559,14 @@ class WhiteboardWipeExecutor:
       friction_impedance_ratio=float(s.model.opt.impratio),
       hand_velocity_gain=C.HAND_VELOCITY_GAIN,
       board_target_force_n=C.BOARD_TARGET_FORCE_N,
-      board_depth_gain_m_per_n_tick=0.000006,
-      board_depth_control="integral_with_load_regulated_path_speed",
+      board_depth_gain_m_per_n_tick={
+        "free_space": 0.000006,
+        "in_contact": 0.000003,
+      },
+      maximum_board_approach_m_per_tick=0.000005,
+      board_depth_control="integral_normal_admittance_with_bounded_wipe_slowdown",
+      board_force_derivative_prediction=5.0,
+      minimum_wipe_path_speed_scale=0.0,
       contact_control_ik_tolerance_m=0.00001,
       table_approach_speed_m_s=0.002,
       table_target_support_n=float(
@@ -417,6 +574,7 @@ class WhiteboardWipeExecutor:
       ),
       release_force_ramp_s=1.5,
       command_interpolation_period_s=C.CONTROL_PERIOD_S,
+      board_contact_control_period_s=C.BOARD_CONTROL_PERIOD_S,
       ccd_tolerance=float(s.model.opt.ccd_tolerance),
       ccd_iterations=int(s.model.opt.ccd_iterations),
       eraser_contact_margins_m={
@@ -427,6 +585,8 @@ class WhiteboardWipeExecutor:
         ),
       },
       peak_fingertip_force_n=self.peak_tactile.tolist(),
+      initial_approach_motion=approach_motion,
+      orient_transfer_motion=transfer_motion,
       phases=self.phases,
       solver_warnings=[int(w.number) for w in s.data.warning],
     )

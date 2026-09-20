@@ -205,7 +205,8 @@ class RamInstallExecutor:
     target = np.array([self.sim._hand_targets["right"][n] for n in self._names])
     normal = self.sim.data.xmat[self._body].reshape(3, 3)[:, 1]
     for pad, i in self._pads.items():
-      direction = normal if i == 0 else -normal
+      # The revised forehand pinch approaches the opposite PCB face.
+      direction = -normal if i == 0 else normal
       point = self.sim.data.geom_xpos[pad]
       jac = np.zeros((3, self.sim.model.nv))
       mujoco.mj_jac(
@@ -304,25 +305,19 @@ class RamInstallExecutor:
     # Keep a wide pinch above the cradle and throughout the descent. The
     # narrow calibrated pinch is used only after the wrist reaches the DIMM.
     # All motion goes through the shared joint actuators.
-    start_arm = self.sim.arm_goal["right"].copy()
+    start_position, start_rotation = self.sim.current_pose_matrix("right")
     start_hand = np.array([self.sim._hand_targets["right"][n] for n in self._names])
     above = self.grasp.wrist_position + np.array([0.0, 0.0, 0.08])
-    hover = self.sim.solve_ik(
-      "right",
-      above,
-      self.grasp.wrist_rotation,
-      seed=self.grasp.arm_joints,
-      max_iterations=500,
-      position_tolerance=0.0003,
-      orientation_tolerance=0.004,
-      posture_weight=0,
-    )
-    if not hover.success:
-      raise _TaskFailure("pickup hover is unreachable from shared home")
+    # Follow the short rotation in task space, rather than interpolating
+    # unrelated IK branches (the old forearm target swept over 210 degrees).
+    rotation_vector = _rotation_vector_world(self.grasp.wrist_rotation, start_rotation)
     for i in range(1, 201):
       u = i / 200
       alpha = 10 * u**3 - 15 * u**4 + 6 * u**5
-      arm = start_arm + alpha * (hover.joint_positions - start_arm)
+      arm = self._command_ee(
+        start_position + alpha * (above - start_position),
+        _turn(alpha * rotation_vector) @ start_rotation,
+      )
       hand = start_hand + alpha * (self.grasp.approach_hand - start_hand)
       self._ramp_commands(arm, hand, "approach")
     for i in range(1, 151):

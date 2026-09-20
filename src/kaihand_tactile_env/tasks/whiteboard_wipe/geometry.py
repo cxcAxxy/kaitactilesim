@@ -227,7 +227,7 @@ def rebuild():
     geom2="board_surface",
     condim="6",
     friction=".65 .65 .003 .0003 .0003",
-    solref=".02 1",
+    solref=".09 1",
     solimp="0 .95 .001 .5 2",
     margin="0",
   )

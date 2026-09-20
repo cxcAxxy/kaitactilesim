@@ -1,4 +1,4 @@
-"""Native 500 Hz capture and saved-state RGB review for whiteboard wiping."""
+"""Shared Raw and detailed review capture for whiteboard wiping."""
 
 from __future__ import annotations
 
@@ -15,6 +15,13 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from ...shared.config import CameraConfig, WorkcellConfig
+from ...shared.poker_review import (
+  _force_layout,
+  _probe_video,
+  _validate_probe,
+  compose_review_frame,
+  plan_review_frames,
+)
 from ...shared.recording import (
   EpisodeRecorder,
   WristWrenchSample,
@@ -24,6 +31,7 @@ from ...shared.recording import (
   create_wrist_wrench_group,
   validate_episode,
 )
+from ...shared.render_backend import prepare_render_backend
 from ...shared.rendering import WorkcellRenderer
 from ...shared.tactile import SolverContactTactileProvider
 from ...shared.task_video import _FfmpegPipeWriter
@@ -39,6 +47,14 @@ def _json(path, value):
     json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
     encoding="utf-8",
   )
+
+
+def _sha256(path):
+  digest = hashlib.sha256()
+  with Path(path).open("rb") as stream:
+    for block in iter(lambda: stream.read(1024 * 1024), b""):
+      digest.update(block)
+  return digest.hexdigest()
 
 
 def _force_maps(sample, tangent=False):
@@ -150,6 +166,8 @@ class RawCapture:
     camera_hz=30,
     cameras=("head", "left_wrist", "right_wrist"),
     buffer_rows=128,
+    episode_stem="episode",
+    result_relative="result.json",
   ):
     self.sim = simulation
     self.directory = Path(directory)
@@ -168,8 +186,10 @@ class RawCapture:
       ),
       tactile_provider=SolverContactTactileProvider.source,
     )
+    self.result_path = self.directory / result_relative
+    self.result_path.parent.mkdir(parents=True, exist_ok=True)
     self.raw_recorder = WhiteboardEpisodeRecorder(
-      self.directory / "raw/episode.h5",
+      self.directory / f"raw/{episode_stem}.h5",
       simulation,
       capture,
       buffer_rows=buffer_rows,
@@ -197,7 +217,7 @@ class RawCapture:
       "state_samples": validation.state_samples,
       "camera_samples": validation.camera_samples,
     }
-    _json(self.directory / "result.json", result)
+    _json(self.result_path, result)
     validation_sidecar = self.raw_recorder.path.with_suffix(".json")
     sidecar = json.loads(validation_sidecar.read_text(encoding="utf-8"))
     sidecar.update(
@@ -208,11 +228,348 @@ class RawCapture:
     _json(validation_sidecar, sidecar)
     if not validation.valid:
       raise ValueError(f"shared raw validation failed: {validation.errors}")
+    return validation_result
 
   def close(self):
     self.sim.physics_observer = None
     if not self.raw_recorder._closed:
       self.raw_recorder.close(finalize=False)
+
+
+def _compact_curves(file, output):
+  """Plot unfiltered recorded right-hand totals on the shared 100 Hz clock."""
+  import matplotlib
+
+  matplotlib.use("Agg")
+  import matplotlib.pyplot as plt
+  from matplotlib.patches import Patch
+
+  indices = _force_layout(file)
+  force = file["tactile_contact_force"]
+  time_s = force["timestamp"][:]
+  normal = force["normal_force_n"][:, indices]
+  tangent = np.linalg.norm(force["tangent_force_n"][:, indices], axis=-1)
+  phases = file["commands/phase"].asstr()[:]
+  boundaries = time_s[np.flatnonzero(phases[1:] != phases[:-1]) + 1]
+  fig, axes = plt.subplots(5, 2, figsize=(14, 11), sharex=True)
+  for finger, row in enumerate(axes):
+    for axis, values, label in zip(
+      row, (normal, tangent), ("Fn (N)", "|Ft| (N)"), strict=True
+    ):
+      axis.plot(time_s, values[:, finger], lw=0.75)
+      axis.set_ylabel(f"{FINGERS[finger]}\n{label}")
+      axis.grid(alpha=0.25)
+      for phase, color in (("load_board", "#F4A340"), ("wipe", "#5B8FF9")):
+        active = phases == phase
+        if np.any(active):
+          changes = np.diff(np.r_[False, active, False].astype(np.int8))
+          for start, end in zip(
+            np.flatnonzero(changes == 1), np.flatnonzero(changes == -1), strict=True
+          ):
+            axis.axvspan(time_s[start], time_s[end - 1], color=color, alpha=0.18)
+      for boundary in boundaries:
+        axis.axvline(boundary, color="gray", lw=0.35, alpha=0.45)
+  for axis in axes[-1]:
+    axis.set_xlabel("Simulation time (s)")
+  fig.suptitle(
+    "Whiteboard wiping: recorded right-hand solver forces (100 Hz, unfiltered)"
+  )
+  output.mkdir(parents=True, exist_ok=True)
+  fig.legend(
+    handles=[
+      Patch(color="#F4A340", alpha=0.35, label="Moving load transfer"),
+      Patch(color="#5B8FF9", alpha=0.35, label="Stable wipe"),
+    ],
+    loc="upper center",
+    bbox_to_anchor=(0.5, 0.975),
+    ncol=2,
+  )
+  fig.tight_layout(rect=(0, 0, 1, 0.94))
+  fig.savefig(output / "right_hand_force_curves.png", dpi=150)
+  plt.close(fig)
+
+
+def _compact_review(file, output):
+  """Encode head, right wrist, and synchronized normal/tangent tactile panels."""
+  frames = plan_review_frames(file, fps=10, second_camera="right_wrist")
+  right = _force_layout(file)
+  force = file["tactile_contact_force"]
+  writer = _FfmpegPipeWriter(output / "review.mp4", fps=10, width=1280, height=720)
+  try:
+    for frame in frames:
+      camera_index, tactile_index = frame.camera_index, frame.tactile_index
+      normal = force["normal_taxel_force_n"][tactile_index][right]
+      tangent = force["tangent_taxel_force_n"][tactile_index][right]
+      phase = file["commands/phase"].asstr()[tactile_index]
+      composite, _ = compose_review_frame(
+        file["cameras/head/rgb"][camera_index],
+        file["cameras/right_wrist/rgb"][camera_index],
+        normal,
+        tangent,
+        frame=frame,
+        width=1280,
+        height=720,
+        phase=phase,
+        heading="WHITEBOARD WIPING",
+        second_camera_label="RIGHT WRIST",
+      )
+      writer.write(np.asarray(composite))
+    writer.finish()
+  except BaseException:
+    writer.abort()
+    raise
+  probe = _probe_video(output / "review.mp4")
+  _validate_probe(probe, count=len(frames), fps=10, width=1280, height=720)
+  return {
+    "source": "../raw/erase_whiteboard_000000.h5",
+    "frame_count": len(frames),
+    "fps": 10,
+    "camera_names": ["head", "right_wrist"],
+    "tactile_panels": ["right_hand_normal", "right_hand_tangent"],
+    "maximum_tactile_age_s": max(frame.tactile_age_s for frame in frames),
+    "video_validation": probe,
+  }
+
+
+def _compact_global_review(file, output):
+  """Render the exact saved states from a fixed presentation camera."""
+  from .task import WhiteboardWipeSimulation
+
+  sim = WhiteboardWipeSimulation()
+  layout = json.loads(file["whiteboard_wipe"].attrs["ink_randomization_json"])
+  sim.set_ink_layout(layout["geom_positions_board_m"], seed=layout["seed"])
+  frames = plan_review_frames(file, fps=10, second_camera="right_wrist")
+  camera = mujoco.MjvCamera()
+  camera.type = mujoco.mjtCamera.mjCAMERA_FREE
+  camera.lookat[:] = (0.25, -0.03, 0.85)
+  camera.distance = 2.25
+  camera.azimuth = 135
+  camera.elevation = -22
+  option = mujoco.MjvOption()
+  option.geomgroup[3:] = 0
+  prepare_render_backend()
+  path = output / "robot_global_short_path.mp4"
+  writer = _FfmpegPipeWriter(path, fps=10, width=960, height=540)
+  try:
+    with mujoco.Renderer(sim.model, width=960, height=540) as renderer:
+      for frame in frames:
+        index = int(file["cameras/head/state_index"][frame.camera_index])
+        sim.data.time = float(file["state/timestamp"][index])
+        sim.data.qpos[:] = file["state/qpos"][index]
+        sim.data.qvel[:] = file["state/qvel"][index]
+        sim.data.ctrl[:] = file["commands/actuator_control"][index]
+        sim.model.geom_rgba[sim.ink_ids] = file["whiteboard_wipe/ink_rgba"][index]
+        mujoco.mj_forward(sim.model, sim.data)
+        renderer.update_scene(sim.data, camera=camera, scene_option=option)
+        writer.write(np.asarray(renderer.render()))
+    writer.finish()
+  except BaseException:
+    writer.abort()
+    raise
+  probe = _probe_video(path)
+  _validate_probe(probe, count=len(frames), fps=10, width=960, height=540)
+  return {
+    "source": "../raw/erase_whiteboard_000000.h5",
+    "method": "offline rendering of exact saved states without physics stepping",
+    "frame_count": len(frames),
+    "video_validation": probe,
+  }
+
+
+def _compact_force_analysis(file):
+  """Measure phase-wise levels and changes; fail publication on implausible loads."""
+  right = _force_layout(file)
+  force = file["tactile_contact_force"]
+  time_s = force["timestamp"][:]
+  phases = file["commands/phase"].asstr()[:]
+  normal = force["normal_force_n"][:, right]
+  tangent = np.linalg.norm(force["tangent_force_n"][:, right], axis=-1)
+  board = file["whiteboard_wipe/board_force_n"][:]
+  names = list(FINGERS)
+
+  def changes(values):
+    delta = np.abs(np.diff(values, axis=0))
+    flat = int(np.argmax(delta))
+    row, column = np.unravel_index(flat, delta.shape)
+    return {
+      "maximum_10ms_step_n": float(delta[row, column]),
+      "time_s": float(time_s[row + 1]),
+      "finger": names[column],
+      "phase_before": str(phases[row]),
+      "phase_after": str(phases[row + 1]),
+    }
+
+  def phase_changes(values, phase):
+    # Compare only adjacent samples in one continuous phase. The two wipe
+    # strokes are separated by an unloaded row change and must not be joined.
+    adjacent = (phases[:-1] == phase) & (phases[1:] == phase)
+    if not np.any(adjacent):
+      return 0.0
+    return float(np.abs(np.diff(values, axis=0)[adjacent]).max())
+
+  def window(center_s, half_width_s=1.0):
+    selected = np.flatnonzero(np.abs(time_s - center_s) <= half_width_s)
+    if not len(selected):
+      return {
+        "available": False,
+        "reason": f"episode ends at {time_s[-1]:.2f} s",
+      }
+    return {
+      "available": True,
+      "range_s": [float(time_s[selected[0]]), float(time_s[selected[-1]])],
+      "phases": list(dict.fromkeys(str(value) for value in phases[selected])),
+      "peak_board_normal_n": float(board[selected].max()),
+      "right_fn_peak_to_peak_n": np.ptp(normal[selected], axis=0).tolist(),
+      "right_ft_peak_to_peak_n": np.ptp(tangent[selected], axis=0).tolist(),
+    }
+
+  phase_summary = {}
+  for phase in dict.fromkeys(phases):
+    selected = np.flatnonzero(phases == phase)
+    phase_summary[phase] = {
+      "sample_count": int(len(selected)),
+      "duration_s": float(len(selected) / float(file.attrs["control_hz"])),
+      "peak_board_normal_n": float(board[selected].max()),
+      "peak_right_fn_n": normal[selected].max(axis=0).tolist(),
+      "peak_right_ft_n": tangent[selected].max(axis=0).tolist(),
+    }
+  wipe = phases == "wipe"
+  load = phases == "load_board"
+  wipe_fn_step = phase_changes(normal, "wipe")
+  wipe_ft_step = phase_changes(tangent, "wipe")
+  load_fn_step = phase_changes(normal, "load_board")
+  load_ft_step = phase_changes(tangent, "load_board")
+  criteria = {
+    "episode_fingertip_peak_below_6_n": bool(normal.max() < 6.0),
+    "wipe_board_peak_below_3_n": bool(board[wipe].max() < 3.0),
+    "load_board_peak_below_5_n": bool(board[load].max() < 5.0),
+    "load_board_fn_10ms_step_below_0_5_n": bool(load_fn_step < 0.5),
+    "load_board_ft_10ms_step_below_0_5_n": bool(load_ft_step < 0.5),
+    "wipe_fn_10ms_step_below_0_5_n": bool(wipe_fn_step < 0.5),
+    "wipe_ft_10ms_step_below_0_5_n": bool(wipe_ft_step < 0.5),
+  }
+  return {
+    "source": "unfiltered solver-contact forces on the shared 100 Hz state clock",
+    "phase_summary": phase_summary,
+    "right_fn_change": changes(normal),
+    "right_ft_change": changes(tangent),
+    "phase_maximum_10ms_step_n": {
+      "moving_load_transfer": {
+        "normal": load_fn_step,
+        "tangent": load_ft_step,
+      },
+      "stable_wipe": {
+        "normal": wipe_fn_step,
+        "tangent": wipe_ft_step,
+      },
+    },
+    "inspection_windows": {
+      "40s_plus_minus_1s": window(40.0),
+      "52s_plus_minus_1s": window(52.0),
+      "60s_plus_minus_1s": window(60.0),
+    },
+    "peak_board_normal_n": float(board.max()),
+    "criteria": criteria,
+    "reasonable": all(criteria.values()),
+    "assessment": (
+      "Force changes align with named contact/load phases; wiping remains below "
+      "the 3 N board-load bound and has no unexplained large 10 ms fingertip jump."
+      if all(criteria.values())
+      else "One or more measured force-stability criteria failed; do not publish."
+    ),
+  }
+
+
+def record_compact_example(
+  output,
+  *,
+  replace_existing=False,
+  camera_hz=30,
+  cameras=("head", "left_wrist", "right_wrist"),
+  buffer_rows=128,
+  ink_seed=None,
+):
+  """Record and atomically publish the install-RAM-style six-file example."""
+  from .execution import WhiteboardWipeExecutor
+  from .task import WhiteboardWipeSimulation
+
+  output = Path(output).expanduser().absolute()
+  work = output.with_name(output.name + ".rendering")
+  replaced = output.with_name(output.name + ".replaced")
+  for path in (output, work, replaced):
+    if path.is_symlink():
+      raise ValueError(f"refusing a symlink output: {path}")
+  if work.exists() or replaced.exists():
+    raise FileExistsError("whiteboard staging or replacement path already exists")
+  if output.exists() and not replace_existing:
+    raise FileExistsError("output exists; explicit replacement is required")
+  sim = WhiteboardWipeSimulation(ink_seed=ink_seed)
+  recorder = RawCapture(
+    sim,
+    work,
+    camera_hz=camera_hz,
+    cameras=cameras,
+    buffer_rows=buffer_rows,
+    episode_stem="erase_whiteboard_000000",
+    result_relative="raw/erase_whiteboard_000000.result.json",
+  )
+  try:
+    result = WhiteboardWipeExecutor(sim, recorder.observe).run()
+    validation = recorder.finish(result)
+  finally:
+    recorder.close()
+  try:
+    if not result.get("success"):
+      raise ValueError(f"whiteboard rollout failed: {result.get('reason')}")
+    raw_path = work / "raw/erase_whiteboard_000000.h5"
+    (work / "review").mkdir()
+    with h5py.File(raw_path, "r") as file:
+      _compact_curves(file, work / "curves")
+      review = _compact_review(file, work / "review")
+      global_review = _compact_global_review(file, work / "review")
+      force_analysis = _compact_force_analysis(file)
+    if not force_analysis["reasonable"]:
+      raise ValueError(force_analysis["assessment"])
+    result_path = work / "raw/erase_whiteboard_000000.result.json"
+    saved_result = json.loads(result_path.read_text(encoding="utf-8"))
+    saved_result["example_validation"] = {
+      "raw": validation,
+      "force_analysis": force_analysis,
+      "review": review,
+      "global_review": global_review,
+      "raw_sha256": _sha256(raw_path),
+      "layout": "install_ram_example_raw_review_curves",
+    }
+    _json(result_path, saved_result)
+    expected = {
+      "curves/right_hand_force_curves.png",
+      "raw/erase_whiteboard_000000.h5",
+      "raw/erase_whiteboard_000000.json",
+      "raw/erase_whiteboard_000000.result.json",
+      "review/review.mp4",
+      "review/robot_global_short_path.mp4",
+    }
+    actual = {
+      str(path.relative_to(work)) for path in work.rglob("*") if path.is_file()
+    }
+    if actual != expected:
+      raise ValueError(f"compact layout mismatch: {sorted(actual ^ expected)}")
+    existed = output.exists()
+    if existed:
+      output.rename(replaced)
+    try:
+      work.rename(output)
+    except BaseException:
+      if existed:
+        replaced.rename(output)
+      raise
+    if existed:
+      shutil.rmtree(replaced)
+    return saved_result
+  except BaseException:
+    if work.exists():
+      shutil.rmtree(work)
+    raise
 
 
 class WhiteboardRecorder:
@@ -932,9 +1289,9 @@ HDF5 的 `board_contact_center_world_m` 是法向载荷加权的板面受力中�
 
 本任务通过零接触 margin 和较高 CCD 精度稳定板擦接触点，并采用较柔顺的右手速度伺服及每毫秒连续的位置目标。几何、质量、摩擦系数和需要受力滑动的清洁门槛不变；这些修改只作用于当前任务实例，原始触觉未滤波。
 
-笔迹覆盖约 20×16 cm，分为间距约 8 cm 的三行、25 个独立笔画单元。控制器逐行覆盖，长笔画完整落入毛毡范围后才累计清洁量；清洁门槛不变。双臂仍从 shared 对称收臂姿势开始。
+笔迹覆盖约 14×16 cm，分为间距约 14 cm 的两条、25 个独立笔画单元。控制器逐条覆盖，长笔画完整落入毛毡范围后才累计清洁量；清洁门槛不变。双臂仍从 shared 对称收臂姿势开始。
 
-贴板深度控制使用低增益反馈和 2.2 N 目标；换行时先卸载、离板横移、再原地加载，实际载荷上升时减慢擦拭路径。触觉与力曲线继续保存未滤波的真实求解器载荷。
+贴板深度控制使用低增益反馈和 2.2 N 目标；换条时先卸载、离板横移、再随擦拭运动建立载荷，实际载荷上升时减慢擦拭路径。触觉与力曲线继续保存未滤波的真实求解器载荷。
 
 放回时先以 2 mm/s 接近桌面，再根据实际支撑力卸载至板擦自重；释放时逐指降低实测法向载荷，并在完全张手前持续消除多余下压力。全部曲线仍来自未经平滑的物理接触解。
 
@@ -949,7 +1306,7 @@ HDF5 的 `board_contact_center_world_m` 是法向载荷加权的板面受力中�
       f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>45° 白板擦拭</title>
 <style>body{{max-width:1280px;margin:32px auto;padding:0 24px;background:#101923;color:#e7eef5;font:16px/1.7 system-ui}}video,img,input{{width:100%}}video,img{{background:#080d14;border-radius:10px}}a{{color:#75d7c7}}.inspections{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}}h3{{font-size:16px}}</style>
 <h1>45° 白板擦拭</h1><p>{verdict} · {duration:.2f} s · 平均清除 {cleared:.1%}</p>
-<p>三行大范围笔迹，覆盖约 20×16 cm，行中心间距约 8 cm；从共享双臂初始姿势出发，逐行擦净后放回板擦。</p>
+<p>两条大范围笔迹，覆盖约 14×16 cm，中心间距约 14 cm；从共享双臂初始姿势出发，逐条擦净后放回板擦。</p>
 <p>本次原生记录：500 Hz 状态与触觉，{self.video_fps} fps 相机；头部和右腕原图均为 640×360。</p>
 <h2>初始与完成后</h2><div class="inspections"><section><h3>初始黑色笔迹</h3><img src="review/inspection/00.png"></section><section><h3>执行完成后</h3><img src="review/inspection/01.png"></section></div>
 <h2>机器人相机与触觉</h2><video src="review/review.mp4" controls preload="metadata"></video><p>左上 head，左下 right_wrist；右側为右手五指法向与切向触元力，对应同一时刻的 500 Hz 原始样本。</p>

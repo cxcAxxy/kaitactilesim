@@ -20,6 +20,7 @@ from kaihand_tactile_env.shared.simulation import (
   _rotation_vector_world,
 )
 
+from .acceptance import MINIMUM_LOADED_FINGERS, TASK_COMPLETION_POLICY
 from .config import (
   _FLAT_DRAW_MAXIMUM_FINGERTIP_PLANE_ANGLE_DEGREES,
   _FLAT_DRAW_POSTURE_VERSION,
@@ -120,6 +121,7 @@ class PressureWindowSettings:
   max_slide_travel_m: float = 0.16
   target_overhang_fraction: float = 0.49
   edge_dwell_s: float = 0.10
+  contact_damping_ratio: float | None = None
 
   def __post_init__(self) -> None:
     if not isinstance(self.goal, str) or self.goal not in {"short", "table-edge"}:
@@ -129,6 +131,7 @@ class PressureWindowSettings:
         continue
       if value is None and name in {
         "contact_time_constant_s",
+        "contact_damping_ratio",
         "finger_servo_velocity_gain",
         "physics_timestep_s",
       }:
@@ -421,14 +424,7 @@ class PressureWindowExecutor(PokerDrawExecutor):
   def prepare(self, plan: PokerDrawPlan) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     self._validate_plan(plan)
     self._reset_episode_state(plan)
-    self._set_flat_draw_pose()
-    seed = self.sim.arm_goal[plan.side]
-    for waypoint in plan.waypoints:
-      self.sim.set_arm_joint_goal(plan.side, waypoint.joint_positions)
-      self._advance_fixed(waypoint.duration, waypoint.phase, plan.table_edge_x)
-      if self.sim.arm_goal_error(plan.side) > 0.08:
-        raise RuntimeError(f"{waypoint.phase} arm did not settle")
-      seed = waypoint.joint_positions
+    seed = self._execute_approach(plan)
     seed = self._move_pose_linear(
       plan,
       self.sim.object_pose("card")[:3] + _FLAT_DRAW_PRECONTACT_OFFSET,
@@ -534,7 +530,15 @@ class PressureWindowExecutor(PokerDrawExecutor):
     commanded = 0.0
     terminal_reason = "time_limit"
     reached = False
-    dwell = 0.0
+    geometric_dwell = 0.0
+    strict_dwell = 0.0
+    supported_hold_samples = 0
+    geometric_hold_samples = 0
+    minimum_loaded_fingers = (
+      MINIMUM_LOADED_FINGERS
+      if getattr(self, "acceptance_policy", None) == TASK_COMPLETION_POLICY
+      else 4
+    )
     all_unloaded_duration = 0.0
     # A diagnostic early stop requires a full second of measured near-stall,
     # saturated drive and continuous four-finger load, never a pressure label.
@@ -645,24 +649,52 @@ class PressureWindowExecutor(PokerDrawExecutor):
       for _ in range(max(1, int(round(settings.hold_seconds / sim.timestep)))):
         self._step(hold_phase, plan.table_edge_x)
         forces = self._current_card_finger_normal_forces()
-        held = (
+        geometry_held = bool(
           reached
           and self._overhang_fraction(plan.table_edge_x)
           >= settings.target_overhang_fraction - 0.015
-          and np.all(forces >= 0.25 * self.press_force_per_finger_n)
         )
-        dwell = dwell + sim.timestep if held else 0.0
+        loaded_fingers = int(
+          np.count_nonzero(forces >= 0.25 * self.press_force_per_finger_n)
+        )
+        if geometry_held:
+          geometric_dwell += sim.timestep
+          geometric_hold_samples += 1
+          supported_hold_samples += int(loaded_fingers >= minimum_loaded_fingers)
+        else:
+          geometric_dwell = 0.0
+          geometric_hold_samples = 0
+          supported_hold_samples = 0
+        strict_held = bool(
+          geometry_held and np.all(forces >= 0.25 * self.press_force_per_finger_n)
+        )
+        strict_dwell = strict_dwell + sim.timestep if strict_held else 0.0
     except (RuntimeError, ValueError):
       terminal_reason = "control_error"
       raise
     finally:
       summary = self._slide_force_monitor.summary()
       quality = self._slide_press_control_qualified(summary)
+      support_fraction = (
+        supported_hold_samples / geometric_hold_samples
+        if geometric_hold_samples
+        else 0.0
+      )
+      task_completion_dwell = bool(
+        geometric_dwell >= settings.edge_dwell_s - 1e-9 and support_fraction >= 0.90
+      )
+      strict_completion_dwell = bool(strict_dwell >= settings.edge_dwell_s - 1e-9)
+      policy_completion_dwell = (
+        task_completion_dwell
+        if getattr(self, "acceptance_policy", None) == TASK_COMPLETION_POLICY
+        else strict_completion_dwell
+      )
+      accepted_dwell = geometric_dwell if policy_completion_dwell else 0.0
       self.edge_outcome = {
         "draw_posture_version": _FLAT_DRAW_POSTURE_VERSION,
         "slide_fingertip_plane_angle_limit_degrees": _FLAT_DRAW_MAXIMUM_FINGERTIP_PLANE_ANGLE_DEGREES,
         "target_reached": reached,
-        "held_at_edge": bool(reached and dwell >= settings.edge_dwell_s - 1e-9),
+        "held_at_edge": bool(reached and policy_completion_dwell),
         "terminal_reason": terminal_reason,
         "target_overhang_fraction": settings.target_overhang_fraction,
         "table_edge_x_m": float(plan.table_edge_x),
@@ -671,11 +703,16 @@ class PressureWindowExecutor(PokerDrawExecutor):
         "actual_card_travel_m": initial_card_x - float(sim.object_pose("card")[0]),
         "final_overhang_fraction": self._overhang_fraction(plan.table_edge_x),
         "maximum_overhang_fraction": self._maximum_overhang_fraction,
-        "edge_dwell_s": dwell,
+        "edge_dwell_s": accepted_dwell,
+        "geometric_edge_dwell_s": geometric_dwell,
+        "strict_four_finger_edge_dwell_s": strict_dwell,
+        "edge_support_minimum_loaded_fingers": minimum_loaded_fingers,
+        "edge_support_sample_fraction": support_fraction,
+        "edge_support_minimum_sample_fraction": 0.90,
         "slide_force_quality": asdict(summary),
         "full_slide_qualified": bool(
           reached
-          and dwell >= settings.edge_dwell_s - 1e-9
+          and strict_dwell >= settings.edge_dwell_s - 1e-9
           and quality
           and terminal_reason == "edge_reached"
         ),
@@ -684,7 +721,8 @@ class PressureWindowExecutor(PokerDrawExecutor):
           <= _FLAT_DRAW_MAXIMUM_FINGERTIP_PLANE_ANGLE_DEGREES
         ),
         "slide_task_completed": bool(
-          reached and dwell >= settings.edge_dwell_s - 1e-9
+          reached
+          and policy_completion_dwell
           and terminal_reason == "edge_reached"
           and self._maximum_slide_fingertip_plane_angle_degrees
           <= _FLAT_DRAW_MAXIMUM_FINGERTIP_PLANE_ANGLE_DEGREES

@@ -16,5 +16,9 @@ if __name__ == "__main__":
     "--output-dir", type=Path, default=Path("datasets/pick_place_example")
   )
   parser.add_argument("--seed", type=int, default=0)
+  parser.add_argument(
+    "--overwrite", action="store_true",
+    help="Replace an existing pick/place example only after validation succeeds",
+  )
   args = parser.parse_args()
-  record_example(args.output_dir, seed=args.seed)
+  record_example(args.output_dir, seed=args.seed, overwrite=args.overwrite)

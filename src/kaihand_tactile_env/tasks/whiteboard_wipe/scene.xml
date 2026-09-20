@@ -16,31 +16,31 @@
       <geom name="board_frame_right" type="box" pos="0 .205 0" size=".19 .005 .012" rgba=".28 .32 .35 1" contype="3075" conaffinity="3075" />
       <geom name="board_frame_top" type="box" pos=".185 0 0" size=".005 .20 .012" rgba=".28 .32 .35 1" contype="3075" conaffinity="3075" />
       <geom name="board_frame_bottom" type="box" pos="-.185 0 0" size=".005 .20 .012" rgba=".28 .32 .35 1" contype="3075" conaffinity="3075" />
-      <geom name="ink_0" type="capsule" pos="-0.078 -0.0875 0.0084" quat="0.707106781 -0.698225967 0.111716155 0" size=".0016 0.0126589889" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_1" type="capsule" pos="-0.0795 -0.0625 0.0084" quat="0.707106781 -0.680918388 -0.190657149 0" size=".0016 0.012980755" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_2" type="capsule" pos="-0.079 -0.0375 0.0084" quat="0.707106781 -0.673465573 0.215508983 0" size=".0016 0.0131244047" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_3" type="capsule" pos="-0.0795 -0.0125 0.0084" quat="0.707106781 -0.665307869 -0.239510833 0" size=".0016 0.0132853303" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_4" type="capsule" pos="-0.0805 0.0125 0.0084" quat="0.707106781 -0.680918388 0.190657149 0" size=".0016 0.012980755" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_5" type="capsule" pos="-0.0795 0.0375 0.0084" quat="0.707106781 -0.693375245 -0.138675049 0" size=".0016 0.0127475488" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_6" type="capsule" pos="-0.079 0.0625 0.0084" quat="0.707106781 -0.687581655 0.165019597 0" size=".0016 0.0128549601" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_7" type="capsule" pos="-0.078 0.0875 0.0084" quat="0.707106781 -0.698225967 -0.111716155 0" size=".0016 0.0126589889" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_8" type="capsule" pos="-0.0015 -0.0888888889 0.0084" quat="0.707106781 -0.700750029 0.0946012539 0" size=".0016 0.0112119039" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_9" type="capsule" pos="0.002 -0.0666666667 0.0084" quat="0.707106781 -0.695922702 0.125266086 0" size=".0016 0.0112896763" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_10" type="capsule" pos="0.0005 -0.0444444444 0.0084" quat="0.707106781 -0.67443749 -0.212447809 0" size=".0016 0.0116493257" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_11" type="capsule" pos="0.001 -0.0222222222 0.0084" quat="0.707106781 -0.665307869 0.239510833 0" size=".0016 0.0118091824" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_12" type="capsule" pos="0.0005 0 0.0084" quat="0.707106781 -0.655396093 -0.265435418 0" size=".0016 0.0119877767" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_13" type="capsule" pos="-0.0005 0.0222222222 0.0084" quat="0.707106781 -0.67443749 0.212447809 0" size=".0016 0.0116493257" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_14" type="capsule" pos="0.0005 0.0444444444 0.0084" quat="0.707106781 -0.689860274 -0.155218562 0" size=".0016 0.0113888889" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_15" type="capsule" pos="0.001 0.0666666667 0.0084" quat="0.707106781 -0.682661451 0.184318592 0" size=".0016 0.0115089874" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_16" type="capsule" pos="0.002 0.0888888889 0.0084" quat="0.707106781 -0.695922702 -0.125266086 0" size=".0016 0.0112896763" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_17" type="capsule" pos="0.082 -0.0875 0.0084" quat="0.707106781 -0.698225967 -0.111716155 0" size=".0016 0.0126589889" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_18" type="capsule" pos="0.08 -0.0625 0.0084" quat="0.707106781 -0.707106781 0 0" size=".0016 0.0125" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_19" type="capsule" pos="0.082 -0.0375 0.0084" quat="0.707106781 -0.698225967 0.111716155 0" size=".0016 0.0126589889" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_20" type="capsule" pos="0.0805 -0.0125 0.0084" quat="0.707106781 -0.680918388 -0.190657149 0" size=".0016 0.012980755" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_21" type="capsule" pos="0.081 0.0125 0.0084" quat="0.707106781 -0.673465573 0.215508983 0" size=".0016 0.0131244047" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_22" type="capsule" pos="0.0805 0.0375 0.0084" quat="0.707106781 -0.665307869 -0.239510833 0" size=".0016 0.0132853303" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_23" type="capsule" pos="0.0795 0.0625 0.0084" quat="0.707106781 -0.680918388 0.190657149 0" size=".0016 0.012980755" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
-      <geom name="ink_24" type="capsule" pos="0.0805 0.0875 0.0084" quat="0.707106781 -0.693375245 -0.138675049 0" size=".0016 0.0127475488" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_0" type="capsule" fromto="-0.070000000 -0.080000000 0.0084 -0.068232233 -0.066666666 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_1" type="capsule" fromto="-0.068232233 -0.066666666 0.0084 -0.067500000 -0.053333334 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_2" type="capsule" fromto="-0.067500000 -0.053333334 0.0084 -0.068232233 -0.040000000 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_3" type="capsule" fromto="-0.068232233 -0.040000000 0.0084 -0.070000000 -0.026666666 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_4" type="capsule" fromto="-0.070000000 -0.026666666 0.0084 -0.071767767 -0.013333334 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_5" type="capsule" fromto="-0.071767767 -0.013333334 0.0084 -0.072500000 0.000000000 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_6" type="capsule" fromto="-0.072500000 0.000000000 0.0084 -0.071767767 0.013333334 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_7" type="capsule" fromto="-0.071767767 0.013333334 0.0084 -0.070000000 0.026666666 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_8" type="capsule" fromto="-0.070000000 0.026666666 0.0084 -0.068232233 0.040000000 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_9" type="capsule" fromto="-0.068232233 0.040000000 0.0084 -0.067500000 0.053333334 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_10" type="capsule" fromto="-0.067500000 0.053333334 0.0084 -0.068232233 0.066666666 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_11" type="capsule" fromto="-0.068232233 0.066666666 0.0084 -0.070000000 0.080000000 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_12" type="capsule" fromto="0.071610544 -0.080000000 0.0084 0.072473470 -0.067692308 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_13" type="capsule" fromto="0.072473470 -0.067692308 0.0084 0.072092294 -0.055384616 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_14" type="capsule" fromto="0.072092294 -0.055384616 0.0084 0.070658739 -0.043076923 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_15" type="capsule" fromto="0.070658739 -0.043076923 0.0084 0.068893852 -0.030769230 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_16" type="capsule" fromto="0.068893852 -0.030769230 0.0084 0.067685334 -0.018461539 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_17" type="capsule" fromto="0.067685334 -0.018461539 0.0084 0.067641043 -0.006153847 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_18" type="capsule" fromto="0.067641043 -0.006153847 0.0084 0.068783257 0.006153847 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_19" type="capsule" fromto="0.068783257 0.006153847 0.0084 0.070537466 0.018461539 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_20" type="capsule" fromto="0.070537466 0.018461539 0.0084 0.072021342 0.030769230 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_21" type="capsule" fromto="0.072021342 0.030769230 0.0084 0.072488525 0.043076923 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_22" type="capsule" fromto="0.072488525 0.043076923 0.0084 0.071704034 0.055384616 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_23" type="capsule" fromto="0.071704034 0.055384616 0.0084 0.070062451 0.067692308 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
+      <geom name="ink_24" type="capsule" fromto="0.070062451 0.067692308 0.0084 0.068389456 0.080000000 0.0084" size=".0016" rgba=".012 .012 .012 1" contype="0" conaffinity="0" group="1" />
     </body>
     <geom name="board_support_-0.295" type="capsule" fromto=".76 -0.295 .69 .74 -0.295 .94" size=".007" rgba=".25 .28 .31 1" contype="3075" conaffinity="3075" />
     <geom name="board_support_0.055" type="capsule" fromto=".76 0.055 .69 .74 0.055 .94" size=".007" rgba=".25 .28 .31 1" contype="3075" conaffinity="3075" />
@@ -71,6 +71,6 @@
   </worldbody>
   <include file="../../shared/mjcf/control.xml" />
   <contact>
-    <pair name="eraser_board_contact" geom1="eraser_pad" geom2="board_surface" condim="6" friction=".65 .65 .003 .0003 .0003" solref=".02 1" solimp="0 .95 .001 .5 2" margin="0" />
+    <pair name="eraser_board_contact" geom1="eraser_pad" geom2="board_surface" condim="6" friction=".65 .65 .003 .0003 .0003" solref=".09 1" solimp="0 .95 .001 .5 2" margin="0" />
   </contact>
 </mujoco>

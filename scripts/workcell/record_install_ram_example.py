@@ -12,6 +12,7 @@ from kaihand_tactile_env.shared.cameras import (
   TRAINING_CAMERA_NAMES,
 )
 from kaihand_tactile_env.tasks.install_ram.example import (
+  record_compact_example,
   record_example,
   record_raw_episode,
 )
@@ -59,6 +60,11 @@ if __name__ == "__main__":
     choices=SHARED_CAMERA_NAMES,
     default=TRAINING_CAMERA_NAMES,
   )
+  parser.add_argument(
+    "--compact",
+    action="store_true",
+    help="Use USB-style raw/review/curves layout; explicit replacement discards old examples after validation",
+  )
   args = parser.parse_args()
   if args.position_seed is not None and args.position_seed < 0:
     parser.error("--position-seed must be nonnegative")
@@ -67,7 +73,7 @@ if __name__ == "__main__":
   if tuple(args.cameras) != TRAINING_CAMERA_NAMES:
     parser.error("--cameras must be exactly: head left_wrist right_wrist")
   if args.raw_only:
-    if args.replace_existing or args.diagnostics_dir is not None:
+    if args.replace_existing or args.diagnostics_dir is not None or args.compact:
       parser.error("--raw-only cannot use --replace-existing or --diagnostics-dir")
     record_raw_episode(
       args.output,
@@ -77,7 +83,8 @@ if __name__ == "__main__":
       cameras=tuple(args.cameras),
     )
   else:
-    record_example(
+    recorder = record_compact_example if args.compact else record_example
+    recorder(
       args.output,
       position_seed=args.position_seed,
       replace_existing=args.replace_existing,

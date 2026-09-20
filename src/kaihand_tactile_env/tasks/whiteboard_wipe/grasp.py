@@ -72,3 +72,18 @@ ARM_SEED = np.array(
     -0.5832794981144664,
   ]
 )
+
+# Same calibrated pre-grasp pose as the original branch, but reached with the
+# fifth arm joint near -177 degrees. From shared home (-150 degrees), this
+# makes the forearm turn about 27 degrees counterclockwise instead of taking
+# the equivalent +296-degree clockwise route to +146 degrees.
+APPROACH_ARM_SEED = np.deg2rad(
+  [-152.5, 2.6, 128.0, -105.3, -177.1, -14.4, -7.1]
+)
+
+# Negative-joint-five IK branch for the nominal, safely lifted transfer to the
+# first board line. The executor resolves the exact target at runtime so ink
+# translation and the measured in-hand tool transform remain authoritative.
+BOARD_APPROACH_ARM_SEED = np.deg2rad(
+  [-13.1, -35.2, -34.3, -98.9, -158.9, -35.3, 68.1]
+)

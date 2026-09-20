@@ -90,7 +90,7 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
       self.pickup_center + [0, 0, 0.12] + self.wrist_offset,
       self.pickup_rotation,
       # This is an IK branch seed, not the reset posture.
-      seed=np.deg2rad([-55, -65, 70, -60, 120, 0, 0]),
+      seed=grasp.APPROACH_ARM_SEED,
       max_iterations=500,
       position_tolerance=0.0003,
       orientation_tolerance=0.004,

@@ -14,6 +14,7 @@ from collections import Counter
 from pathlib import Path
 
 from kaihand_tactile_env.shared.config import default_model_path, model_fingerprint
+from kaihand_tactile_env.tasks.poker_draw.mid_full import CONTACT_MODEL_VERSION
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts/workcell/run_poker_pi05_policy.py"
@@ -166,7 +167,7 @@ def main() -> None:
       "online_action_noise": False,
     },
     "controller": "direct-30hz-pi05-absolute-joint-v1",
-    "contact_model": "poker-compliant-contact-v2 (same fixed contact preset as source data)",
+    "contact_model": f"{CONTACT_MODEL_VERSION} (same fixed contact preset as source data)",
     "success_rule": (
       "contact; supported flat card >=40% overhang and >=50mm robotward travel; "
       "opposed lift >=20mm; face-to-head and face-to-robot cosines >=0.8; "

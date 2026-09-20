@@ -79,22 +79,19 @@ _FLAT_PINCH_FINGER_DEGREES = np.array(
 )
 _FLAT_PINCH_THUMB_DEGREES = {
   "thumb_joint1": 14.1985,
-  "thumb_joint2": 87.9550,
+  "thumb_joint2": 87.955,
   "thumb_joint3": 38.6597,
   "thumb_joint5": 16.6825,
 }
+# Short-path edge pickup: the thumb scoops underneath the exposed card into
+# the existing opposed pad jaw. The card may pitch naturally while closing;
+# no object constraint or relaxed terminal contact/force gate is used.
+# The old -55 degree world-horizontal jaw required the opposite joint-5
+# branch, producing a ~300 degree forearm winding at the table edge.
+_FLAT_PINCH_WRIST_PITCH_DEGREES = -35.0
+_FLAT_PINCH_WRIST_YAW_DEGREES = 10.0
+_FLAT_PINCH_CONTACT_OFFSET = np.array([-0.14679888, -0.02583891, 0.03341511])
 _FACE_NORMAL_COSINE = 0.85
-_VIEW_FINAL_ARM_DEGREES = np.array(
-  [
-    -50.490591,
-    -84.224616,
-    99.531361,
-    -90.749520,
-    161.536354,
-    -57.711790,
-    -54.199986,
-  ]
-)
 _INSPECTION_TARGET_CARD_POSITION = np.array([0.550, -0.100, 1.050])
 _MINIMUM_PINCH_NORMAL_FORCE = 0.05
 _MINIMUM_FINGER_PAD_ALIGNMENT = 0.94

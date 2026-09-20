@@ -2,20 +2,33 @@
   <include file="../../shared/mjcf/robot.xml"/>
 
   <asset>
-    <material name="poker_felt" rgba="0.05 0.33 0.19 1"/>
-    <material name="card_back" rgba="0.62 0.08 0.10 1"/>
+    <!-- Keep the task material name stable.  The task-local stone texture is
+         a lighter counterpart to the shared main worktop; this changes only
+         appearance, never contact or friction parameters. -->
+    <texture name="poker_table_light_stone" type="2d"
+             file="light_grey_marble_v1.png"/>
+    <material name="poker_felt" texture="poker_table_light_stone" texrepeat="1 1"
+              texuniform="true" specular="0.05" shininess="0.12"
+              emission="0.02"/>
+    <texture name="card_back_red_diamond" type="2d"
+             file="card_back_red_diamond_v1.png"/>
+    <material name="card_back" texture="card_back_red_diamond"
+              texrepeat="1 1" texuniform="false"
+              specular="0.02" shininess="0.05"/>
     <material name="card_face" rgba="0.96 0.94 0.88 1"/>
   </asset>
 
   <worldbody>
-    <!-- A 16 cm raised felt table and one face-down poker card. -->
-    <body name="poker_table" pos="0.58 -0.18 0.76">
-      <geom name="poker_table_base" type="box" size="0.115 0.070 0.080"
-            contype="11264" conaffinity="11264" material="table"
+    <!-- A 16 cm raised, 340 x 240 mm marble-topped table.  Its near edge
+         remains at x=.465 so the learned draw distance and success semantics
+         stay unchanged; the extra area extends away from the robot and along Y. -->
+    <body name="poker_table" pos="0.635 -0.18 0.76">
+      <geom name="poker_table_base" type="box" size="0.170 0.120 0.080"
+            contype="11264" conaffinity="11264" material="poker_felt"
             friction="0.10 0.005 0.0005" priority="2"
             solref="0.002 1" solimp="0.98 0.995 0.0005"/>
       <geom name="poker_table_top" type="box" pos="0 0 0.0805"
-            size="0.115 0.070 0.0005" contype="11264" conaffinity="11264"
+            size="0.170 0.120 0.0005" contype="11264" conaffinity="11264"
             material="poker_felt" friction="0.10 0.005 0.0005" priority="2"
             solref="0.002 1" solimp="0.98 0.995 0.0005"/>
     </body>

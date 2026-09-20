@@ -1,6 +1,6 @@
 # 内存条安装任务
 
-`install-ram` 是独立的 DDR4 台式机 DIMM 安装场景。模块长约 133.35 mm、高 31.25 mm，PCB 厚 1.40 mm，包含两面芯片、金手指和偏心定位缺口。卡槽具有真正开放的插入口、对应定位键、两侧壁与底部止挡；主板安装在共享桌面上。尺寸来源及模型近似见 [尺寸说明](install_ram_dimensions.md)。
+`install-ram` 是独立的 DDR4 台式机 DIMM 安装场景。模块长约 133.35 mm、高 31.25 mm，PCB 厚 1.40 mm，采用黑色 PCB 和散热马甲外观，包含两面芯片、金手指和偏心定位缺口。卡槽具有真正开放的插入口、对应定位键、两侧壁与底部止挡；主板安装在共享桌面上。尺寸来源及模型近似见 [尺寸说明](install_ram_dimensions.md)。
 
 场景通过 MJCF include 直接引用 `shared/mjcf/robot.xml` 和 `shared/mjcf/control.xml`。机械臂、左右手、相机安装参数和触觉垫沿用 shared；任务只新增内存条、卡槽、主板、上料支架和检查用近景相机 `ram_closeup`。采集使用共享的 `head`、`left_wrist` 和 `right_wrist`，近景相机不替代任何共享相机。
 
@@ -15,11 +15,11 @@ pixi run run-install-ram -- --headless
 # 只检查场景启动
 pixi run check-install-ram
 
-# 生成一条示例，默认保存到 datasets/install_ram_example
-pixi run record-install-ram-example
+# 按 USB 的 raw/review/curves 布局生成示例
+pixi run record-install-ram-example -- --compact
 
-# 成功后更新已有RAM示例；旧例原始记录和曲线保存在新例provenance内
-pixi run record-install-ram-example -- --replace-existing
+# 用户明确允许覆盖时：验证成功后替换旧例，不保留历史数据
+pixi run record-install-ram-example -- --compact --replace-existing
 
 # 在新目录复现，已有示例不会被覆盖
 pixi run record-install-ram-example -- --output-dir datasets/install_ram_example_new
@@ -27,7 +27,7 @@ pixi run record-install-ram-example -- --output-dir datasets/install_ram_example
 
 若环境已安装，也可以直接使用 `.pixi/envs/default/bin/python scripts/workcell/view_install_ram.py --headless --run-task`。无窗口录制需要设置 `MUJOCO_GL=egl`；默认 Pixi 录制命令已设置该变量、单线程物理计算和四线程软件渲染参数。
 
-模块沿世界 X 轴伸展、Y 轴为厚度方向、Z 轴向上，插入沿 −Z。初始状态使用竖直上料支架，双手从 home 位置张开平放开始。`prepare()` 只计算抓取目标，不改机器人或内存条的 qpos；右手先用 4 秒移到支架上方并预成形，再用 3 秒下降、静置 0.4 秒后闭指。抓点位于内存条长边中心附近，以减少重力引起的滚转；运输和插入时保持手背朝上、掌面朝下的正手姿势。控制器使用仿真真值位姿完成已知初态的演示，动作通过机器人执行器和原生接触传递到自由运动的内存条。
+模块沿世界 X 轴伸展、Y 轴为厚度方向、Z 轴向上，插入沿 −Z。初始状态使用竖直上料支架，双手从 shared home 的统一屈肘姿势开始。`prepare()` 只计算抓取目标，不改机器人或内存条的 qpos；右手先用 4 秒移到支架上方并预成形，再用 3 秒下降、静置 0.4 秒后闭指。抓点位于内存条长边中心附近，以减少重力引起的滚转；运输和插入时保持手背朝上、掌面朝下的正手姿势。控制器使用仿真真值位姿完成已知初态的演示，动作通过机器人执行器和原生接触传递到自由运动的内存条。
 
 卡槽内有两组被动弹片等效机构，滑动关节、弹簧和阻尼产生侧向预紧，实际库仑接触摩擦抵抗向下插入。在 3.5–5.5 mm 深度范围可观察滑动阻力；约 6 mm 到底后，控制器进入独立的 `bottom_press` 阶段，根据实际底挡力缓慢加压并保持。两阶段的力均来自接触求解，不按阶段直接写入物体外力或触觉读数。力的绝对值是仿真参数，不是真实连接器插入力标定。
 
@@ -55,3 +55,23 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
 ```
 
 腕部画面中的移动黑色斑点经同状态开/关阴影对照确认来自投射阴影渲染。任务在加载共享模型后将 `light_castshadow` 关闭，对录制、辅助近景和交互查看一致生效；保留共享相机位姿、内参、光照和真实物体遮挡，不修改碰撞或触觉。五指力图按实际阶段时间用橙色标出下插、粉色标出到底承压。
+
+## Shared 配置继承
+
+当前示例直接保存到 `datasets/install_ram_example`，格式见下文；历史版本目录已按用户要求清理。场景直接包含最新 shared MJCF，双臂从 `shared/posture.py` 的统一屈肘姿势开始，通过执行器接近和抓取，不在 reset/prepare 中重设关节。共享 home 的掌面方向可与抓取方向不同，因此录制验收仅在持物搬运、对准、下插和到底承压阶段要求掌面朝下，与 500 Hz 物理检查一致。插入阻力、完成判据和缩短后的下插控制保持不变。
+
+产物包含 Raw HDF5（head/left_wrist/right_wrist 30 Hz RGB、原有动作/触觉/任务空间字段），顶部 head 与右腕及触觉合成视频、从同一 HDF5 状态重绘的机器人全局视频，以及五指法向/切向力 PNG/PDF/CSV。全局相机仅用于展示，不加入训练观测，不改变 Raw schema。新姿势和外观改变轨迹及图像分布；接口兼容不代表历史模型性能不变。
+
+## 黑色散热马甲与短转接近
+
+`grasp.py` 使用另一侧的正手夹持标定，接近由位置与 SO(3) 短旋转插值驱动，避免从 shared home 插值到另一 IK 分支时的长转。中指、无名指和小指折叠避让长 PCB，拇指/食指到位后夹紧。共享初始姿势不变；新轨迹和图像分布与历史数据不同，不保证旧模型的成功率不变。
+
+黑色 PCB 和阳极氧化散热马甲带倒角、顶边棱线、金属刻线及文字；主板增加 ATX 插座、供电器件、芯片引脚、贴片元件和安装螺钉。目标插槽的槽口四周增加银色镶边，便于在黑色主板上辨认插入口，镶边不侵入插入通道。新增外观几何不参与接触、质量为零，原有单槽、金手指碰撞形状、物体质量和插入阻力参数保留。装饰壳体是现有薄板/芯片包络的视觉近似，不额外模拟散热马甲的弹性。
+
+按 USB 示例的简洁布局生成，用户明确允许替换时运行：
+
+```bash
+pixi run record-install-ram-example -- --compact --replace-existing --output-dir datasets/install_ram_example
+```
+
+新一轮完整验证后才覆盖目标，交付仅含 `raw`（HDF5、校验和结果 JSON）、`review`（相机与触觉合成、机器人全局两个 MP4）、`curves`（五指法向/切向力 PNG）。不保存旧示例或版本子目录；验证细节嵌入新的结果 JSON。

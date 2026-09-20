@@ -48,6 +48,7 @@ PickPlace、Card、USB 的旧导出脚本仍可用于其历史固定布局。Bul
 | --- | --- | --- |
 | PickPlace | `scripts/workcell/export_pickplace_tactile_review.py` | 相机、Genesis probe 图和曲线 |
 | Card | `scripts/workcell/export_card_tactile_review.py` | `head`、`right_wrist`、十指力图和曲线；源 episode 须成功 |
+| Card 四类示例 | `pixi run export-poker-example -- ...` | `head`＋右腕＋右手触觉视频、独立全局回放、五指原始力曲线；见[说明](poker_example.md) |
 | USB | `scripts/workcell/export_usb_review.py` | `head`、`right_wrist`、十指力图和曲线 |
 | Bulb | `scripts/workcell/refresh_light_bulb_example.py` | 三路机器人相机、灯座近景、十指力图和五指力/拧紧曲线 |
 | RAM | `scripts/workcell/record_install_ram_example.py` | 三路机器人相机、RAM 近景、十指力图和分阶段插入力曲线 |

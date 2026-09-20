@@ -35,8 +35,11 @@ from .config import (
   _FLAT_DRAW_THUMB_DEGREES,
   _FLAT_DRAW_WRIST_PITCH_DEGREES,
   _FLAT_DRAW_WRIST_YAW_DEGREES,
+  _FLAT_PINCH_CONTACT_OFFSET,
   _FLAT_PINCH_FINGER_DEGREES,
   _FLAT_PINCH_THUMB_DEGREES,
+  _FLAT_PINCH_WRIST_PITCH_DEGREES,
+  _FLAT_PINCH_WRIST_YAW_DEGREES,
   _INSPECTION_TARGET_CARD_POSITION,
   _MAXIMUM_FINGERTIP_PLANE_ANGLE_DEGREES,
   _MINIMUM_FINGER_PAD_ALIGNMENT,
@@ -65,7 +68,6 @@ from .config import (
   _PRESS_FORCE_STABLE_DURATION,
   _PRESS_FORCE_TARGET_TOLERANCE_N,
   _SIDE,
-  _VIEW_FINAL_ARM_DEGREES,
   DEFAULT_PRESS_FORCE_PER_FINGER_N,
 )
 from .press_control import (
@@ -75,6 +77,12 @@ from .press_control import (
 )
 
 PokerStepObserver = Callable[[ArmHandSimulation, str], None]
+
+# This range is used only while selecting the task-specific approach IK
+# branch.  The live MuJoCo joint range is restored before execution.  It keeps
+# right joint 5 on the negative branch without placing the commanded approach
+# on the real -178 degree mechanical stop.
+_APPROACH_JOINT5_IK_RANGE_DEGREES = (-165.0, -100.0)
 
 
 def _tilt_in_world_xy(
@@ -258,7 +266,7 @@ class PokerDrawPlanner:
     palm_down_rotation = np.array([[0.0, 0.0, -1.0], [1.0, 0.0, 0.0], [0.0, -1.0, 0.0]])
     # The raised mini-table provides clearance for the PINCH pose below;
     # its distal axes are within 20 degrees of the card (unlike the draw).
-    pitch = np.deg2rad(-55.0)
+    pitch = np.deg2rad(_FLAT_PINCH_WRIST_PITCH_DEGREES)
     world_y_pitch = np.array(
       [
         [np.cos(pitch), 0.0, np.sin(pitch)],
@@ -266,7 +274,7 @@ class PokerDrawPlanner:
         [-np.sin(pitch), 0.0, np.cos(pitch)],
       ]
     )
-    yaw = 0.0
+    yaw = np.deg2rad(_FLAT_PINCH_WRIST_YAW_DEGREES)
     world_z_yaw = np.array(
       [
         [np.cos(yaw), -np.sin(yaw), 0.0],
@@ -333,36 +341,58 @@ class PokerDrawPlanner:
             duration,
           )
           for phase, height, duration in (
-            ("ready_card", 0.232, 0.45),
-            ("hover_card", 0.052, 0.55),
-            ("precontact_card", 0.022, 0.25),
+            ("ready_card", 0.070, 0.40),
+            ("hover_card", 0.025, 0.40),
+            ("precontact_card", 0.010, 0.25),
           )
         ),
       )
-    # Retain the calibrated IK branch; execution still travels from shared home.
-    seed = np.deg2rad([-55, -65, 70, -60, 120, 0, 0])
+      # One clearance above the card, followed only by descent. The old
+      # clear/ready pair first lowered the hand then lifted it by 14 cm.
+      targets = (
+        (
+          "clear_card",
+          card_position + _FLAT_DRAW_PRECONTACT_OFFSET + np.array([0.011, 0.0, 0.095]),
+          2.60,
+        ),
+        *targets[1:],
+      )
+    # Select the negative joint-5 IK branch.  The previous +120 degree seed
+    # made joint 5 travel from the shared -150 degree home through +123
+    # degrees: a visible 273 degree clockwise sweep.  This branch reaches the
+    # same Cartesian targets by moving joint 5 farther negative instead, so
+    # the opening gesture is a bounded counterclockwise segment.  It remains
+    # an IK reference only; reset still starts at shared ARM_HOME.
+    seed = np.deg2rad([-55, -65, 70, -60, -150, 0, 0])
     waypoints: list[JointWaypoint] = []
-    for phase, position, duration in targets:
-      result = self.sim.solve_ik(
-        side,
-        position,
-        ee_rotation,
-        seed=seed,
-        max_iterations=700,
-        position_tolerance=0.0005,
-        orientation_tolerance=0.02,
-      )
-      _require_ik(result, phase)
-      waypoints.append(
-        JointWaypoint(
-          phase=phase,
-          joint_positions=result.joint_positions,
-          duration=duration,
-          end_effector_position=position,
-          end_effector_quaternion_wxyz=_wxyz_from_matrix(ee_rotation),
+    joint5_id = self.sim.model.joint(f"{side}_arm_joint5").id
+    original_joint5_range = self.sim.model.jnt_range[joint5_id].copy()
+    self.sim.model.jnt_range[joint5_id] = np.deg2rad(_APPROACH_JOINT5_IK_RANGE_DEGREES)
+    try:
+      for phase, position, duration in targets:
+        result = self.sim.solve_ik(
+          side,
+          position,
+          ee_rotation,
+          seed=seed,
+          max_iterations=1500,
+          position_tolerance=0.0005,
+          orientation_tolerance=0.02,
+          posture_weight=0.001,
         )
-      )
-      seed = result.joint_positions
+        _require_ik(result, phase)
+        waypoints.append(
+          JointWaypoint(
+            phase=phase,
+            joint_positions=result.joint_positions,
+            duration=duration,
+            end_effector_position=position,
+            end_effector_quaternion_wxyz=_wxyz_from_matrix(ee_rotation),
+          )
+        )
+        seed = result.joint_positions
+    finally:
+      self.sim.model.jnt_range[joint5_id] = original_joint5_range
     return PokerDrawPlan(
       side=side,
       object_name="card",
@@ -376,6 +406,19 @@ class PokerDrawPlanner:
 
 class PokerDrawExecutor:
   """Slide, physically pinch, lift, and turn a card toward the robot."""
+
+  # The unmodified scene contacts are stiffer than the compliant collection
+  # preset. A 3 N opposed jaw maintains pad contact without geometry locking.
+  _pinch_force_targets_n = np.array([0.75, 0.75, 0.75, 0.75, 3.0])
+  # The default viewer has much stiffer contacts than the compliant capture
+  # preset. Lower integral gain prevents force chatter in a stationary pinch.
+  _pinch_force_integral_gain = 0.035
+  _pinch_force_maximum_joint_rate_degrees_s = 0.75
+  _pinch_force_maximum_offset_degrees = 0.50
+  _pinch_upper_preload_degrees = 0.15
+  _prelift_settle_seconds = 0.35
+  _transfer_lift_duration_seconds = 0.52
+  _main_lift_duration_seconds = 1.00
 
   def __init__(
     self,
@@ -426,14 +469,12 @@ class PokerDrawExecutor:
     self._inspection_hold_four_finger_frames = 0
     self._minimum_inspection_card_height = float("inf")
     self._pinch_flexion_targets: np.ndarray | None = None
-    self._pinch_flexion_lower: np.ndarray | None = None
-    self._pinch_flexion_upper: np.ndarray | None = None
     self._pinch_thumb_joint5_target = np.deg2rad(
       _FLAT_PINCH_THUMB_DEGREES["thumb_joint5"]
     )
-    self._pinch_reflex_step = 0
-    self._pinch_missing_updates = np.zeros(len(_FINGERS), dtype=int)
-    self._pinch_thumb_missing_updates = 0
+    self._pinch_force_filtered: np.ndarray | None = None
+    self._pinch_force_reference: np.ndarray | None = None
+    self._pinch_force_steps = 0
     self._press_controller = FourFingerForceController(
       len(_FINGERS),
       target_force_n=target_force,
@@ -503,14 +544,12 @@ class PokerDrawExecutor:
     self._inspection_hold_four_finger_frames = 0
     self._minimum_inspection_card_height = float("inf")
     self._pinch_flexion_targets = None
-    self._pinch_flexion_lower = None
-    self._pinch_flexion_upper = None
     self._pinch_thumb_joint5_target = np.deg2rad(
       _FLAT_PINCH_THUMB_DEGREES["thumb_joint5"]
     )
-    self._pinch_reflex_step = 0
-    self._pinch_missing_updates[:] = 0
-    self._pinch_thumb_missing_updates = 0
+    self._pinch_force_filtered = None
+    self._pinch_force_reference = None
+    self._pinch_force_steps = 0
     self._press_controller_active = False
     self._record_slide_force_metrics = False
     self._press_controller.reset()
@@ -559,14 +598,7 @@ class PokerDrawExecutor:
       duration=0.10,
       phase="thumb_face_press",
     )
-    safe_outer_position = edge_pose[:3] + np.array([-0.146465, 0.000045, 0.10530])
-    seed = self._move_pose_linear(
-      plan,
-      safe_outer_position,
-      seed,
-      duration=0.22,
-      phase="thumb_face_press",
-    )
+    safe_outer_position = edge_pose[:3] + _FLAT_PINCH_CONTACT_OFFSET + [0, 0, 0.050]
     # Form the jaw only after the open hand reaches the collision-free outer
     # pose.  Starting this curl during the short release can let the long
     # fingers sweep the half-supported card at the table edge.
@@ -574,11 +606,11 @@ class PokerDrawExecutor:
     # Its low-torque velocity servos keep converging while the arm pitches;
     # the gate below prevents descent until every joint is within half a
     # degree, so the transient can never become the card-contact posture.
-    seed = self._move_pose(
+    seed = self._move_pose_linear(
       plan,
       safe_outer_position,
       seed,
-      duration=0.30,
+      duration=0.65,
       phase="thumb_face_press",
       end_effector_rotation=plan.pinch_end_effector_rotation,
     )
@@ -598,9 +630,10 @@ class PokerDrawExecutor:
       plan.table_edge_x,
     )
     seed = self.sim.hold_current_arm_position(plan.side)
-    # With the curled proximal joints, the flat pads sit about 34 mm above the
-    # EE.  Hover 20 mm above their calibrated contact plane.
-    flat_hover_position = edge_pose[:3] + np.array([-0.146465, 0.000045, -0.01370])
+    # The open jaw approaches the exposed edge from above. Its thumb then
+    # scoops the printed face upward into the four pads; do not insist on a
+    # world-horizontal pinch or push all four pads down before thumb support.
+    flat_hover_position = edge_pose[:3] + _FLAT_PINCH_CONTACT_OFFSET + [0, 0, 0.020]
     seed = self._move_pose_linear(
       plan,
       flat_hover_position,
@@ -616,7 +649,7 @@ class PokerDrawExecutor:
       plan.table_edge_x,
     )
     seed = self.sim.hold_current_arm_position(plan.side)
-    near_contact_position = edge_pose[:3] + np.array([-0.146465, 0.000045, -0.03220])
+    near_contact_position = edge_pose[:3] + _FLAT_PINCH_CONTACT_OFFSET + [0, 0, 0.0012]
     seed = self._move_pose_linear(
       plan,
       near_contact_position,
@@ -632,41 +665,40 @@ class PokerDrawExecutor:
       plan.table_edge_x,
     )
     seed = self.sim.hold_current_arm_position(plan.side)
-    seed = self._lower_flat_fingers_to_card(plan, seed)
     seed = self._approach_flat_pinch(plan, seed)
-    seed = self.sim.hold_current_arm_position(plan.side)
+    # Establish force-supported opposition before accelerating the card.
+    # Both the legacy and middle-pressure executors use the same bounded
+    # tactile jaw loop, instead of a legacy binary-contact flexion reflex.
+    for _ in range(
+      max(1, round(self._prelift_settle_seconds / self.sim.timestep))
+    ):
+      self._step("thumb_face_press", plan.table_edge_x)
+      self._maintain_dynamic_pinch(*self._current_card_face_contact_state())
+    seed = self.sim.arm_goal[plan.side].copy()
     pinch_position, _ = self.sim.current_pose_matrix(plan.side)
     phases.append("thumb_face_press")
 
     # Unload the tabletop through a short guarded rise before the faster main
     # lift.  Progress pauses if the physical two-sided pinch opens, allowing
     # the compliant thumb/card system to catch up without curling the fingers.
-    transfer_rotation = _tilt_in_world_xy(
-      plan.pinch_end_effector_rotation,
-      3.0,
-      4.0,
-    )
+    transfer_rotation = plan.pinch_end_effector_rotation
     transfer_position = pinch_position + np.array([0.0, 0.0, 0.004])
     seed = self._move_pose_with_guarded_pinch(
       plan,
       transfer_position,
       seed,
-      duration=0.26,
+      duration=self._transfer_lift_duration_seconds,
       phase="lift_card",
       end_effector_rotation=transfer_rotation,
     )
     self._advance_fixed(0.10, "lift_card", plan.table_edge_x)
-    lift_rotation = _tilt_in_world_xy(
-      plan.pinch_end_effector_rotation,
-      8.0,
-      8.0,
-    )
+    lift_rotation = plan.pinch_end_effector_rotation
     lift_position = pinch_position + np.array([0.0, 0.0, 0.025])
     seed = self._move_pose_with_guarded_pinch(
       plan,
       lift_position,
       seed,
-      duration=0.50,
+      duration=self._main_lift_duration_seconds,
       phase="lift_card",
       end_effector_rotation=lift_rotation,
     )
@@ -677,30 +709,66 @@ class PokerDrawExecutor:
     # gesture.  Both halves move all seven joints, so the arm supports the
     # inward wrist turn instead of freezing rigidly while joint7 rotates.
     maximum_preinspection_card_tilt_degrees = self._maximum_card_tilt_degrees
-    seed = self.sim.hold_current_arm_position(plan.side)
+    seed = self.sim.arm_goal[plan.side].copy()
     preinspection_pose = self.sim.object_pose("card")
     preinspection_rotation = self._card_rotation()
     wrist_turn_start = self._arm_joint_degrees(7)
-    view_raise_position, view_raise_rotation = self.sim.current_pose_matrix(plan.side)
-    view_raise_position[2] += 0.20
+    tool_position, tool_rotation = self.sim.current_pose_matrix(plan.side)
+    local_position = tool_rotation.T @ (preinspection_pose[:3] - tool_position)
+    local_rotation = tool_rotation.T @ preinspection_rotation
+    # Begin the inward turn while the elbow raises the card. A vertical-only
+    # raise followed by a diagonal roll drives wrist joint6 into its limit.
+    view_raise_rotation = _tilt_in_world_xy(np.eye(3), 0.0, 40.0) @ local_rotation.T
+    view_raise_position = (
+      np.array([0.490, -0.150, 1.000]) - view_raise_rotation @ local_position
+    )
     seed = self._move_pose_with_guarded_pinch(
       plan,
       view_raise_position,
       seed,
-      duration=0.65,
+      duration=1.60,
       phase="raise_card_to_view",
       end_effector_rotation=view_raise_rotation,
     )
-    seed = self.sim.hold_current_arm_position(plan.side)
-    seed = self._move_arm_joints_linear(
+    seed = self.sim.arm_goal[plan.side].copy()
+    tool_position, tool_rotation = self.sim.current_pose_matrix(plan.side)
+    card_position = self.sim.object_pose("card")[:3]
+    local_position = tool_rotation.T @ (card_position - tool_position)
+    local_rotation = tool_rotation.T @ self._card_rotation()
+    # Retarget from the measured physical grasp, not the old positive-wrist
+    # joint calibration. Only arm commands change; the card stays free.
+    # Local Y is the 88 mm LONG axis, X the 63 mm short edge. Put Y upright
+    # while turning the printed (-Z) face toward the robot. Use the +90 degree
+    # portrait branch: the opposite branch lifts the elbow above the head.
+    # A small oblique viewing yaw keeps the shoulder low while continuing
+    # the inward wrist turn. The short edge remains horizontal in world space.
+    portrait_rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    yaw = np.deg2rad(15.0)
+    head_yaw = np.array(
+      [
+        [np.cos(yaw), -np.sin(yaw), 0.0],
+        [np.sin(yaw), np.cos(yaw), 0.0],
+        [0.0, 0.0, 1.0],
+      ]
+    )
+    desired_card_rotation = (
+      head_yaw @ _tilt_in_world_xy(np.eye(3), 0.0, 115.0) @ portrait_rotation
+    )
+    desired_tool_rotation = desired_card_rotation @ local_rotation.T
+    seed = self._move_pose_with_guarded_pinch(
       plan,
-      np.deg2rad(_VIEW_FINAL_ARM_DEGREES),
+      _INSPECTION_TARGET_CARD_POSITION - desired_tool_rotation @ local_position,
       seed,
-      duration=0.85,
+      duration=2.4,
       phase="turn_card_inward",
+      end_effector_rotation=desired_tool_rotation,
     )
     del seed
     self._advance_fixed(0.15, "turn_card_inward", plan.table_edge_x)
+    if not self._advance_until_sustained_pinch(
+      0.80, 0.10, "turn_card_inward", plan.table_edge_x
+    ):
+      raise RuntimeError("four-finger opposition did not settle at the viewing pose")
     self._advance_fixed(0.25, "inspect_card", plan.table_edge_x)
     wrist_turn_end = self._arm_joint_degrees(7)
     phases.extend(("raise_card_to_view", "turn_card_inward", "inspect_card"))
@@ -907,24 +975,8 @@ class PokerDrawExecutor:
     phases: list[str],
   ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Approach, establish measured pressure, and slide to the near edge."""
-    self._set_flat_draw_pose()
-    seed = self.sim.arm_goal[plan.side]
-    for waypoint in plan.waypoints:
-      if waypoint.phase == "clear_card":
-        self._move_arm_joints_linear(
-          plan,
-          waypoint.joint_positions,
-          seed,
-          duration=waypoint.duration,
-          phase=waypoint.phase,
-        )
-      else:
-        self.sim.set_arm_joint_goal(plan.side, waypoint.joint_positions)
-        self._advance_fixed(waypoint.duration, waypoint.phase, plan.table_edge_x)
-      if self.sim.arm_goal_error(plan.side) > 0.08:
-        raise RuntimeError(f"{waypoint.phase} arm error remained above 0.08 rad")
-      phases.append(waypoint.phase)
-      seed = waypoint.joint_positions
+    seed = self._execute_approach(plan)
+    phases.extend(waypoint.phase for waypoint in plan.waypoints)
 
     # Curled joints and the compensating wrist pitch need their own pad-height
     # precontact waypoint. The legacy preload approach remains explicit.
@@ -1193,7 +1245,13 @@ class PokerDrawExecutor:
       if end_effector_rotation is None
       else end_effector_rotation
     )
-    start_position, _ = self.sim.current_pose_matrix(plan.side)
+    start_position, start_rotation = self.sim.current_pose_matrix(plan.side)
+    rotation_vector = _rotation_vector_world(rotation, start_rotation)
+    angle = float(np.linalg.norm(rotation_vector))
+    axis = rotation_vector / max(angle, 1e-12)
+    skew = np.array(
+      [[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]]
+    )
     segment_count = max(1, int(round(duration / 0.02)))
     segment_duration = duration / segment_count
     for segment in range(1, segment_count + 1):
@@ -1203,10 +1261,15 @@ class PokerDrawExecutor:
       # before the opposed thumb had accelerated it with the hand.
       alpha = 10.0 * unit**3 - 15.0 * unit**4 + 6.0 * unit**5
       target_position = (1.0 - alpha) * start_position + alpha * position
+      target_rotation = (
+        np.eye(3)
+        + np.sin(alpha * angle) * skew
+        + (1.0 - np.cos(alpha * angle)) * skew @ skew
+      ) @ start_rotation
       result = self.sim.solve_ik(
         plan.side,
         target_position,
-        rotation,
+        target_rotation,
         seed=seed,
         max_iterations=1000,
         position_tolerance=position_tolerance,
@@ -1215,9 +1278,23 @@ class PokerDrawExecutor:
       )
       _require_ik(result, phase)
       seed = result.joint_positions
-      self.sim.set_arm_joint_goal(plan.side, seed)
-      self._advance_fixed(segment_duration, phase, plan.table_edge_x)
+      self._advance_arm_segment(plan, seed, segment_duration, phase)
     return seed
+
+  def _advance_arm_segment(
+    self, plan: PokerDrawPlan, target: np.ndarray, duration: float, phase: str
+  ) -> None:
+    """Execute each IK segment at physics rate, not as a 50 Hz position step.
+
+    The surrounding Cartesian trajectory already supplies minimum-jerk timing.
+    Linear interpolation here preserves its velocity across segment boundaries;
+    restarting a smoothstep inside every segment would reintroduce force pulses.
+    """
+    start = self.sim.arm_goal[plan.side].copy()
+    steps = max(1, round(duration / self.sim.timestep))
+    for step in range(1, steps + 1):
+      self.sim.set_arm_joint_goal(plan.side, start + (step / steps) * (target - start))
+      self._step(phase, plan.table_edge_x)
 
   def _move_arm_joints_linear(
     self,
@@ -1233,15 +1310,118 @@ class PokerDrawExecutor:
     target = np.asarray(target, dtype=float)
     if start.shape != (7,) or target.shape != (7,):
       raise ValueError("arm joint gestures require seven positions")
-    segment_count = max(1, int(round(duration / 0.02)))
-    segment_duration = duration / segment_count
+    segment_count = max(1, int(round(duration / self.sim.timestep)))
     for segment in range(1, segment_count + 1):
       unit = segment / segment_count
       alpha = 10.0 * unit**3 - 15.0 * unit**4 + 6.0 * unit**5
       command = (1.0 - alpha) * start + alpha * target
       self.sim.set_arm_joint_goal(plan.side, command)
-      self._advance_fixed(segment_duration, phase, plan.table_edge_x)
+      self._step(phase, plan.table_edge_x)
     return target.copy()
+
+  def _execute_approach(self, plan: PokerDrawPlan) -> np.ndarray:
+    """Coordinate all arm/finger targets, including the real recorded start."""
+    names = tuple(self.sim._hand_targets[plan.side])
+    hand_start = np.array(
+      [self.sim.data.qpos[self.sim.model.joint(name).qposadr[0]] for name in names]
+    )
+    self._set_flat_draw_pose()
+    hand_end = np.array([self.sim._hand_targets[plan.side][name] for name in names])
+    self.sim.set_hand_joint_targets(names, hand_start)
+    seed = self.sim.arm_goal[plan.side].copy()
+    for waypoint_index, waypoint in enumerate(plan.waypoints):
+      if waypoint_index == 0:
+        seed = self._execute_right_side_clearance_approach(
+          plan, waypoint, seed, names, hand_start, hand_end
+        )
+        continue
+      start = seed.copy()
+      steps = max(1, round(waypoint.duration / self.sim.timestep))
+      for step in range(1, steps + 1):
+        u = step / steps
+        alpha = u**3 * (10.0 + u * (-15.0 + 6.0 * u))
+        command = start + alpha * (waypoint.joint_positions - start)
+        self.sim.set_arm_joint_goal(plan.side, command)
+        self._step(waypoint.phase, plan.table_edge_x)
+      if self.sim.arm_goal_error(plan.side) > 0.08:
+        raise RuntimeError(f"{waypoint.phase} arm did not settle")
+      seed = waypoint.joint_positions.copy()
+    return seed
+
+  def _execute_right_side_clearance_approach(
+    self,
+    plan: PokerDrawPlan,
+    waypoint: JointWaypoint,
+    seed: np.ndarray,
+    hand_names: tuple[str, ...],
+    hand_start: np.ndarray,
+    hand_end: np.ndarray,
+  ) -> np.ndarray:
+    """Move from shared home to the card without sweeping across the torso."""
+    start_position, start_rotation = self.sim.current_pose_matrix(plan.side)
+    target_position = waypoint.end_effector_position
+    rotation_vector = _rotation_vector_world(plan.end_effector_rotation, start_rotation)
+    rotation_angle = float(np.linalg.norm(rotation_vector))
+    rotation_axis = rotation_vector / max(rotation_angle, 1.0e-12)
+    axis_skew = np.array(
+      [
+        [0.0, -rotation_axis[2], rotation_axis[1]],
+        [rotation_axis[2], 0.0, -rotation_axis[0]],
+        [-rotation_axis[1], rotation_axis[0], 0.0],
+      ]
+    )
+    segment_count = max(1, round(waypoint.duration / 0.020))
+    segment_duration = waypoint.duration / segment_count
+    joint5_id = self.sim.model.joint(f"{plan.side}_arm_joint5").id
+    original_joint5_range = self.sim.model.jnt_range[joint5_id].copy()
+    self.sim.model.jnt_range[joint5_id] = np.deg2rad(_APPROACH_JOINT5_IK_RANGE_DEGREES)
+    try:
+      for segment in range(1, segment_count + 1):
+        unit = segment / segment_count
+        alpha = unit**3 * (10.0 + unit * (-15.0 + 6.0 * unit))
+        # Stay on the robot's right side (negative world Y) while rotating the
+        # palm down. The small lift/outward arc vanishes smoothly at both ends.
+        clearance_arc = np.sin(np.pi * alpha) * np.array([0.0, -0.055, 0.035])
+        position = (
+          (1.0 - alpha) * start_position + alpha * target_position + clearance_arc
+        )
+        angle = alpha * rotation_angle
+        rotation = (
+          np.eye(3)
+          + np.sin(angle) * axis_skew
+          + (1.0 - np.cos(angle)) * axis_skew @ axis_skew
+        ) @ start_rotation
+        result = self.sim.solve_ik(
+          plan.side,
+          position,
+          rotation,
+          seed=seed,
+          max_iterations=1200,
+          position_tolerance=0.0005,
+          orientation_tolerance=0.02,
+          posture_weight=0.001,
+        )
+        _require_ik(result, waypoint.phase)
+        arm_start = self.sim.arm_goal[plan.side].copy()
+        substeps = max(1, round(segment_duration / self.sim.timestep))
+        for substep in range(1, substeps + 1):
+          fraction = substep / substeps
+          self.sim.set_arm_joint_goal(
+            plan.side,
+            arm_start + fraction * (result.joint_positions - arm_start),
+          )
+          progress = ((segment - 1) + fraction) / segment_count
+          hand_alpha = progress**3 * (10.0 + progress * (-15.0 + 6.0 * progress))
+          self.sim.set_hand_joint_targets(
+            hand_names, hand_start + hand_alpha * (hand_end - hand_start)
+          )
+          self._step(waypoint.phase, plan.table_edge_x)
+        seed = result.joint_positions
+    finally:
+      self.sim.model.jnt_range[joint5_id] = original_joint5_range
+    if self.sim.arm_goal_error(plan.side) > 0.08:
+      raise RuntimeError(f"{waypoint.phase} arm did not settle")
+    return seed
 
   def _move_pose_with_guarded_pinch(
     self,
@@ -1285,7 +1465,10 @@ class PokerDrawExecutor:
         and bottom_force >= _MINIMUM_PINCH_NORMAL_FORCE
       )
       if not lift_supported:
-        seed = self.sim.hold_current_arm_position(plan.side)
+        # Freeze the last commanded pose, not the load-deflected measurement.
+        # Rebaselining on every contact dip erased servo preload and generated
+        # abrupt wrist commands, turning a brief contact fluctuation into loss.
+        seed = self.sim.arm_goal[plan.side].copy()
         self._advance_fixed(segment_duration, phase, plan.table_edge_x)
         stalled_time += segment_duration
         if stalled_time > 1.00:
@@ -1316,8 +1499,7 @@ class PokerDrawExecutor:
       )
       _require_ik(result, phase)
       seed = result.joint_positions
-      self.sim.set_arm_joint_goal(plan.side, seed)
-      self._advance_fixed(segment_duration, phase, plan.table_edge_x)
+      self._advance_arm_segment(plan, seed, segment_duration, phase)
     return seed
 
   def _approach_flat_pinch(
@@ -1328,14 +1510,15 @@ class PokerDrawExecutor:
     """Route the thumb around the edge and close its pad onto the card face."""
     required_top = set(_FINGERS)
     finger_names = tuple(f"hand_r_{finger}_joint2" for finger in _FINGERS)
-    # A common 0.15 degree preload preserves all four upper contacts while the
+    # A small common preload preserves all four upper contacts while the
     # thumb routes underneath.  Lift-time corrections remain deliberately
     # small so these distal links stay parallel to the card rather than curl
     # around its back.
     finger_targets = np.asarray(
       [
         float(
-          self.sim.data.qpos[self.sim.model.joint(name).qposadr[0]] + np.deg2rad(0.15)
+          self.sim.data.qpos[self.sim.model.joint(name).qposadr[0]]
+          + np.deg2rad(self._pinch_upper_preload_degrees)
         )
         for name in finger_names
       ]
@@ -1343,14 +1526,12 @@ class PokerDrawExecutor:
     if self.sim.set_hand_joint_targets(finger_names, finger_targets) != len(_FINGERS):
       raise RuntimeError("four-finger pinch preload contains unavailable joints")
     self._pinch_flexion_targets = finger_targets
-    self._pinch_flexion_lower = finger_targets - np.deg2rad(0.12)
-    self._pinch_flexion_upper = finger_targets + np.deg2rad(3.0)
 
     thumb_stages = tuple(
       (f"hand_r_{joint}", target, duration)
       for (joint, target), duration in zip(
         _FLAT_PINCH_THUMB_DEGREES.items(),
-        (0.16, 0.28, 0.20, 0.24),
+        (0.16, 0.28, 0.40, 0.80),
         strict=True,
       )
     )
@@ -1360,14 +1541,16 @@ class PokerDrawExecutor:
       qpos_address = self.sim.model.joint(thumb_joint).qposadr[0]
       start_value = float(self.sim.data.qpos[qpos_address])
       target_value = float(np.deg2rad(target_degrees))
-      segment_count = max(1, int(round(duration / 0.02)))
+      # The last two joints physically scoop/support the free card. Approach
+      # twice as gently, updating the jaw at physics rate rather than steps.
+      segment_count = max(1, int(round(duration / self.sim.timestep)))
       for segment in range(1, segment_count + 1):
         unit = segment / segment_count
         alpha = 10.0 * unit**3 - 15.0 * unit**4 + 6.0 * unit**5
         value = (1.0 - alpha) * start_value + alpha * target_value
         if self.sim.set_hand_joint_targets((thumb_joint,), (value,)) != 1:
           raise RuntimeError("thumb face routing joint is unavailable")
-        for _ in range(max(1, int(round(0.02 / self.sim.timestep)))):
+        for _ in range(max(1, round(duration / segment_count / self.sim.timestep))):
           self._step("thumb_face_press", plan.table_edge_x)
           top, bottom, top_force, bottom_force = self._current_card_face_contact_state()
           opposed = bool(
@@ -1452,77 +1635,6 @@ class PokerDrawExecutor:
     raise RuntimeError(
       "thumb route did not establish four fingertip pads over and thumb below"
     )
-
-  def _lower_flat_fingers_to_card(
-    self,
-    plan: PokerDrawPlan,
-    seed: np.ndarray,
-  ) -> np.ndarray:
-    """Lower the calibrated flat-pad jaw to its shared contact plane."""
-    required_top = set(_FINGERS)
-    plane_angle = self._maximum_fingertip_plane_angle_degrees()
-    if plane_angle > _MAXIMUM_FINGERTIP_PLANE_ANGLE_DEGREES:
-      raise RuntimeError(
-        "fingertips are not parallel enough before card contact: "
-        f"{plane_angle:.1f} degrees"
-      )
-
-    # Continue from the 1.5 mm pre-contact waypoint to the statically
-    # calibrated plane with one minimum-jerk translation.  Stopping on the
-    # first binary contact made the low pinky corner tip the half-supported
-    # card before the other pads arrived.  The terminal pose places all four
-    # pad collision surfaces inside their light 0.35 mm contact margin without
-    # changing any finger joint, so their volar surfaces stay parallel.
-    card_pose = self.sim.object_pose("card")
-    contact_position = card_pose[:3] + np.array([-0.146465, 0.000045, -0.03340])
-    seed = self._move_pose_linear(
-      plan,
-      contact_position,
-      seed,
-      duration=0.24,
-      phase="thumb_face_press",
-      end_effector_rotation=plan.pinch_end_effector_rotation,
-      position_tolerance=0.00005,
-      orientation_tolerance=0.001,
-    )
-    self._advance_until_arm_settled(
-      0.35,
-      "thumb_face_press",
-      plan.side,
-      plan.table_edge_x,
-    )
-    for _ in range(max(1, int(round(0.60 / self.sim.timestep)))):
-      self._step("thumb_face_press", plan.table_edge_x)
-      top, _, _, _ = self._current_card_face_contact_state()
-      if required_top.issubset(top):
-        return self.sim.hold_current_arm_position(plan.side)
-    # A smoothly supported edge hold can leave the free card at a slightly
-    # different height/tilt than the historical impact-driven release.  Seek
-    # the last sub-millimetre with the whole flat jaw, not a fingertip curl.
-    # Preserve the command reference so existing pad preload is not reset.
-    contact_position, contact_rotation = self._arm_goal_pose_matrix(plan.side)
-    seed = self.sim.arm_goal[plan.side]
-    for _ in range(6):
-      contact_position[2] -= 0.0001
-      result = self.sim.solve_ik(
-        plan.side,
-        contact_position,
-        contact_rotation,
-        seed=seed,
-        max_iterations=1000,
-        position_tolerance=0.00001,
-        orientation_tolerance=0.001,
-        posture_weight=0.001,
-      )
-      _require_ik(result, "flat_pinch_contact_seek")
-      seed = result.joint_positions
-      self.sim.set_arm_joint_goal(plan.side, seed)
-      for _ in range(max(1, int(round(0.06 / self.sim.timestep)))):
-        self._step("thumb_face_press", plan.table_edge_x)
-        top, _, _, _ = self._current_card_face_contact_state()
-        if required_top.issubset(top):
-          return self.sim.hold_current_arm_position(plan.side)
-    raise RuntimeError("four flat fingertip pads did not reach the card back")
 
   def _press_until_four_contacts(
     self,
@@ -1687,6 +1799,18 @@ class PokerDrawExecutor:
       raise RuntimeError("four-finger force controller contains unavailable joints")
 
   def _stabilize_four_finger_press(self, plan: PokerDrawPlan) -> None:
+    # The ordinary viewer uses the same pressure gate as before, but does
+    # not need the old six-second low-gain preload. Restore slide tuning even
+    # if contact establishment fails; this only changes the approach phase.
+    controller = self._press_controller
+    original_gain = controller.integral_gain
+    controller.integral_gain *= 2.0
+    try:
+      self._wait_for_press_stability(plan)
+    finally:
+      controller.integral_gain = original_gain
+
+  def _wait_for_press_stability(self, plan: PokerDrawPlan) -> None:
     required_steps = max(
       1,
       int(round(_PRESS_FORCE_STABLE_DURATION / self.sim.timestep)),
@@ -2190,68 +2314,44 @@ class PokerDrawExecutor:
     top_force: float,
     bottom_force: float,
   ) -> None:
-    """Apply a slow, debounced tactile reflex without curling the fingertips."""
-    targets = self._pinch_flexion_targets
-    lower = self._pinch_flexion_lower
-    upper = self._pinch_flexion_upper
-    if targets is None or lower is None or upper is None:
+    """Bounded low-bandwidth jaw force feedback, never modifying sensor data."""
+    del top_contacts, bottom_contacts, top_force, bottom_force
+    if self._pinch_flexion_targets is None:
       return
-
-    # Contact switches at the 2 ms solver rate.  Reacting at that rate made a
-    # momentary gap accumulate roughly 30 degrees/s of flexion.  A human-like
-    # light pinch instead filters those switches and makes one tiny correction
-    # every 20 ms.
-    self._pinch_reflex_step += 1
-    update_period = max(1, int(round(0.020 / self.sim.timestep)))
-    if self._pinch_reflex_step % update_period:
+    _, _, forces = self._current_card_face_contact_details()
+    measured = np.asarray([forces[f] for f in (*_FINGERS, "thumb")])
+    if not np.all(np.isfinite(measured)) or np.any(measured < 0):
+      raise RuntimeError("invalid pinch contact force feedback")
+    if self._pinch_force_filtered is None:
+      self._pinch_force_filtered = measured.copy()
+      self._pinch_force_reference = np.r_[
+        self._pinch_flexion_targets, self._pinch_thumb_joint5_target
+      ]
+    alpha = self.sim.timestep / (0.020 + self.sim.timestep)
+    self._pinch_force_filtered += alpha * (measured - self._pinch_force_filtered)
+    self._pinch_force_steps += 1
+    period = max(1, round(0.010 / self.sim.timestep))
+    if self._pinch_force_steps % period:
       return
-
-    all_four = set(_FINGERS).issubset(top_contacts)
-    thumb_supported = "thumb" in bottom_contacts
-    for index, finger in enumerate(_FINGERS):
-      self._pinch_missing_updates[index] = (
-        0 if finger in top_contacts else self._pinch_missing_updates[index] + 1
-      )
-    self._pinch_thumb_missing_updates = (
-      0 if thumb_supported else self._pinch_thumb_missing_updates + 1
+    elapsed = period * self.sim.timestep
+    target = self._pinch_force_targets_n
+    error = target - self._pinch_force_filtered
+    error[np.abs(error) <= 0.05] = 0.0
+    rate = np.deg2rad(self._pinch_force_maximum_joint_rate_degrees_s) * elapsed
+    delta = np.clip(self._pinch_force_integral_gain * error * elapsed, -rate, rate)
+    current = np.r_[self._pinch_flexion_targets, self._pinch_thumb_joint5_target]
+    reference = self._pinch_force_reference
+    updated = np.clip(
+      current + delta,
+      reference - np.deg2rad(self._pinch_force_maximum_offset_degrees),
+      reference + np.deg2rad(self._pinch_force_maximum_offset_degrees),
     )
-
-    if not top_contacts and thumb_supported:
-      # When every upper pad opens together, the card is lagging on the
-      # supporting thumb during lift.  Close the opposed jaw very slightly;
-      # bending all four fingers here would turn their flat pads into hooks.
-      self._pinch_thumb_joint5_target = min(
-        self._pinch_thumb_joint5_target + np.deg2rad(0.020),
-        np.deg2rad(_FLAT_PINCH_THUMB_DEGREES["thumb_joint5"] + 1.0),
-      )
-    elif all_four and thumb_supported and top_force > bottom_force + 0.30:
-      # Shed the table-supported excess downward force while adding the same
-      # tiny amount of thumb opposition.  This prepares a balanced free-body
-      # pinch instead of carrying the tabletop reaction into lift-off.
-      targets[:] = np.maximum(targets - np.deg2rad(0.012), lower)
-      self._pinch_thumb_joint5_target = min(
-        self._pinch_thumb_joint5_target + np.deg2rad(0.012),
-        np.deg2rad(_FLAT_PINCH_THUMB_DEGREES["thumb_joint5"] + 1.0),
-      )
-    else:
-      for index in range(len(_FINGERS)):
-        if self._pinch_missing_updates[index] >= 3:
-          targets[index] = min(
-            targets[index] + np.deg2rad(0.020),
-            upper[index],
-          )
-      if self._pinch_thumb_missing_updates >= 3:
-        self._pinch_thumb_joint5_target = min(
-          self._pinch_thumb_joint5_target + np.deg2rad(0.020),
-          np.deg2rad(_FLAT_PINCH_THUMB_DEGREES["thumb_joint5"] + 1.0),
-        )
-
-    names = tuple(f"hand_r_{finger}_joint2" for finger in _FINGERS)
-    self.sim.set_hand_joint_targets(names, targets)
+    self._pinch_flexion_targets[:] = updated[:4]
+    self._pinch_thumb_joint5_target = float(updated[4])
     self.sim.set_hand_joint_targets(
-      ("hand_r_thumb_joint5",),
-      (self._pinch_thumb_joint5_target,),
+      tuple(f"hand_r_{f}_joint2" for f in _FINGERS), updated[:4]
     )
+    self.sim.set_hand_joint_targets(("hand_r_thumb_joint5",), (updated[4],))
 
   @staticmethod
   def _opposition_fraction(opposed_frames: int, total_frames: int) -> float:

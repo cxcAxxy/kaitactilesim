@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record the whiteboard example with 500 Hz touch and native camera images.
+"""Record a validated whiteboard Raw episode and optional review artifacts.
 
 Existing output is preserved by default. --overwrite replaces only the selected
 output directory without creating a backup; the default is
@@ -22,9 +22,13 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/whiteboard_matplotlib")
 
-from kaihand_tactile_env.tasks.whiteboard_wipe.execution import WhiteboardWipeExecutor
 from kaihand_tactile_env.shared.config import SHARED_CAMERA_NAMES, TRAINING_CAMERA_NAMES
-from kaihand_tactile_env.tasks.whiteboard_wipe.recording import RawCapture, WhiteboardRecorder
+from kaihand_tactile_env.tasks.whiteboard_wipe.execution import WhiteboardWipeExecutor
+from kaihand_tactile_env.tasks.whiteboard_wipe.recording import (
+  RawCapture,
+  WhiteboardRecorder,
+  record_compact_example,
+)
 from kaihand_tactile_env.tasks.whiteboard_wipe.task import WhiteboardWipeSimulation
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -106,6 +110,11 @@ def parse_args(argv=None):
     help="Save only shared three-camera Raw HDF5/result/validation sidecars",
   )
   parser.add_argument(
+    "--compact",
+    action="store_true",
+    help="Publish the install-RAM-style raw/review/curves six-file layout",
+  )
+  parser.add_argument(
     "--render-existing",
     type=Path,
     help="Render a legacy native 500 Hz capture; shared Raw uses replay_episode.py",
@@ -120,14 +129,16 @@ def parse_args(argv=None):
     parser.error("--ink-seed must be nonnegative")
   if args.render_existing and args.ink_seed is not None:
     parser.error("--render-existing restores saved ink; do not pass --ink-seed")
-  if args.raw_only and args.render_existing:
-    parser.error("--raw-only and --render-existing are mutually exclusive")
+  if sum((args.raw_only, args.render_existing is not None, args.compact)) > 1:
+    parser.error("--raw-only, --compact and --render-existing are mutually exclusive")
   if not np.isfinite(args.camera_hz) or args.camera_hz <= 0:
     parser.error("--camera-hz must be finite and positive")
   if not 0 <= args.buffer_rows <= 256:
     parser.error("--buffer-rows must be in 0..256")
-  if args.raw_only and tuple(args.cameras) != TRAINING_CAMERA_NAMES:
-    parser.error("--cameras must be exactly: head left_wrist right_wrist")
+  if (args.raw_only or args.compact) and tuple(args.cameras) != TRAINING_CAMERA_NAMES:
+    parser.error(
+      "--raw-only/--compact cameras must be exactly: head left_wrist right_wrist"
+    )
   try:
     _validate_output(args)
   except ValueError as error:
@@ -141,6 +152,17 @@ def parse_args(argv=None):
 
 def main(argv=None):
   args = parse_args(argv)
+  if args.compact:
+    result = record_compact_example(
+      args.output_dir,
+      replace_existing=args.overwrite,
+      camera_hz=args.camera_hz,
+      cameras=tuple(args.cameras),
+      buffer_rows=args.buffer_rows,
+      ink_seed=args.ink_seed,
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
+    return 0
   sim = WhiteboardWipeSimulation(ink_seed=args.ink_seed)
   _validate_output(args)
   if args.output_dir.exists():

@@ -38,10 +38,18 @@ MID_FORCE_SETTINGS = PressureWindowSettings(
   goal="table-edge",
   table_friction=1.0,
   drive_limit_n=4.0,
-  slide_speed_m_s=0.005,
+  # 12 mm/s shortens the long supported draw while preserving the same
+  # pressure target, force budget, final slow-down and edge dwell.
+  slide_speed_m_s=0.012,
+  # Over-damp the two compliant card interfaces. This keeps the raw signal
+  # physical while suppressing the table-edge contact/recontact limit cycle.
+  # Scale time constant inversely with damping ratio so effective stiffness
+  # and static penetration remain approximately equal to v2 (.010 s, 1.0).
+  contact_time_constant_s=0.010 / 1.5,
+  contact_damping_ratio=1.5,
 )
 
-CONTACT_MODEL_VERSION = "poker-compliant-contact-v2"
+CONTACT_MODEL_VERSION = "poker-compliant-contact-v3"
 # Distinct compliant interfaces: the felt support is softer than the tactile
 # pads. The old near-rigid .98/.995 impedance made contact-manifold changes
 # unload three fingers in a single 2 ms step. Preserve friction, margins,
@@ -114,6 +122,9 @@ def middle_force_simulation(
     if settings.contact_time_constant_s is not None:
       model.pair_solref[pair, 0] = settings.contact_time_constant_s
       model.geom_solref[card, 0] = settings.contact_time_constant_s
+    if settings.contact_damping_ratio is not None:
+      model.pair_solref[pair, 1] = settings.contact_damping_ratio
+      model.geom_solref[card, 1] = settings.contact_damping_ratio
     metadata.update(
       table_card_pair_friction=model.pair_friction[pair].tolist(),
       physics_timestep_used_s=float(model.opt.timestep),
@@ -190,6 +201,14 @@ class MidForcePokerSimulation(ForceLimitedPokerSimulation):
 class MidForcePokerExecutor(PressureWindowExecutor):
   """Reuse pickup/view paths and success gates, with load-based jaw feedback."""
 
+  _pinch_force_targets_n = np.array([0.25, 0.25, 0.25, 0.25, 1.0])
+  _pinch_force_integral_gain = 0.060
+  _pinch_force_maximum_joint_rate_degrees_s = 1.00
+  _pinch_force_maximum_offset_degrees = 0.75
+  _prelift_settle_seconds = 0.45
+  _transfer_lift_duration_seconds = 0.65
+  _main_lift_duration_seconds = 1.25
+
   def __init__(
     self,
     simulation: MidForcePokerSimulation,
@@ -210,15 +229,21 @@ class MidForcePokerExecutor(PressureWindowExecutor):
     self.handoff_outcome: dict[str, object] | None = None
     self._lift_reference: tuple[np.ndarray, np.ndarray] | None = None
     self._lift_compensation: list[dict[str, object]] = []
-    self._pinch_force_filtered: np.ndarray | None = None
-    self._pinch_force_reference: np.ndarray | None = None
-    self._pinch_force_steps = 0
 
   def control_metadata(self) -> dict[str, object]:
     return {
       **super().control_metadata(),
       "preset": "middle_force_full_task_v1",
       "contact_model_version": CONTACT_MODEL_VERSION,
+      "motion_profile_version": "right-side-low-chatter-v4",
+      "approach_path": "right-side Cartesian 55 mm lateral / 35 mm lift arc",
+      "arm_interpolation": "physics-rate linear segments; minimum-jerk Cartesian path",
+      "inspection_card_long_axis": "local Y upright; short edge down",
+      "press_establish_controller": {
+        "integral_gain_rad_per_n_s": 0.15,
+        "maximum_joint_rate_deg_s": 2.5,
+        "scope": "four_finger_press only; original slide force loop restored",
+      },
       "acceptance_policy": getattr(self, "acceptance_policy", STRICT_FORCE_POLICY),
       "training_safety": {
         "minimum_loaded_fingers": MINIMUM_LOADED_FINGERS,
@@ -234,18 +259,22 @@ class MidForcePokerExecutor(PressureWindowExecutor):
         "compensation of pickup waypoints; never object-state writes"
       ),
       "slip_feedback_used_for_pressure_adjustment": False,
-      "raise_card_to_view_duration_scale": 2.0,
-      "lift_card_duration_scale": 2.0,
-      "turn_card_inward_duration_scale": 2.0,
+      "raise_card_to_view_duration_scale": 1.0,
+      "lift_card_duration_scale": 1.0,
+      "turn_card_inward_duration_scale": 1.0,
+      "turn_card_inward_duration_s": 2.4,
+      "turn_card_inward_path": "guarded Cartesian interpolation from measured grasp",
       "pickup_controller": "bounded tactile normal-force pinch v2",
       "pinch_force_control": {
         "target_normal_n": [0.25, 0.25, 0.25, 0.25, 1.0],
         "finger_order": [*_FINGERS, "thumb"],
         "update_period_s": 0.010,
         "feedback_filter_s": 0.020,
-        "maximum_joint_rate_deg_s": 1.5,
-        "maximum_offset_deg": 1.0,
-        "prelift_settle_s": 0.35,
+        "integral_gain_rad_per_n_s": 0.060,
+        "maximum_joint_rate_deg_s": 1.00,
+        "maximum_offset_deg": 0.75,
+        "prelift_settle_s": 0.45,
+        "upper_finger_preload_deg": 0.15,
         "raw_tactile_filtered": False,
       },
       "force_limit_scope": "slide_card and edge_hold; disabled by explicit handover",
@@ -253,15 +282,24 @@ class MidForcePokerExecutor(PressureWindowExecutor):
       "lift_waypoint_compensation": self._lift_compensation,
     }
 
+  def _stabilize_four_finger_press(self, plan: PokerDrawPlan) -> None:
+    # Establish preload faster without changing the pressure target, the
+    # contact debounce, or the normal-force controller used during sliding.
+    controller = self._press_controller
+    gain, rate = controller.integral_gain, controller.maximum_offset_rate
+    controller.integral_gain = 0.15
+    controller.maximum_offset_rate = np.deg2rad(2.5)
+    try:
+      super()._stabilize_four_finger_press(plan)
+    finally:
+      controller.integral_gain, controller.maximum_offset_rate = gain, rate
+
   def _prepare_and_slide(
     self, plan: PokerDrawPlan, phases: list[str]
   ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     self.handoff_outcome = None
     self._lift_reference = None
     self._lift_compensation = []
-    self._pinch_force_filtered = None
-    self._pinch_force_reference = None
-    self._pinch_force_steps = 0
     self._multi_low_load_duration_s = 0.0
     self._maximum_multi_low_load_duration_s = 0.0
     outcome = self.draw(plan, MID_FORCE_SETTINGS)
@@ -397,74 +435,15 @@ class MidForcePokerExecutor(PressureWindowExecutor):
         }
       )
       position = compensated
-    # The softer experimental contacts need time to redistribute the pinch
-    # when accelerating the card toward the head. Keep the original path.
+    # Both task entrances now share the smooth, contact-guarded timings.
     return super()._move_pose_with_guarded_pinch(
       plan,
       position,
       seed,
-      duration=duration
-      * (2.0 if phase in {"lift_card", "raise_card_to_view"} else 1.0),
+      duration=duration,
       phase=phase,
       end_effector_rotation=end_effector_rotation,
     )
-
-  def _approach_flat_pinch(
-    self,
-    plan: PokerDrawPlan,
-    seed: np.ndarray,
-  ) -> np.ndarray:
-    seed = super()._approach_flat_pinch(plan, seed)
-    # Establish force-supported opposition before accelerating the card.
-    # Geometry-only contacts can still carry zero load with compliant pads.
-    for _ in range(max(1, round(0.35 / self.sim.timestep))):
-      self._step("thumb_face_press", plan.table_edge_x)
-      self._maintain_dynamic_pinch(*self._current_card_face_contact_state())
-    return seed
-
-  def _maintain_dynamic_pinch(
-    self,
-    top_contacts: set[str],
-    bottom_contacts: set[str],
-    top_force: float,
-    bottom_force: float,
-  ) -> None:
-    """Bounded low-bandwidth jaw force feedback, never modifying sensor data."""
-    del top_contacts, bottom_contacts, top_force, bottom_force
-    if self._pinch_flexion_targets is None:
-      return
-    _, _, forces = self._current_card_face_contact_details()
-    measured = np.asarray([forces[f] for f in (*_FINGERS, "thumb")])
-    if not np.all(np.isfinite(measured)) or np.any(measured < 0):
-      raise RuntimeError("invalid pinch contact force feedback")
-    if self._pinch_force_filtered is None:
-      self._pinch_force_filtered = measured.copy()
-      self._pinch_force_reference = np.r_[
-        self._pinch_flexion_targets, self._pinch_thumb_joint5_target
-      ]
-    alpha = self.sim.timestep / (0.020 + self.sim.timestep)
-    self._pinch_force_filtered += alpha * (measured - self._pinch_force_filtered)
-    self._pinch_force_steps += 1
-    period = max(1, round(0.010 / self.sim.timestep))
-    if self._pinch_force_steps % period:
-      return
-    elapsed = period * self.sim.timestep
-    target = np.asarray([0.25, 0.25, 0.25, 0.25, 1.0])
-    error = target - self._pinch_force_filtered
-    error[np.abs(error) <= 0.05] = 0.0
-    rate = np.deg2rad(1.5) * elapsed
-    delta = np.clip(0.10 * error * elapsed, -rate, rate)
-    current = np.r_[self._pinch_flexion_targets, self._pinch_thumb_joint5_target]
-    reference = self._pinch_force_reference
-    updated = np.clip(
-      current + delta, reference - np.deg2rad(1.0), reference + np.deg2rad(1.0)
-    )
-    self._pinch_flexion_targets[:] = updated[:4]
-    self._pinch_thumb_joint5_target = float(updated[4])
-    self.sim.set_hand_joint_targets(
-      tuple(f"hand_r_{f}_joint2" for f in _FINGERS), updated[:4]
-    )
-    self.sim.set_hand_joint_targets(("hand_r_thumb_joint5",), (updated[4],))
 
   def _move_arm_joints_linear(
     self,

@@ -21,8 +21,6 @@ from .config import (
   _FINGERTIP_LINKS,
   _FREE_CLOSE_CUTOFF_M,
   _FREE_CLOSE_FORCE_LIMIT,
-  _PLACE_INDEX_FORCE_LIMIT,
-  _PLACE_INDEX_TARGET_OFFSET_RAD,
   ARM_HOME,
   OBJECT_NAMES,
 )
@@ -145,7 +143,7 @@ class KnownStateGraspPlanner:
         )
     return tuple(sorted(output, key=lambda item: item.score))
 
-  def plan(self, object_name: str, side: str) -> GraspPlan:
+  def plan(self, object_name: str, side: str, *, compact: bool = False) -> GraspPlan:
     candidates = self.candidates(object_name, side)
     if not candidates:
       raise RuntimeError(f"no collision-free grasp candidate for {side} {object_name}")
@@ -157,17 +155,23 @@ class KnownStateGraspPlanner:
     approach_direction = object_pose[:3] - candidate.grasp_position
     approach_direction[2] = 0.0
     approach_direction /= np.linalg.norm(approach_direction)
-    pregrasp_position = candidate.grasp_position - 0.16 * approach_direction
+    pregrasp_position = (
+      candidate.grasp_position - (0.14 if compact else 0.16) * approach_direction
+    )
     positions = (
-      ("ready", pregrasp_position + np.array([0.0, 0.0, 0.20]), 2.5),
-      ("pregrasp", pregrasp_position, 2.0),
-      ("approach", candidate.grasp_position, 2.0),
+      (
+        "ready",
+        pregrasp_position + np.array([0.0, 0.0, 0.04 if compact else 0.20]),
+        1.25 if compact else 2.5,
+      ),
+      ("pregrasp", pregrasp_position, 0.35 if compact else 2.0),
+      ("approach", candidate.grasp_position, 0.65 if compact else 2.0),
       # Stop while the object is still retained.  The executor captures the
       # physically achieved hand-to-object pose here for stable transport.
       (
         "lift",
-        candidate.grasp_position + np.array([0.0, 0.0, 0.30]),
-        1.4,
+        candidate.grasp_position + np.array([0.0, 0.0, 0.18 if compact else 0.30]),
+        0.75 if compact else 1.4,
       ),
     )
     seed = self._grasp_seed(side)
@@ -212,7 +216,7 @@ class KnownStateGraspPlanner:
 
   def plan_pick_and_place(self, side: str = "right") -> GraspPlan:
     """Plan a top pick followed by a vertical placement in the fixed box."""
-    grasp_plan = self.plan("cylinder", side)
+    grasp_plan = self.plan("cylinder", side, compact=True)
     candidate = grasp_plan.candidate
     rotation = _matrix_from_result(candidate)
     object_position = grasp_plan.initial_object_pose[:3]
@@ -233,11 +237,11 @@ class KnownStateGraspPlanner:
     lift = grasp_plan.waypoints[-1]
     aligned_position = lift.end_effector_position + np.r_[delta_xy, 0.0]
     targets = (
-      ("transfer", aligned_position, 2.2),
+      ("transfer", aligned_position, 0.85),
       (
         "place",
         candidate.grasp_position + (release_object_center - object_position),
-        2.0,
+        1.10,
       ),
     )
     seed = lift.joint_positions
@@ -629,76 +633,106 @@ class GraspExecutor:
 
 
 class PickPlaceExecutor(GraspExecutor):
-  """Execute pick, transfer, release and vertical retreat into the blue box."""
+  """Follow a compact, time-parameterized pick/place path from shared home."""
+
+  def _smooth_joint_path(self, side, targets, durations, phases):
+    """C2 quintic segments with shared knot velocities and zero endpoint motion.
+
+    Targets pass through the existing actuators at every physics step. Monotone
+    knot velocities prevent joint overshoot at corners. Durations are actual
+    motion times, not maximum deadlines for a full-speed goal chase.
+    """
+    points = np.vstack((self.sim.arm_goal[side], *targets))
+    durations = np.asarray(durations, dtype=float)
+    slopes = np.diff(points, axis=0) / durations[:, None]
+    velocities = np.zeros_like(points)
+    for i in range(1, len(points) - 1):
+      before, after = slopes[i - 1], slopes[i]
+      velocities[i] = np.where(
+        before * after > 0,
+        np.sign(before) * np.minimum(np.abs(before), np.abs(after)),
+        0.0,
+      )
+    for i, (duration, phase) in enumerate(zip(durations, phases, strict=True)):
+      steps = max(1, int(round(duration / self.sim.timestep)))
+      duration = steps * self.sim.timestep
+      q0, q1 = points[i : i + 2]
+      v0, v1 = velocities[i : i + 2] * duration
+      delta = q1 - q0 - v0
+      velocity_delta = v1 - v0
+      a3 = 10 * delta - 4 * velocity_delta
+      a4 = -15 * delta + 7 * velocity_delta
+      a5 = 6 * delta - 3 * velocity_delta
+      for step in range(1, steps + 1):
+        u = step / steps
+        goal = q0 + v0 * u + a3 * u**3 + a4 * u**4 + a5 * u**5
+        self.sim.set_arm_joint_goal(side, goal)
+        self.sim.step()
+        if self.observer is not None:
+          self.observer(self.sim, phase)
 
   def execute(self, plan: GraspPlan) -> PickPlaceResult:
-    phases: list[str] = []
-    # Open concurrently with the first arm waypoint instead of inserting a
-    # standalone wait at the beginning of every episode.
     self.sim.set_hand_home(plan.side)
-    for waypoint in plan.waypoints:
-      if waypoint.phase == "place":
-        self._place_with_cartesian_feedback(plan)
-      else:
-        self.sim.set_arm_joint_goal(plan.side, waypoint.joint_positions)
-        settle = waypoint.phase in {"ready", "approach"}
-        self._advance_until_goals(
-          waypoint.duration,
-          waypoint.phase,
-          plan.object_name,
-          plan.side,
-          arm=True,
-          hand=False,
-          arm_tolerance=0.001
-          if waypoint.phase == "ready"
-          else (0.05 if not settle else 0.012),
-          arm_velocity_tolerance=0.01 if waypoint.phase == "ready" else 0.08,
-          settle=settle,
-        )
-      phases.append(waypoint.phase)
-      if waypoint.phase == "approach":
-        self._close_until_fingertip_contacts(0.65, "close", plan.object_name, plan.side)
-        if plan.object_name == "cylinder":
-          # Stabilize the physically achieved grasp pose for transport without
-          # changing the cylinder pose or introducing interpenetration.
-          self.sim.set_grasp_stabilizer(True)
-        phases.append("close")
-      elif waypoint.phase == "place":
-        # Gravity and contacts take over as soon as opening begins.
-        self.sim.set_grasp_stabilizer(False)
-        self.sim.set_hand_home(plan.side)
-        self._advance_until_object_released(
-          0.20, "release", plan.object_name, plan.side
-        )
-        phases.append("release")
-    # Retreat while the released cylinder is falling, then blend directly home.
-    self.sim.set_arm_joint_goal(plan.side, plan.waypoints[-2].joint_positions)
+    approach = plan.waypoints[:3]
+    self._smooth_joint_path(
+      plan.side,
+      [w.joint_positions for w in approach],
+      [w.duration for w in approach],
+      [w.phase for w in approach],
+    )
     self._advance_until_goals(
-      1.5,
-      "retreat",
+      0.5,
+      "approach",
       plan.object_name,
       plan.side,
       arm=True,
       hand=False,
-      arm_tolerance=0.05,
-      settle=False,
+      arm_tolerance=0.006,
+      arm_velocity_tolerance=0.04,
     )
-    phases.append("retreat")
+    self._close_until_fingertip_contacts(0.65, "close", plan.object_name, plan.side)
+    self.sim.set_grasp_stabilizer(True)
+    carry = plan.waypoints[3:5]
+    self._smooth_joint_path(
+      plan.side,
+      [w.joint_positions for w in carry],
+      [w.duration for w in carry],
+      [w.phase for w in carry],
+    )
+    self._place_with_cartesian_feedback(plan)
+    self.sim.set_grasp_stabilizer(False)
     self.sim.set_hand_home(plan.side)
-    self.sim.set_arm_joint_goal(plan.side, ARM_HOME[plan.side])
+    self._open_and_clear(plan)
+
+    # Retract a short distance away from the object before folding home, instead
+    # of returning to the high transfer waypoint after release.
+    position, rotation = self.sim.current_pose_matrix(plan.side)
+    retreat = self.sim.solve_ik(
+      plan.side,
+      position + np.array([0.0, 0.0, 0.09]),
+      rotation,
+      seed=self.sim.arm_goal[plan.side],
+      max_iterations=240,
+      position_tolerance=0.003,
+      orientation_tolerance=0.03,
+    )
+    _require_ik(retreat, "retreat")
+    self._smooth_joint_path(
+      plan.side,
+      [retreat.joint_positions, ARM_HOME[plan.side]],
+      [0.50, 1.25],
+      ["retreat", "return_home"],
+    )
     self._advance_until_goals(
-      4.0,
+      0.8,
       "return_home",
       plan.object_name,
       plan.side,
       arm=True,
-      # The open command remains active while the arm returns.  Do not hold the
-      # whole task for compliant fingers to reach an exact encoder target.
       hand=False,
       arm_tolerance=0.001,
       arm_velocity_tolerance=0.05,
     )
-    phases.append("return_home")
     pose = self.sim.object_pose(plan.object_name)
     box_center = self.sim.model.body("box").pos.copy()
     placed = cylinder_is_in_box(self.sim, pose)
@@ -709,41 +743,96 @@ class PickPlaceExecutor(GraspExecutor):
       final_object_pose=pose,
       box_center=box_center,
       placed_in_box=placed,
-      phases=tuple(phases),
+      phases=(
+        "ready",
+        "pregrasp",
+        "approach",
+        "close",
+        "lift",
+        "transfer",
+        "place",
+        "release",
+        "retreat",
+        "return_home",
+      ),
     )
 
-  def _place_with_cartesian_feedback(self, plan: GraspPlan) -> None:
-    """Center the held cylinder, then descend vertically in short segments."""
-    index_joint_names = tuple(
-      f"hand_{plan.side[0]}_index_joint{joint}" for joint in (2, 3)
-    )
-    baseline_targets = np.array(
-      [self.sim._hand_targets[plan.side][name] for name in index_joint_names]
-    )
-    index_actuator_ids = tuple(
-      actuator_id
-      for name, actuator_id in self.sim._hand_actuators[plan.side].items()
-      if "_index_" in name
-    )
-    baseline_force_ranges = {
-      actuator_id: self.sim.model.actuator_forcerange[actuator_id].copy()
-      for actuator_id in index_actuator_ids
-    }
-    # The descending arm acceleration briefly unloads the index fingertip.
-    # Add a small proximal/middle-joint preload only for this phase; boosting
-    # the already-curled distal joint would concentrate pressure at the tip.
-    self.sim.set_hand_joint_targets(
-      index_joint_names, baseline_targets + _PLACE_INDEX_TARGET_OFFSET_RAD
-    )
-    for actuator_id, baseline in baseline_force_ranges.items():
-      force = max(float(np.max(np.abs(baseline))), _PLACE_INDEX_FORCE_LIMIT)
+  def _open_and_clear(self, plan):
+    """Finish finger opening before the arm retreats and can snag the cylinder.
+
+    Retain the existing release force limit for the whole short opening window,
+    rather than dropping it as soon as the cylinder starts falling. The carry
+    constraint is already off; the object moves only under gravity and contact.
+    """
+    actuator_ids = tuple(self.sim._hand_actuators[plan.side].values())
+    baseline = self.sim.model.actuator_forcerange[list(actuator_ids)].copy()
+    for actuator_id, limits in zip(actuator_ids, baseline, strict=True):
+      force = max(float(np.max(np.abs(limits))), 0.7)
       self.sim.model.actuator_forcerange[actuator_id] = (-force, force)
     try:
-      self._descend_to_box(plan)
+      for _ in range(round(0.18 / self.sim.timestep)):
+        self.sim.step()
+        if self.observer is not None:
+          self.observer(self.sim, "release")
     finally:
-      self.sim.set_hand_joint_targets(index_joint_names, baseline_targets)
-      for actuator_id, force_range in baseline_force_ranges.items():
-        self.sim.model.actuator_forcerange[actuator_id] = force_range
+      self.sim.model.actuator_forcerange[list(actuator_ids)] = baseline
+
+  def _place_with_cartesian_feedback(self, plan: GraspPlan) -> None:
+    """Upright the held cylinder, then descend without asymmetric preload."""
+    self._upright_held_cylinder(plan)
+    self._descend_to_box(plan)
+
+  def _upright_held_cylinder(self, plan: GraspPlan) -> None:
+    """Apply the smallest hand rotation that makes the cylinder axis vertical."""
+    object_pose = self.sim.object_pose(plan.object_name)
+    object_rotation = np.empty(9, dtype=float)
+    mujoco.mju_quat2Mat(object_rotation, object_pose[3:])
+    object_axis = object_rotation.reshape(3, 3)[:, 2]
+    vertical = np.array([0.0, 0.0, 1.0])
+    cross = np.cross(object_axis, vertical)
+    sine = float(np.linalg.norm(cross))
+    cosine = float(np.clip(object_axis @ vertical, -1.0, 1.0))
+    if sine < 1.0e-8:
+      if cosine > 0.0:
+        return
+      raise RuntimeError("cannot upright an inverted cylinder")
+    skew = np.array(
+      [
+        [0.0, -cross[2], cross[1]],
+        [cross[2], 0.0, -cross[0]],
+        [-cross[1], cross[0], 0.0],
+      ]
+    )
+    correction_rotation = (
+      np.eye(3) + skew + skew @ skew * ((1.0 - cosine) / sine**2)
+    )
+    hand_position, hand_rotation = self.sim.current_pose_matrix(plan.side)
+    result = self.sim.solve_ik(
+      plan.side,
+      hand_position,
+      correction_rotation @ hand_rotation,
+      seed=self.sim.arm_goal[plan.side],
+      max_iterations=240,
+      position_tolerance=0.002,
+      orientation_tolerance=0.015,
+    )
+    _require_ik(result, "upright before place")
+    self._smooth_joint_path(
+      plan.side,
+      [result.joint_positions],
+      [0.50],
+      ["place"],
+    )
+    self._advance_until_goals(
+      0.35,
+      "place",
+      plan.object_name,
+      plan.side,
+      arm=True,
+      hand=False,
+      arm_tolerance=0.008,
+      arm_velocity_tolerance=0.05,
+    )
 
   def _descend_to_box(self, plan: GraspPlan) -> None:
     """Execute the measured Cartesian correction used by the place phase."""
@@ -764,10 +853,11 @@ class PickPlaceExecutor(GraspExecutor):
     )
     correction = desired_object_position - object_pose[:3]
     start_position, start_rotation = self.sim.current_pose_matrix(plan.side)
-    # Coarser Cartesian segments keep the descent continuous; final centering
-    # is still closed-loop and fully settled before opening the fingers.
-    segment_count = max(1, int(np.ceil(np.linalg.norm(correction) / 0.15)))
+    # Solve dense Cartesian checkpoints, then traverse them continuously.
+    # Avoid repeatedly accelerating toward coarse IK goals.
+    segment_count = max(2, int(np.ceil(np.linalg.norm(correction) / 0.025)))
     seed = self.sim.arm_goal[plan.side]
+    targets = []
     for index in range(1, segment_count + 1):
       target_position = start_position + (index / segment_count) * correction
       result = self.sim.solve_ik(
@@ -776,24 +866,30 @@ class PickPlaceExecutor(GraspExecutor):
         start_rotation,
         seed=seed,
         max_iterations=240,
-        position_tolerance=0.006,
-        orientation_tolerance=0.05,
+        position_tolerance=0.001,
+        orientation_tolerance=0.02,
       )
       _require_ik(result, f"place segment {index}/{segment_count}")
-      self.sim.set_arm_joint_goal(plan.side, result.joint_positions)
-      settle = index == segment_count
-      self._advance_until_goals(
-        0.7,
-        "place",
-        plan.object_name,
-        plan.side,
-        arm=True,
-        hand=False,
-        arm_tolerance=0.05 if not settle else 0.015,
-        arm_velocity_tolerance=0.10,
-        settle=settle,
-      )
+      targets.append(result.joint_positions)
       seed = result.joint_positions
+    # Cosine knot times give spatially uniform knots a gradual speed envelope.
+    times = np.arccos(1 - 2 * np.linspace(0, 1, segment_count + 1)) / np.pi
+    self._smooth_joint_path(
+      plan.side,
+      targets,
+      np.diff(times) * plan.waypoints[-1].duration,
+      ["place"] * segment_count,
+    )
+    self._advance_until_goals(
+      0.5,
+      "place",
+      plan.object_name,
+      plan.side,
+      arm=True,
+      hand=False,
+      arm_tolerance=0.015,
+      arm_velocity_tolerance=0.10,
+    )
 
 
 def cylinder_is_in_box(
