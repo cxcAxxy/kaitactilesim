@@ -395,6 +395,12 @@ def test_random_ink_capture_and_replay_restore_actual_geometry(tmp_path, monkeyp
   recorder.finish({"success": False}, render=False)
   with h5py.File(source / "raw/episode.h5") as h:
     layout = json.loads(h.attrs["ink_randomization_json"])
+    wrist = h["wrist_wrench"]
+    np.testing.assert_array_equal(wrist["timestamp"], h["state/timestamp"])
+    assert wrist["force_local_n"].shape == (len(h["time_s"]), 2, 3)
+    assert wrist["torque_local_nm"].shape == (len(h["time_s"]), 2, 3)
+    assert np.isfinite(wrist["force_world_n"][:]).all()
+    assert np.isfinite(wrist["torque_world_nm"][:]).all()
   assert layout == sim.ink_randomization
   assert (
     json.loads((source / "manifest.json").read_text())["ink_randomization"] == layout

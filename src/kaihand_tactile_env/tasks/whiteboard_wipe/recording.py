@@ -15,7 +15,15 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from ...shared.config import CameraConfig, WorkcellConfig
-from ...shared.recording import EpisodeRecorder, _append, _stream, validate_episode
+from ...shared.recording import (
+  EpisodeRecorder,
+  WristWrenchSample,
+  WristWrenchSensor,
+  _append,
+  _stream,
+  create_wrist_wrench_group,
+  validate_episode,
+)
 from ...shared.rendering import WorkcellRenderer
 from ...shared.tactile import SolverContactTactileProvider
 from ...shared.task_video import _FfmpegPipeWriter
@@ -259,6 +267,8 @@ class WhiteboardRecorder:
       force_processing="raw solver forces; no filtering, clipping or interpolation",
       force_evaluation="before integration, after control update; terminal sample evaluated without stepping",
     )
+    self.wrist_wrench_sensor = WristWrenchSensor(simulation.model)
+    create_wrist_wrench_group(self.h5, h5py.string_dtype(encoding="utf-8"))
     initial = simulation.forces.read(simulation.data)
     group = self.h5.require_group("tactile_contact_force")
     group.create_dataset("link_names", data=np.asarray(initial.link_names, dtype="S"))
@@ -277,6 +287,7 @@ class WhiteboardRecorder:
       raise RuntimeError("500 Hz recorder missed its physics callback")
     self.next_sample += 1 / FORCE_HZ
     tactile = sim.forces.read(sim.data)
+    wrist_wrench = self.wrist_wrench_sensor.read(sim.data)
     cleaning = getattr(sim, "cleaning", None)
     zeros = np.zeros_like(sim.remaining)
     sample = {
@@ -312,6 +323,11 @@ class WhiteboardRecorder:
       "tangent_contact_load_n": tactile.tangent_load_n[5:].copy(),
       "pad_contact_count": tactile.contact_count[5:].copy(),
       "pad_force_world_n": tactile.force_world_n[5:].copy(),
+      "wrist_wrench/timestamp": timestamp,
+      **{
+        f"wrist_wrench/{name}": getattr(wrist_wrench, name)
+        for name in WristWrenchSample.__dataclass_fields__
+      },
     }
     for name in (
       "normal_taxel_force_n",

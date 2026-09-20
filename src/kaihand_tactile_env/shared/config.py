@@ -24,6 +24,9 @@ from .cameras import TRAINING_CAMERA_NAMES as TRAINING_CAMERA_NAMES
 from .posture import ARM_HOME as ARM_HOME
 
 SIDES = ("left", "right")
+WRIST_FT_SITE_NAMES = tuple(f"{side}_wrist_ft_site" for side in SIDES)
+WRIST_FORCE_SENSOR_NAMES = tuple(f"{side}_wrist_force" for side in SIDES)
+WRIST_TORQUE_SENSOR_NAMES = tuple(f"{side}_wrist_torque" for side in SIDES)
 TASK_CONFIGS = {
   pick_place_config.SCENE_NAME: pick_place_config,
   poker_draw_config.SCENE_NAME: poker_draw_config,

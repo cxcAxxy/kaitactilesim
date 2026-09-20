@@ -14,7 +14,15 @@ from typing import Any
 
 import numpy as np
 
-from .config import OBJECT_NAMES, WorkcellConfig, model_fingerprint
+from .config import (
+  OBJECT_NAMES,
+  SIDES,
+  WRIST_FORCE_SENSOR_NAMES,
+  WRIST_FT_SITE_NAMES,
+  WRIST_TORQUE_SENSOR_NAMES,
+  WorkcellConfig,
+  model_fingerprint,
+)
 from .rendering import WorkcellRenderer
 from .simulation import ArmHandSimulation
 from .tactile import (
@@ -25,6 +33,7 @@ from .tactile import (
 )
 
 SCHEMA_VERSION = "kaihand_tactile_episode_v1"
+WRIST_WRENCH_SCHEMA_VERSION = "kaihand_bimanual_wrist_wrench_v1"
 TASK_ISOLATED_MODEL_LAYOUT = "task-isolated-v1"
 LEGACY_COMBINED_MODEL_LAYOUT = "legacy-combined-v1"
 POKER_FORCE_RECORDING_CONTRACT = "poker_draw_per_finger_press_shear_v5"
@@ -68,6 +77,87 @@ class TerminalStability:
   linear_speed: float
   angular_speed: float
   steps: int
+
+
+@dataclass(frozen=True)
+class WristWrenchSample:
+  """Raw bimanual wrist load in sensor-local and world coordinates."""
+
+  origin_world_m: np.ndarray
+  world_from_sensor_rotation: np.ndarray
+  force_local_n: np.ndarray
+  torque_local_nm: np.ndarray
+  force_world_n: np.ndarray
+  torque_world_nm: np.ndarray
+
+
+class WristWrenchSensor:
+  """Read the shared left/right MuJoCo force and torque sensors."""
+
+  def __init__(self, model: Any) -> None:
+    sensor_addresses: list[tuple[int, int]] = []
+    site_ids: list[int] = []
+    for side, site_name, force_name, torque_name in zip(
+      SIDES,
+      WRIST_FT_SITE_NAMES,
+      WRIST_FORCE_SENSOR_NAMES,
+      WRIST_TORQUE_SENSOR_NAMES,
+      strict=True,
+    ):
+      site = model.site(site_name)
+      force = model.sensor(force_name)
+      torque = model.sensor(torque_name)
+      if int(force.dim[0]) != 3 or int(torque.dim[0]) != 3:
+        raise RuntimeError(f"{side} wrist F/T sensors must each have dimension 3")
+      site_ids.append(int(site.id))
+      sensor_addresses.append((int(force.adr[0]), int(torque.adr[0])))
+    self.site_ids = np.asarray(site_ids, dtype=np.int32)
+    self.sensor_addresses = tuple(sensor_addresses)
+
+  def read(self, data: Any) -> WristWrenchSample:
+    rotations = np.asarray(data.site_xmat[self.site_ids]).reshape(2, 3, 3).copy()
+    origins = np.asarray(data.site_xpos[self.site_ids]).copy()
+    force_local = np.empty((2, 3), dtype=np.float64)
+    torque_local = np.empty((2, 3), dtype=np.float64)
+    for index, (force_address, torque_address) in enumerate(self.sensor_addresses):
+      force_local[index] = data.sensordata[force_address : force_address + 3]
+      torque_local[index] = data.sensordata[torque_address : torque_address + 3]
+    force_world = np.einsum("sij,sj->si", rotations, force_local)
+    torque_world = np.einsum("sij,sj->si", rotations, torque_local)
+    values = (origins, rotations, force_local, torque_local, force_world, torque_world)
+    if not all(np.isfinite(value).all() for value in values):
+      raise RuntimeError("wrist F/T sensor sample contains non-finite values")
+    return WristWrenchSample(
+      origin_world_m=origins,
+      world_from_sensor_rotation=rotations,
+      force_local_n=force_local,
+      torque_local_nm=torque_local,
+      force_world_n=force_world,
+      torque_world_nm=torque_world,
+    )
+
+
+def create_wrist_wrench_group(file: Any, string_dtype: Any) -> Any:
+  """Create common metadata shared by standard and native-rate recorders."""
+  group = file.create_group("wrist_wrench")
+  group.attrs["schema_version"] = WRIST_WRENCH_SCHEMA_VERSION
+  group.attrs["timestamp_reference"] = "/state/timestamp"
+  group.attrs["sample_clock"] = "same simulation state epoch as state/timestamp"
+  group.attrs["force_unit"] = "N"
+  group.attrs["torque_unit"] = "N_m"
+  group.attrs["local_frame"] = "respective wrist_ft_site frame"
+  group.attrs["world_frame"] = "MuJoCo world frame"
+  group.attrs["torque_reference"] = "respective wrist_ft_site origin"
+  group.attrs["compensation"] = "raw MuJoCo sensor; no gravity or bias subtraction"
+  group.create_dataset("side_names", data=SIDES, dtype=string_dtype)
+  group.create_dataset("site_names", data=WRIST_FT_SITE_NAMES, dtype=string_dtype)
+  group.create_dataset(
+    "force_sensor_names", data=WRIST_FORCE_SENSOR_NAMES, dtype=string_dtype
+  )
+  group.create_dataset(
+    "torque_sensor_names", data=WRIST_TORQUE_SENSOR_NAMES, dtype=string_dtype
+  )
+  return group
 
 
 def wait_until_object_stable(
@@ -327,6 +417,8 @@ class EpisodeRecorder:
     _stream(state, "robot_joint_velocity", (len(self.sim.joint_names),), np.float64)
     _stream(state, "robot_joint_effort", (len(self.sim.joint_names),), np.float64)
 
+    self._initialize_wrist_wrench(string_dtype)
+
     commands = file.create_group("commands")
     arm_target, hand_target, hand_names = self.sim.command_state()
     commands.create_dataset("arm_joint_names", data=_arm_names(), dtype=string_dtype)
@@ -479,12 +571,15 @@ class EpisodeRecorder:
         group.attrs["finger_names_json"] = json.dumps(
           ["thumb", "index", "middle", "ring", "little"]
         )
-        group.attrs["wrist_sites_json"] = json.dumps(self.taskspace_capture.wrist_names)
+        group.attrs["wrist_sites_json"] = json.dumps(
+          self.taskspace_capture.wrist_names
+        )
         group.attrs["fingertip_sites_json"] = json.dumps(
           self.taskspace_capture.finger_names
         )
         group.attrs["pose_clock_semantics"] = (
-          "cached FK and actual rendered RGB at pose_timestamp; timestamp is post-integration; no additional mj_forward"
+          "cached FK and actual rendered RGB at pose_timestamp; timestamp is "
+          "post-integration; no additional mj_forward"
         )
       if camera.rgb:
         _image_stream(group, "rgb", (camera.height, camera.width, 3), np.uint8)
@@ -492,6 +587,34 @@ class EpisodeRecorder:
         _image_stream(group, "depth", (camera.height, camera.width), np.float32)
       if camera.segmentation:
         _image_stream(group, "segmentation", (camera.height, camera.width, 2), np.int32)
+
+  def _initialize_wrist_wrench(self, string_dtype: Any) -> None:
+    """Create the shared, state-clocked bimanual wrist F/T stream."""
+    self.wrist_wrench_sensor = None
+    try:
+      self.wrist_wrench_sensor = WristWrenchSensor(self.sim.model)
+    except KeyError:
+      # Keep custom and historical non-workcell MJCF models recordable. Every
+      # supported task model is separately required to contain all four shared
+      # sensors by the scene contract tests.
+      return
+    group = create_wrist_wrench_group(self._file, string_dtype)
+    _stream(group, "timestamp", (), np.float64)
+    _stream(group, "origin_world_m", (2, 3), np.float64)
+    _stream(group, "world_from_sensor_rotation", (2, 3, 3), np.float64)
+    _stream(group, "force_local_n", (2, 3), np.float64)
+    _stream(group, "torque_local_nm", (2, 3), np.float64)
+    _stream(group, "force_world_n", (2, 3), np.float64)
+    _stream(group, "torque_world_nm", (2, 3), np.float64)
+
+  def _record_wrist_wrench(self, timestamp: float) -> None:
+    if self.wrist_wrench_sensor is None:
+      return
+    sample = self.wrist_wrench_sensor.read(self.sim.data)
+    group = self._file["wrist_wrench"]
+    _append(group["timestamp"], timestamp)
+    for name in WristWrenchSample.__dataclass_fields__:
+      _append(group[name], getattr(sample, name))
 
   def set_outcome(self, outcome: dict[str, Any]) -> None:
     self._outcome = dict(outcome)
@@ -629,6 +752,7 @@ class EpisodeRecorder:
     _append(state["robot_joint_position"], joint_position)
     _append(state["robot_joint_velocity"], joint_velocity)
     _append(state["robot_joint_effort"], joint_effort)
+    self._record_wrist_wrench(timestamp)
 
     arm_target, hand_target, _ = self.sim.command_state()
     commands = self._file["commands"]
@@ -802,6 +926,7 @@ def validate_episode(path: str | Path) -> ValidationReport:
         errors.append(f"{key} sample count differs from state/timestamp")
       if not np.all(np.isfinite(dataset)):
         errors.append(f"{key} contains non-finite values")
+    _validate_wrist_wrench(file, timestamp, errors)
     if file["contacts/frame_count"].shape[0] != state_samples:
       errors.append("contact frame count differs from state sample count")
     try:
@@ -981,6 +1106,76 @@ def validate_episode(path: str | Path) -> ValidationReport:
     camera_samples=camera_samples,
     duration_seconds=duration,
   )
+
+
+def _validate_wrist_wrench(
+  file: Any, state_timestamp: np.ndarray, errors: list[str]
+) -> None:
+  """Validate the additive wrist-wrench extension when it is present."""
+  if "wrist_wrench" not in file:
+    return  # Historical v1 episodes remain readable and valid.
+  group = file["wrist_wrench"]
+  if group.attrs.get("schema_version") != WRIST_WRENCH_SCHEMA_VERSION:
+    errors.append("wrist_wrench has an unsupported or missing schema_version")
+  if group.attrs.get("timestamp_reference") != "/state/timestamp":
+    errors.append("wrist_wrench must reference /state/timestamp")
+  for attribute, expected in (("force_unit", "N"), ("torque_unit", "N_m")):
+    if group.attrs.get(attribute) != expected:
+      errors.append(f"wrist_wrench {attribute} must be {expected}")
+  for name, expected in (
+    ("side_names", SIDES),
+    ("site_names", WRIST_FT_SITE_NAMES),
+    ("force_sensor_names", WRIST_FORCE_SENSOR_NAMES),
+    ("torque_sensor_names", WRIST_TORQUE_SENSOR_NAMES),
+  ):
+    if name not in group:
+      errors.append(f"wrist_wrench is missing {name}")
+    else:
+      values = tuple(
+        value.decode("utf-8") if isinstance(value, bytes) else str(value)
+        for value in group[name][:]
+      )
+      if values != expected:
+        errors.append(f"wrist_wrench/{name} has an invalid order or value")
+  count = len(state_timestamp)
+  expected_shapes = {
+    "timestamp": (count,),
+    "origin_world_m": (count, 2, 3),
+    "world_from_sensor_rotation": (count, 2, 3, 3),
+    "force_local_n": (count, 2, 3),
+    "torque_local_nm": (count, 2, 3),
+    "force_world_n": (count, 2, 3),
+    "torque_world_nm": (count, 2, 3),
+  }
+  valid = True
+  for name, shape in expected_shapes.items():
+    if name not in group or group[name].shape != shape:
+      errors.append(f"wrist_wrench/{name} shape differs from {shape}")
+      valid = False
+    elif not np.all(np.isfinite(group[name])):
+      errors.append(f"wrist_wrench/{name} contains non-finite values")
+      valid = False
+  if not valid:
+    return
+  if not np.array_equal(np.asarray(group["timestamp"]), state_timestamp):
+    errors.append("wrist_wrench timestamps differ from state timestamps")
+  rotations = np.asarray(group["world_from_sensor_rotation"])
+  identity = np.einsum("tsji,tsjk->tsik", rotations, rotations)
+  if not np.allclose(identity, np.eye(3), atol=1e-9):
+    errors.append("wrist_wrench sensor rotations are not orthonormal")
+  if np.any(np.linalg.det(rotations) <= 0.0):
+    errors.append("wrist_wrench sensor rotations are not proper rotations")
+  for quantity in ("force", "torque"):
+    unit = "n" if quantity == "force" else "nm"
+    expected_world = np.einsum(
+      "tsij,tsj->tsi", rotations, group[f"{quantity}_local_{unit}"]
+    )
+    if not np.allclose(
+      expected_world,
+      group[f"{quantity}_world_{unit}"],
+      atol=1e-10,
+    ):
+      errors.append(f"wrist_wrench {quantity} world/local transform is inconsistent")
 
 
 def _validate_terminal_state(
