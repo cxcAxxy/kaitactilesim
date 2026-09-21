@@ -235,17 +235,17 @@ pixi run evaluate-policy -- \
   --output-dir /path/to/evaluation \
   --cameras head left_wrist right_wrist \
   --num-trials 20 \
-  --video-count 5 \
-  --execute-steps 5 \
+  --video-count 20 \
+  --execute-steps 16 horizon \
   --max-sim-seconds 60 \
   -- --server ws://127.0.0.1:18783
 ```
 
 - `--num-trials` 默认 20；
-- `--video-count` 默认 `min(3, num_trials)`，可设为 0；
-- `--execute-steps` 控制每个预测 action chunk 实际执行多少步；
+- `--video-count` 默认与 `num_trials` 相同，即默认 20 次全部录像；
+- `--execute-steps` 默认运行 `16` 和模型声明的 `horizon` 两组独立 batch；
 - `--cameras` 只校验 manifest，不会把旧 checkpoint 临时扩成三相机模型；
-- 评估视频可包含模型实际输入视角、双手触觉热力图、十指三轴力曲线、任务指标和结果。
+- manifest 含 `right_wrist` 时，评估视频固定显示该模型输入视角；同时保留双手触觉热力图、十指三轴力曲线、任务指标和结果。
 
 ### 当前评估覆盖
 

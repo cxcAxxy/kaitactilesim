@@ -34,6 +34,21 @@ RUNNERS = {
 }
 
 
+def _execute_steps_request(value: str) -> int | str:
+  normalized = value.strip().lower()
+  if normalized == "horizon":
+    return normalized
+  try:
+    steps = int(normalized)
+  except ValueError as error:
+    raise argparse.ArgumentTypeError(
+      "execute steps must be a positive integer or 'horizon'"
+    ) from error
+  if steps <= 0:
+    raise argparse.ArgumentTypeError("execute steps must be positive")
+  return steps
+
+
 def parse_args(argv=None):
   parser = argparse.ArgumentParser(
     description=__doc__,
@@ -68,13 +83,18 @@ def parse_args(argv=None):
     "--video-count",
     type=int,
     default=None,
-    help="Record common tactile review videos for the first N trials; 0 disables them (default: min(3, num-trials))",
+    help="Record common tactile review videos for the first N trials; 0 disables them (default: num-trials)",
   )
   parser.add_argument(
     "--execute-steps",
-    type=int,
-    default=5,
-    help="Execute this many actions from each predicted chunk before querying again (default: 5)",
+    type=_execute_steps_request,
+    nargs="+",
+    default=(16, "horizon"),
+    metavar="N|horizon",
+    help=(
+      "One or more action-chunk execution lengths. The formal default runs two "
+      "batches: 16 and the deployment prediction horizon"
+    ),
   )
   parser.add_argument(
     "--max-sim-seconds",
@@ -102,11 +122,11 @@ def parse_args(argv=None):
   if args.seed_start < 0:
     parser.error("--seed-start must be nonnegative")
   if args.video_count is None:
-    args.video_count = min(3, args.num_trials)
+    args.video_count = args.num_trials
   if not 0 <= args.video_count <= args.num_trials:
     parser.error("--video-count must be between 0 and --num-trials")
-  if args.execute_steps <= 0:
-    parser.error("--execute-steps must be positive")
+  if len(args.execute_steps) != len(set(args.execute_steps)):
+    parser.error("--execute-steps entries must be distinct")
   if args.max_sim_seconds is not None and args.max_sim_seconds <= 0:
     parser.error("--max-sim-seconds must be positive")
   duplicated = [
@@ -158,16 +178,39 @@ def _validate_manifest(path, task, family, cameras=None):
   return resolved, payload
 
 
+def _resolve_execution_modes(requests, payload):
+  declared_horizon = payload.get("prediction_horizon")
+  horizon = int(declared_horizon) if declared_horizon is not None else None
+  modes = []
+  seen = set()
+  for request in requests:
+    if request == "horizon":
+      if horizon is None or horizon <= 0:
+        raise ValueError(
+          "--execute-steps horizon requires a positive prediction_horizon in the deployment manifest"
+        )
+      value = horizon
+      name = f"execute_steps_horizon_{horizon}"
+    else:
+      value = int(request)
+      name = f"execute_steps_{value}"
+    if horizon is not None and value > horizon:
+      raise ValueError(
+        f"execute-steps={value} exceeds deployment prediction_horizon={horizon}"
+      )
+    if value in seen:
+      continue
+    seen.add(value)
+    modes.append({"request": request, "value": value, "name": name})
+  return modes
+
+
 def main(argv=None):
   args, runner_args = parse_args(argv)
   manifest, payload = _validate_manifest(
     args.deployment_manifest, args.task, args.model_family, args.cameras
   )
-  horizon = payload.get("prediction_horizon")
-  if horizon is not None and args.execute_steps > int(horizon):
-    raise ValueError(
-      f"execute-steps={args.execute_steps} exceeds deployment prediction_horizon={horizon}"
-    )
+  modes = _resolve_execution_modes(args.execute_steps, payload)
   try:
     runner = RUNNERS[(args.task, args.model_family)]
   except KeyError as error:
@@ -175,22 +218,27 @@ def main(argv=None):
       f"no evaluation adapter for {args.task} + {args.model_family}; "
       "register a runner without changing this CLI contract"
     ) from error
-  command = [
-    sys.executable,
-    str(ROOT / "scripts/workcell" / runner),
-    "--deployment-manifest", str(manifest),
-    "--output-dir", str(args.output_dir),
-    "--seeds",
-    *(str(seed) for seed in range(args.seed_start, args.seed_start + args.num_trials)),
-    "--video-count", str(args.video_count),
-  ]
-  command.extend(("--execute-steps", str(args.execute_steps)))
-  if args.max_sim_seconds is not None:
-    command.extend(("--max-sim-seconds", str(args.max_sim_seconds)))
-  if args.record_fps is not None:
-    command.extend(("--record-fps", str(args.record_fps)))
-  command.extend(runner_args)
-  print(json.dumps({
+  multiple_modes = len(modes) > 1
+  evaluations = []
+  for mode in modes:
+    output = args.output_dir / mode["name"] if multiple_modes else args.output_dir
+    command = [
+      sys.executable,
+      str(ROOT / "scripts/workcell" / runner),
+      "--deployment-manifest", str(manifest),
+      "--output-dir", str(output),
+      "--seeds",
+      *(str(seed) for seed in range(args.seed_start, args.seed_start + args.num_trials)),
+      "--video-count", str(args.video_count),
+      "--execute-steps", str(mode["value"]),
+    ]
+    if args.max_sim_seconds is not None:
+      command.extend(("--max-sim-seconds", str(args.max_sim_seconds)))
+    if args.record_fps is not None:
+      command.extend(("--record-fps", str(args.record_fps)))
+    command.extend(runner_args)
+    evaluations.append({**mode, "output_dir": str(output), "command": command})
+  description = {
     "task": args.task,
     "model_family": args.model_family,
     "deployment_id": payload.get("deployment_id"),
@@ -198,16 +246,46 @@ def main(argv=None):
     "num_trials": args.num_trials,
     "seeds": list(range(args.seed_start, args.seed_start + args.num_trials)),
     "video_count": args.video_count,
-    "execute_steps": args.execute_steps,
+    "execute_steps": [mode["value"] for mode in modes],
     "max_sim_seconds": args.max_sim_seconds,
     "record_fps": args.record_fps,
-    "command": command,
-  }, indent=2, ensure_ascii=False))
+    "evaluations": evaluations,
+  }
+  if not multiple_modes:
+    description["execute_steps"] = modes[0]["value"]
+    description["command"] = evaluations[0]["command"]
+  print(json.dumps(description, indent=2, ensure_ascii=False))
   if args.dry_run:
     return 0
   if args.output_dir.exists():
     raise FileExistsError(f"output must be a new directory: {args.output_dir}")
-  return subprocess.run(command, check=False).returncode
+  if not multiple_modes:
+    return subprocess.run(evaluations[0]["command"], check=False).returncode
+
+  args.output_dir.mkdir(parents=True, exist_ok=False)
+  matrix_path = args.output_dir / "evaluation_matrix.json"
+  matrix = {**description, "complete": False, "results": []}
+  matrix_path.write_text(
+    json.dumps(matrix, indent=2, ensure_ascii=False), encoding="utf-8"
+  )
+  for evaluation in evaluations:
+    returncode = subprocess.run(evaluation["command"], check=False).returncode
+    matrix["results"].append({
+      "request": evaluation["request"],
+      "execute_steps": evaluation["value"],
+      "output_dir": evaluation["output_dir"],
+      "returncode": returncode,
+    })
+    matrix["complete"] = (
+      len(matrix["results"]) == len(evaluations)
+      and all(result["returncode"] == 0 for result in matrix["results"])
+    )
+    matrix_path.write_text(
+      json.dumps(matrix, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    if returncode:
+      return returncode
+  return 0
 
 
 if __name__ == "__main__":

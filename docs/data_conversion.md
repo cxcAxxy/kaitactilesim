@@ -67,6 +67,10 @@ pixi run convert-dataset -- \
   --workers 4 --staging-root /path/to/fast_staging
 ```
 
+USB π0.5 适配器同时接受历史扁平 Raw 批次和统一采集器生成的
+`task_collection_v2` 嵌套目录。统一批次只选择 `summary.json` 中已成功、已发布的
+episode；外层采集编号会映射为 LeRobot 来源编号，原始 HDF5 不会改名或改写。
+
 Card/USB 转 EgoTouch：
 
 ```bash

@@ -4,17 +4,24 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-
-CONFIG_NAME = "pi05_kaihand_usb_0914_200"
+CONFIG_NAME = "pi05_kaihand"
+NORMALIZER_ASSET_ID = "normalizer"
 EXPECTED_TASK = (
   "Grasp the USB plug with the right hand, align it with the socket, "
   "insert it until seated, then release it and withdraw the hand."
 )
+
+
+def normalizer_asset_id(checkpoint: Path) -> str:
+  norm_stats = checkpoint / "assets" / NORMALIZER_ASSET_ID / "norm_stats.json"
+  if not norm_stats.is_file():
+    raise ValueError(f"missing checkpoint normalization stats: {norm_stats}")
+  return NORMALIZER_ASSET_ID
 
 
 def sha256_file(path: Path) -> str:
@@ -96,7 +103,6 @@ def main() -> None:
       "observation.images.head",
       "observation.images.right_wrist",
     ],
-    "task": EXPECTED_TASK,
   }
   mismatches = {
     key: {"expected": expected, "actual": metadata.get(key)}
@@ -109,6 +115,13 @@ def main() -> None:
     raise RuntimeError("model horizon and policy metadata disagree")
   if int(train_config.model.action_dim) != metadata["model_action_dim"]:
     raise RuntimeError("model action dimension and policy metadata disagree")
+  if train_config.data.__class__.__name__ != "LeRobotKaiHandDataConfig":
+    raise RuntimeError(
+      f"expected LeRobotKaiHandDataConfig, got {train_config.data.__class__.__name__}"
+    )
+  if train_config.data.use_delta_arm_actions is not True:
+    raise RuntimeError("USB pi0.5 inference requires delta arm action transforms")
+  asset_id = normalizer_asset_id(checkpoint)
 
   print(f"Hashing committed inference payload under {checkpoint} ...", flush=True)
   checkpoint_sha256, checkpoint_files = checkpoint_identity(
@@ -117,7 +130,6 @@ def main() -> None:
   source_paths = [
     openpi_root / "src/openpi/training/config.py",
     openpi_root / "src/openpi/policies/kaihand_policy.py",
-    openpi_root / "src/openpi/policies/kaihand_usb_policy.py",
     openpi_root / "src/openpi/policies/policy_config.py",
     openpi_root / "src/openpi/serving/websocket_policy_server.py",
   ]
@@ -133,6 +145,7 @@ def main() -> None:
     "task": "usb-insert",
     "model_family": "pi0.5",
     "model_config_name": CONFIG_NAME,
+    "normalizer_asset_id": asset_id,
     "checkpoint_path": str(checkpoint),
     "checkpoint_sha256": checkpoint_sha256,
     "checkpoint_step": step,
@@ -164,7 +177,7 @@ def main() -> None:
     "checkpoint_frozen_by_content_hash": True,
     "control_hz": metadata["control_hz"],
     "suggested_execute_steps": metadata["suggested_replan_steps"],
-    "instruction": metadata["task"],
+    "instruction": EXPECTED_TASK,
     "model_project_path": str(openpi_root),
     "openpi_source_sha256": _canonical_hash(source_rows),
     "openpi_source_files": source_rows,

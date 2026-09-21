@@ -20,7 +20,7 @@
 ```text
 --num-trials N       # 默认 20
 --seed-start S       # 默认 0
---video-count V      # 默认 min(3, N)，允许 0..N
+--video-count V      # 默认 N，即默认全部录像；允许 0..N
 ```
 
 `--num-trials` 决定成功率统计的总 trial 数；`--video-count` 只决定前多少个
@@ -40,11 +40,12 @@ trial 生成视频，不改变模型推理、任务执行或指标统计。
 
 模型输入图像的 `--width/--height` 与 review 渲染分辨率相互独立；修改 review 参数不会改变模型输入。
 
-模型输入相机以 deployment manifest 的 `observation_contract.cameras` 为准，评估视频的第二画面可以独立选择为 `global` 或腕部相机。视频未显示某个模型输入画面，不表示 runner 没有向模型传入该视角；运行方式见[统一模型推理与评估](model_evaluation.md)。
+模型输入相机以 deployment manifest 的 `observation_contract.cameras` 为准，评估视频的第二画面可以独立选择为 `global` 或腕部相机。合同含 `right_wrist` 时会自动增加右腕模型输入画面；若第二画面已经是 `right_wrist`，则不重复。当前公共布局不保证单独展示左腕画面，但 runner 仍会按照合同向模型传入该视角。运行方式见[统一模型推理与评估](model_evaluation.md)。
 
 预测步数由模型通过 `action_horizon` 声明，评测 runner 不再限定为固定 32 步。
 `--execute-steps` 控制每次实际执行多少步，必须满足
-`1 <= execute_steps <= action_horizon`。不同模型 runner 的默认值可能不同，正式对比时应显式指定同一值。评测元数据会同时记录 `prediction_horizon`、`execute_steps` 和
+`1 <= execute_steps <= action_horizon`。统一正式评估默认分别运行 `16` 和完整
+`action_horizon` 两组；评测元数据会同时记录 `prediction_horizon`、`execute_steps` 和
 `replan_period_s`。
 
 ## 视频输出

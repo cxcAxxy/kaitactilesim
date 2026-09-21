@@ -22,6 +22,9 @@ from kaihand_tactile_env.shared.egosteer_client import (
   EgoSteerPolicyClient,
   ObservationHistory,
 )
+from kaihand_tactile_env.shared.policy_cameras import (
+  include_model_right_wrist_panel,
+)
 from kaihand_tactile_env.shared.rendering import WorkcellRenderer
 from kaihand_tactile_env.shared.simulation import ArmHandSimulation
 from kaihand_tactile_env.tasks.usb_insert import config as usb_config
@@ -336,6 +339,9 @@ async def run(args):
             render_width=args.review_render_width,
             render_height=args.review_render_height,
             second_camera=args.review_second_camera,
+            include_model_wrist=include_model_right_wrist_panel(
+              camera_names, args.review_second_camera
+            ),
             metrics=outcome,
             heading="USB INSERT MODEL EVALUATION",
             metadata={

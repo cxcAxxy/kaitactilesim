@@ -287,6 +287,11 @@ def main() -> None:
       review_meta = json.loads((review / "review.json").read_text(encoding="utf-8"))
       if review_meta.get("completed") is not True or review_meta.get("second_camera") != "global":
         raise RuntimeError(f"seed={seed}: incomplete review video")
+      expected_model_views = ["head"]
+      if "right_wrist" in manifest["observation_contract"].get("cameras", []):
+        expected_model_views.append("right_wrist")
+      if review_meta.get("model_input_cameras_displayed") != expected_model_views:
+        raise RuntimeError(f"seed={seed}: review omitted a model camera")
     status = summary.get("status")
     success = status == "success" and summary.get("evaluation", {}).get("success") is True
     valid = status in ("success", "task_not_completed")
