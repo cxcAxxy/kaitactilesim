@@ -57,24 +57,34 @@ ADAPTERS = {
     "whiteboard-wipe", "egosteer", (), "convert_card_to_egosteer.py"
   ),
   ("pick-place", "pi05"): AdapterContract(
-    "pick-place", "pi05", (("head",),), "convert_pickplace_to_lerobot.py"
+    "pick-place", "pi05", (("head",),),
+    "convert_pickplace_unified_to_lerobot.py",
+    resumable=True,
   ),
   ("poker-draw", "pi05"): AdapterContract(
     "poker-draw", "pi05", (("head", "right_wrist"),),
-    "convert_card_to_lerobot.py",
+    "convert_poker_unified_to_lerobot.py",
+    resumable=True,
   ),
   ("usb-insert", "pi05"): AdapterContract(
     "usb-insert", "pi05", (("head", "right_wrist"),),
     "convert_usb_unified_to_lerobot.py",
   ),
   ("bulb-screw", "pi05"): AdapterContract(
-    "bulb-screw", "pi05", (), "convert_card_to_lerobot.py"
+    "bulb-screw", "pi05", (), "convert_shared_to_lerobot.py",
+    resumable=True,
+  ),
+  ("vase-wipe", "pi05"): AdapterContract(
+    "vase-wipe", "pi05", (), "convert_shared_to_lerobot.py",
+    resumable=True,
   ),
   ("install-ram", "pi05"): AdapterContract(
-    "install-ram", "pi05", (), "convert_card_to_lerobot.py"
+    "install-ram", "pi05", (), "convert_shared_to_lerobot.py",
+    resumable=True,
   ),
   ("whiteboard-wipe", "pi05"): AdapterContract(
-    "whiteboard-wipe", "pi05", (), "convert_shared_to_lerobot.py"
+    "whiteboard-wipe", "pi05", (), "convert_shared_to_lerobot.py",
+    resumable=True,
   ),
   ("poker-draw", "egotouch"): AdapterContract(
     "poker-draw", "egotouch", (), "shared.tict_export", resumable=True
