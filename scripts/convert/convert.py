@@ -23,6 +23,11 @@ from kaihand_tactile_env.pipeline.conversion import (
 from kaihand_tactile_env.shared.cameras import TRAINING_CAMERA_NAMES
 
 ROOT = Path(__file__).resolve().parents[2]
+LOCAL_PI05_BACKENDS = {
+  "convert_pickplace_unified_to_lerobot.py",
+  "convert_poker_unified_to_lerobot.py",
+  "convert_shared_to_lerobot.py",
+}
 
 
 def parse_args(argv=None):
@@ -97,7 +102,7 @@ def _command(args, dataset, contract):
   python = args.pi05_python or openpi_root / ".venv-pi05/bin/python"
   backend_path = (
     ROOT / "scripts/workcell" / contract.backend
-    if contract.backend == "convert_shared_to_lerobot.py"
+    if contract.backend in LOCAL_PI05_BACKENDS
     else openpi_root / "examples/kaihand" / contract.backend
   )
   cmd = [
@@ -107,16 +112,23 @@ def _command(args, dataset, contract):
     "--output-dir", str(args.output_dir),
     "--expected-episodes", str(len(dataset.episodes)),
     "--fingerprint-workers", str(args.workers),
-    "--image-writer-processes", "0",
-    "--image-writer-threads", str(args.workers),
   ]
-  if contract.backend == "convert_shared_to_lerobot.py":
+  if contract.backend not in LOCAL_PI05_BACKENDS:
+    cmd += [
+      "--image-writer-processes", "0",
+      "--image-writer-threads", str(args.workers),
+    ]
+  if contract.backend in LOCAL_PI05_BACKENDS:
     cmd += ["--openpi-root", str(openpi_root)]
   if args.staging_root:
     cmd += ["--staging-root", str(args.staging_root)]
   if args.verify_source_hash:
     cmd.append("--verify-source-hash")
-  if contract.backend in ("convert_card_to_lerobot.py", "convert_shared_to_lerobot.py"):
+  if contract.backend in (
+    "convert_card_to_lerobot.py",
+    "convert_poker_unified_to_lerobot.py",
+    "convert_shared_to_lerobot.py",
+  ):
     cmd += ["--task", dataset.task, "--cameras", *dataset.cameras]
     if args.instruction:
       cmd += ["--instruction", args.instruction]

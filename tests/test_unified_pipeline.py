@@ -56,7 +56,27 @@ def test_conversion_contract_rejects_missing_camera_and_accepts_shared_actions(t
   with pytest.raises(ValueError, match="lacks requested cameras"):
     inspect_raw_dataset(tmp_path, task="auto")
   dataset = inspect_raw_dataset(tmp_path, task="auto", cameras=("head",))
-  assert adapter_for(dataset, "pi05").backend == "convert_card_to_lerobot.py"
+  contract = adapter_for(dataset, "pi05")
+  assert contract.backend == "convert_shared_to_lerobot.py"
+  assert contract.resumable is True
+
+
+@pytest.mark.parametrize(
+  ("task", "cameras", "backend"),
+  [
+    ("pick-place", ("head",), "convert_pickplace_unified_to_lerobot.py"),
+    ("poker-draw", ("head", "right_wrist"), "convert_poker_unified_to_lerobot.py"),
+    ("bulb-screw", ("head", "right_wrist"), "convert_shared_to_lerobot.py"),
+    ("install-ram", ("head", "right_wrist"), "convert_shared_to_lerobot.py"),
+    ("vase-wipe", ("head", "right_wrist"), "convert_shared_to_lerobot.py"),
+  ],
+)
+def test_remaining_pi05_adapters_are_registered(tmp_path, task, cameras, backend):
+  raw_episode(tmp_path / task / "000001/attempt_001/data/raw/episode.h5", task)
+  dataset = inspect_raw_dataset(tmp_path, task=task, cameras=cameras)
+  contract = adapter_for(dataset, "pi05")
+  assert contract.backend == backend
+  assert contract.resumable is True
 
 
 def test_pi05_camera_contract_is_explicit(tmp_path):
@@ -140,6 +160,37 @@ def test_whiteboard_pi05_dry_run_uses_local_openpi_wrapper(tmp_path, capsys):
   assert payload["adapter"] == "convert_shared_to_lerobot.py"
   assert "convert_shared_to_lerobot.py" in payload["command"][1]
   assert "--openpi-root" in payload["command"]
+
+
+@pytest.mark.parametrize(
+  ("task", "cameras", "backend"),
+  [
+    ("pick-place", ("head",), "convert_pickplace_unified_to_lerobot.py"),
+    ("poker-draw", ("head", "right_wrist"), "convert_poker_unified_to_lerobot.py"),
+    ("bulb-screw", ("head", "right_wrist"), "convert_shared_to_lerobot.py"),
+    ("install-ram", ("head", "right_wrist"), "convert_shared_to_lerobot.py"),
+    ("vase-wipe", ("head", "right_wrist"), "convert_shared_to_lerobot.py"),
+  ],
+)
+def test_remaining_pi05_dry_runs_use_local_wrappers(
+  tmp_path, capsys, task, cameras, backend
+):
+  source = tmp_path / "raw"
+  raw_episode(source / task / "000001/attempt_001/data/raw/episode.h5", task)
+  module = run_path(str(Path(__file__).parents[1] / "scripts/convert/convert.py"))
+  assert module["main"]([
+    "--input-dir", str(source),
+    "--output-dir", str(tmp_path / "output"),
+    "--format", "pi05",
+    "--task", task,
+    "--cameras", *cameras,
+    "--dry-run",
+  ]) == 0
+  payload = json.loads(capsys.readouterr().out)
+  assert payload["adapter"] == backend
+  assert backend in payload["command"][1]
+  assert "--openpi-root" in payload["command"]
+  assert "--image-writer-threads" not in payload["command"]
 
 
 def test_conversion_cli_defaults_to_head_and_checks_episode_count(tmp_path, capsys):

@@ -41,7 +41,10 @@ pixi run convert-dataset -- --list-support
 - `--list-support` 从代码里的 adapter 注册表直接输出当前支持能力，文档表格不是
   调度依据。
 
-目录发现是递归的；但现有 EgoSteer/π0.5 后端仍保留各自原始批次的内部布局检查。也就是说，输入和输出根路径可以自由指定，但历史后端要求根目录内的 episode/sidecar/summary 结构符合对应格式。
+目录发现是递归的。PickPlace 和 Card 的 π0.5 本地 wrapper 同时接受历史平铺
+批次与 `task_collection_v2` 嵌套批次；统一批次严格以 `summary.json` 中已成功、已发布的
+episode 为准，并把外层采集编号保存为来源编号。Bulb、RAM、Vase 和 Whiteboard 的共享
+后端直接递归发现 Raw，并从路径中的外层 attempt 结构恢复采集编号。
 
 ## 使用示例
 
@@ -66,6 +69,15 @@ pixi run convert-dataset -- \
   --cameras head right_wrist \
   --workers 4 --staging-root /path/to/fast_staging
 ```
+
+PickPlace 和 Card 的 π0.5 wrapper 不改名、不复制也不改写 Raw。统一采集批次中每个
+隔离 recorder 可以都生成内部编号 0；wrapper 会使用 `summary.json` 的外层编号作为
+LeRobot 来源编号，避免 200 条样本发生编号冲突。
+
+除 USB 外的 π0.5 本地 wrapper 使用统一高速发布后端：每个 worker 独立转换一条
+episode，HDF5 RGB 以批次直接送入 FFmpeg，输出 LeRobot v2.1 的 video feature，
+不会生成逐帧临时 PNG。状态、动作、时间戳和来源编号仍由 OpenPI 锁定的任务转换器
+计算，因此加速不会改变任务语义。
 
 Card/USB 转 EgoTouch：
 
@@ -101,13 +113,15 @@ pixi run convert-dataset -- \
 | USB | 包含 head 的任意 Raw 相机子集 | head + right_wrist | 包含 head 的任意子集 |
 | Bulb | 包含 head 的任意 Raw 相机子集 | 包含 head 的任意 Raw 相机子集 | 待接入 |
 | RAM | 包含 head 的任意 Raw 相机子集 | 包含 head 的任意 Raw 相机子集 | 待接入 |
-| Vase | 待接入 | 待接入 | 待接入 |
+| Vase | 待接入 | 包含 head 的任意 Raw 相机子集 | 待接入 |
 | Whiteboard | 包含 head 的任意 Raw 相机子集 | 包含 head 的任意 Raw 相机子集 | 包含 head 的任意子集 |
 
 Bulb/RAM 的 EgoSteer 与 π0.5 adapter 已冻结并注册：EgoSteer 使用归档的双手腕/
 十指 taskspace 形成 48 维下一帧动作；π0.5 使用右臂 7 关节与右手 20 关节形成
 27 维绝对关节状态/动作。两者只接受成功 sidecar，并检查 30 Hz 相机同步。
-Bulb、RAM、Vase 的 EgoTouch 以及 Vase 的 EgoSteer/π0.5 仍须完成各自的模型数据合同，
+Vase 的 π0.5 adapter 使用相同的 27 维右臂+右手合同，保留真实 500 Hz 源状态时钟，
+在 30 Hz 相机时刻插值状态并使用下一相机帧作为动作，不就地降采样或改写 Raw。
+Bulb、RAM、Vase 的 EgoTouch 以及 Vase 的 EgoSteer 仍须完成各自的模型数据合同，
 不能仅凭 Raw 结构宣称可训练。Whiteboard 使用共享右臂+右手动作合同，三种
 输出格式均已在注册表中显式接入。
 
@@ -120,7 +134,7 @@ Bulb、RAM、Vase 的 EgoTouch 以及 Vase 的 EgoSteer/π0.5 仍须完成各自
 | PickPlace | `head` | 可回放、验证，并使用 head-only adapter；不能伪造缺失的腕部视角 |
 | Card | `head + right_wrist` | 可按历史双相机合同回放和转换；不能选择缺失的 `left_wrist` |
 | Bulb / RAM | 三相机 | Raw 、回放及已注册的 EgoSteer/π0.5 转换继续可用 |
-| Vase | 三相机 | Raw 、验证和回放可用；三种训练格式的语义 adapter 仍待实现 |
+| Vase | 三相机 | Raw、回放及 π0.5 共享右臂+右手 adapter 可用；EgoSteer/EgoTouch 待实现 |
 | USB | `head + right_wrist` | 文件结构仍可读；新版改了高位悬停/对准/接近运动分布，须与新 USB 批次分版管理，不要静默混合 |
 
 因此“可用”分为两层：Raw 可读/可回放不等于已有对应模型的语义转换 adapter；
@@ -158,14 +172,22 @@ tail -f /cpfs_infra/user/chenxianchi/conversion_logs/0917_200/all.log
 
 ## 性能、校验与恢复
 
-- `--workers` 控制可并行的 episode/编码工作数。
-- `--staging-root` 可把临时工作放到较快的本地或 CPFS 目录，再原子发布到目标路径。
-- 默认信任采集 sidecar 的源摘要，只有指定 `--verify-source-hash` 才重新读取全部 HDF5 计算哈希。
-- EgoSteer 后端直接从 HDF5 编码，不需要临时 PNG。
-- 现有 π0.5/LeRobot 后端仍使用 image-writer 临时 PNG；统一入口没有伪装成已消除这一开销。
-- EgoTouch 支持 episode/camera 级 `--resume`；只有通过现有产物身份与完整性检查的
-  目录才会跳过，并持续原子更新 batch manifest。
-- EgoSteer/π0.5 当前使用完整 staging 后原子发布，不支持中途 episode 级续转；对它们使用 `--resume` 会明确报错。
+- PickPlace、Poker、Bulb、RAM、Vase 和 Whiteboard 的 π0.5 `--workers N`
+  表示同时转换 N 条 episode；每个 worker 使用一个 FFmpeg 编码线程。
+- 这些高速 π0.5 adapter 直接把 HDF5 RGB 管道送入 H.264 MP4，不生成逐帧临时
+  PNG；输出仍是 OpenPI 锁定环境可读取的标准 LeRobot v2.1 数据集。
+- `--staging-root` 存放 episode checkpoint 和组装目录。每条 episode 的 Parquet、
+  MP4、统计量和 `done.json` 原子提交，全部完成并通过官方 LeRobot reader 抽查后才
+  发布正式输出。
+- 中断后用相同参数加 `--resume` 重跑；已提交且身份、大小与转换计划一致的 episode
+  不会重新编码。计划不一致或已提交 checkpoint 损坏时明确失败，不静默混用。
+- 默认信任采集 sidecar 的 HDF5 SHA-256，避免为校验再次完整读取大文件；只有指定
+  `--verify-source-hash` 才并行重算源摘要。结构、时钟、动作对齐、FFprobe 视频合同、
+  metadata 总数和官方 reader 解码检查仍然保留。
+- EgoSteer 后端同样直接从 HDF5 编码，不需要临时 PNG。EgoTouch 支持
+  episode/camera 级 `--resume`。
+- USB 的独立 π0.5 adapter 仍沿用既有 image-backed v2.1 合同；另有模型中立的
+  LeRobot v3 高速转换器，二者不要混为同一种训练格式。
 - 正式输出目录必须不存在，避免覆盖已经发布的数据集。
 
 ## 新 adapter 接入
