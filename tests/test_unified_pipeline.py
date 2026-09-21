@@ -65,7 +65,7 @@ def test_pi05_camera_contract_is_explicit(tmp_path):
   with pytest.raises(ValueError, match="currently supports camera sets"):
     adapter_for(three, "pi05")
   legacy = inspect_raw_dataset(tmp_path, cameras=("head", "right_wrist"))
-  assert adapter_for(legacy, "pi05").backend == "convert_usb_to_lerobot.py"
+  assert adapter_for(legacy, "pi05").backend == "convert_usb_unified_to_lerobot.py"
 
 
 def test_conversion_cli_builds_path_independent_dry_run(tmp_path, capsys):
@@ -139,6 +139,27 @@ def test_whiteboard_pi05_dry_run_uses_local_openpi_wrapper(tmp_path, capsys):
   payload = json.loads(capsys.readouterr().out)
   assert payload["adapter"] == "convert_shared_to_lerobot.py"
   assert "convert_shared_to_lerobot.py" in payload["command"][1]
+  assert "--openpi-root" in payload["command"]
+
+
+def test_usb_pi05_dry_run_uses_unified_collection_wrapper(tmp_path, capsys):
+  source = tmp_path / "raw"
+  raw_episode(
+    source / "usb-insert/000001/attempt_001/data/raw/usb_000000.h5",
+    "usb-insert",
+  )
+  module = run_path(str(Path(__file__).parents[1] / "scripts/convert/convert.py"))
+  assert module["main"]([
+    "--input-dir", str(source),
+    "--output-dir", str(tmp_path / "output"),
+    "--format", "pi05",
+    "--task", "usb-insert",
+    "--cameras", "head", "right_wrist",
+    "--dry-run",
+  ]) == 0
+  payload = json.loads(capsys.readouterr().out)
+  assert payload["adapter"] == "convert_usb_unified_to_lerobot.py"
+  assert "convert_usb_unified_to_lerobot.py" in payload["command"][1]
   assert "--openpi-root" in payload["command"]
 
 
@@ -262,11 +283,14 @@ def test_evaluation_dispatch_dry_run(tmp_path, capsys):
   assert payload["command"][payload["command"].index("--execute-steps") + 1] == "6"
 
 
-def test_evaluation_defaults_to_twenty_trials_and_three_videos(tmp_path, capsys):
+def test_evaluation_defaults_to_twenty_recorded_trials_at_16_and_horizon(
+  tmp_path, capsys
+):
   manifest = tmp_path / "deployment.json"
   manifest.write_text(json.dumps({
     "task": "poker-draw",
     "model_family": "egosteer",
+    "prediction_horizon": 32,
     "observation_contract": {"cameras": ["head"]},
   }))
   module = run_path(str(Path(__file__).parents[1] / "scripts/evaluate/evaluate.py"))
@@ -280,8 +304,14 @@ def test_evaluation_defaults_to_twenty_trials_and_three_videos(tmp_path, capsys)
   payload = json.loads(capsys.readouterr().out)
   assert payload["num_trials"] == 20
   assert payload["seeds"] == list(range(20))
-  assert payload["video_count"] == 3
-  assert payload["execute_steps"] == 5
+  assert payload["video_count"] == 20
+  assert payload["execute_steps"] == [16, 32]
+  assert [row["request"] for row in payload["evaluations"]] == [16, "horizon"]
+  assert [row["value"] for row in payload["evaluations"]] == [16, 32]
+  assert payload["evaluations"][0]["output_dir"].endswith("execute_steps_16")
+  assert payload["evaluations"][1]["output_dir"].endswith(
+    "execute_steps_horizon_32"
+  )
 
 
 def test_evaluation_rejects_more_videos_than_trials(tmp_path):
@@ -380,6 +410,7 @@ def test_new_tasks_dispatch_to_shared_closed_loop_batch(
         "task": task,
         "model_family": family,
         "deployment_id": "test-deployment",
+        "prediction_horizon": 32,
         "observation_contract": {"cameras": ["head"]},
       }
     )
@@ -399,7 +430,9 @@ def test_new_tasks_dispatch_to_shared_closed_loop_batch(
     ]
   ) == 0
   payload = json.loads(capsys.readouterr().out)
-  assert payload["command"][1].endswith("evaluate_shared_task_policy_batch.py")
+  assert payload["evaluations"][0]["command"][1].endswith(
+    "evaluate_shared_task_policy_batch.py"
+  )
 
 
 def test_egotouch_dispatch_rejects_wrist_camera_contract(tmp_path):

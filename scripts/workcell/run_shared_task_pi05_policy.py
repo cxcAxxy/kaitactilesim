@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one manifest-bound pi0.5 trial for Bulb, RAM, or Vase."""
+"""Run one manifest-bound pi0.5 trial for a shared household task."""
 
 from __future__ import annotations
 

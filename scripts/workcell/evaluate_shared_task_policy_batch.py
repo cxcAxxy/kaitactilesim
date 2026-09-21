@@ -13,6 +13,8 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+EGL_VENDOR = ROOT / "scripts/collect/nvidia_egl_vendor.json"
+OPENPI_CLIENT = ROOT.parent / "openpi/packages/openpi-client/src"
 TASKS = ("bulb-screw", "install-ram", "vase-wipe", "whiteboard-wipe")
 RUNNERS = {
   "egosteer": ROOT / "scripts/workcell/run_shared_task_egosteer_policy.py",
@@ -125,6 +127,10 @@ def parse_args(argv=None):
 
 
 def _environment() -> dict[str, str]:
+  if not EGL_VENDOR.is_file():
+    raise FileNotFoundError(f"NVIDIA EGL vendor configuration is missing: {EGL_VENDOR}")
+  if not (OPENPI_CLIENT / "openpi_client/__init__.py").is_file():
+    raise FileNotFoundError(f"OpenPI client source is missing: {OPENPI_CLIENT}")
   environment = {
     **os.environ,
     "OPENBLAS_NUM_THREADS": "1",
@@ -133,12 +139,14 @@ def _environment() -> dict[str, str]:
     "LP_NUM_THREADS": "1",
     "MUJOCO_GL": "egl",
     "KAIHAND_RENDER_BACKEND": "hardware",
-    "__EGL_VENDOR_LIBRARY_FILENAMES": str(
-      ROOT / ".venv/etc/kaihand/10_nvidia.json"
-    ),
+    "__EGL_VENDOR_LIBRARY_FILENAMES": str(EGL_VENDOR),
     "NO_PROXY": "127.0.0.1,localhost",
     "no_proxy": "127.0.0.1,localhost",
   }
+  pythonpath = [str(ROOT / "src"), str(OPENPI_CLIENT)]
+  if environment.get("PYTHONPATH"):
+    pythonpath.append(environment["PYTHONPATH"])
+  environment["PYTHONPATH"] = os.pathsep.join(pythonpath)
   environment.pop("LIBGL_ALWAYS_SOFTWARE", None)
   for key in (
     "HTTP_PROXY",
@@ -273,13 +281,22 @@ def main(argv=None):
     reason, valid = classify(report)
     if identity_errors:
       reason, valid = "trial_identity_mismatch", False
-    if trial_index < args.video_count:
+    if valid and trial_index < args.video_count:
       required_review = ("review.mp4", "review.json", "frames.jsonl")
       missing = [
         name for name in required_review if not (trial / "review" / name).is_file()
       ]
       if missing:
         reason, valid = "incomplete_review_artifact", False
+      else:
+        review_metadata = json.loads(
+          (trial / "review" / "review.json").read_text(encoding="utf-8")
+        )
+        expected_model_views = ["head"]
+        if "right_wrist" in deployment["observation_contract"].get("cameras", []):
+          expected_model_views.append("right_wrist")
+        if review_metadata.get("model_input_cameras_displayed") != expected_model_views:
+          reason, valid = "review_omitted_model_camera", False
     row = {
       "seed": seed,
       "success": reason == "success",
@@ -315,8 +332,7 @@ def main(argv=None):
       json.dumps(aggregate, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(
-      f"DONE seed={seed} termination={reason} "
-      f"valid={valid} success={row['success']}",
+      f"DONE seed={seed} termination={reason} valid={valid} success={row['success']}",
       flush=True,
     )
   return 0 if all(item["valid_trial"] for item in results) else 2

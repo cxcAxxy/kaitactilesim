@@ -65,7 +65,7 @@ ADAPTERS = {
   ),
   ("usb-insert", "pi05"): AdapterContract(
     "usb-insert", "pi05", (("head", "right_wrist"),),
-    "convert_usb_to_lerobot.py",
+    "convert_usb_unified_to_lerobot.py",
   ),
   ("bulb-screw", "pi05"): AdapterContract(
     "bulb-screw", "pi05", (), "convert_card_to_lerobot.py"

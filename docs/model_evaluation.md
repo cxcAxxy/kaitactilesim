@@ -18,7 +18,8 @@ pixi run evaluate-policy -- \
   --output-dir /path/to/evaluation \
   --cameras head right_wrist \
   --num-trials 20 \
-  --video-count 5 \
+  --video-count 20 \
+  --execute-steps 16 horizon \
   -- --server ws://127.0.0.1:18783
 ```
 
@@ -29,7 +30,7 @@ pixi run evaluate-policy -- \
 - `--num-trials N`：运行 N 次评估，默认 `20`；
 - `--seed-start S`：使用连续 seed `S ... S+N-1`，默认从 `0` 开始；
 - `--video-count V`：前 V 次评估生成公共 review 视频，默认
-  `min(3, N)`；`0` 表示不录像，最大不能超过 N。
+  与 `N` 相同；默认 20 次全部录像，`0` 表示不录像，最大不能超过 N。
 
 例如评估 20 次但只保存前 6 次视频：
 
@@ -42,8 +43,22 @@ pixi run evaluate-policy -- \
   -- --server ws://127.0.0.1:18783
 ```
 
-需要每次都有视频时设置 `--video-count` 与 `--num-trials` 相同。具体
-runner 参数仍放在 `--` 后，但 `--seeds` 和 `--video-count` 已归统一入口管理。
+具体 runner 参数仍放在 `--` 后，但 `--seeds` 和 `--video-count` 已归统一入口管理。
+
+## Action chunk 评估矩阵
+
+正式默认同时评估两种执行长度：`execute_steps=16`，以及 deployment manifest
+声明的完整 `prediction_horizon`：
+
+```text
+--execute-steps 16 horizon
+```
+
+这里控制的是每次模型预测后实际执行的 action 数量，不是改变模型自身的预测 horizon。
+两组评估使用相同的 20 个 seed，各自全部录像，并分别写入
+`execute_steps_16/` 与 `execute_steps_horizon_H/`；根目录另外写
+`evaluation_matrix.json`。如只需要一组，也可只传一个值，例如
+`--execute-steps 16` 或 `--execute-steps horizon`。
 
 `--dry-run` 只验证 manifest、相机合同和 runner 分发，并打印最终子命令：
 
@@ -75,6 +90,46 @@ pixi run evaluate-policy -- \
 - `--cameras` 是对冻结合同的断言，不会修改模型输入或 checkpoint。
 - 旧模型继续使用其训练时的 head-only/双相机合同；需要三相机时必须重新转换数据、训练并发布新的 manifest。
 
+### 共享任务 π0.5 deployment
+
+Bulb、RAM、Vase 和 Whiteboard 使用同一套严格 deployment 工具。先在 OpenPI
+环境中冻结 task、prompt、normalizer、checkpoint 内容哈希和模型合同：
+
+```bash
+/path/to/openpi/.venv-pi05/bin/python \
+  scripts/workcell/prepare_shared_task_pi05_deployment.py \
+  --task bulb-screw \
+  --checkpoint /path/to/checkpoint/25000 \
+  --openpi-root /path/to/openpi \
+  --output-dir /path/to/bulb_step25000_deployment
+```
+
+可先增加 `--dry-run`，只检查 checkpoint、OpenPI 配置、normalizer 和相机合同，
+不计算完整哈希且不写目录。生成 manifest 后启动与其绑定的服务：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_PREALLOCATE=false \
+  /path/to/openpi/.venv-pi05/bin/python \
+  scripts/workcell/serve_shared_task_pi05_policy.py \
+  --deployment-manifest /path/to/bulb_step25000_deployment/deployment_manifest.json \
+  --port 18783
+```
+
+服务会拒绝任务 prompt、checkpoint、normalizer、相机、action 或 OpenPI 配置不一致的
+manifest，不能把 USB deployment 改路径后用于共享任务。
+
+Bulb 0920 的 20k/25k 正式评估可由独立子脚本完成。它会逐 checkpoint 执行 deployment、
+单 seed 录像 smoke、模型服务和两组正式评估（`execute_steps=16` 与模型 horizon；每组
+20 个 trial、20 个视频）：
+
+```bash
+cd /cpfs_infra/user/chenxianchi/code/kaitactilesim
+bash scripts/workcell/run_bulb_pi05_0920_evaluation.sh 20000 25000
+```
+
+脚本只清理自己启动的模型服务，并通过服务日志判断 WebSocket 是否就绪，不会用裸 TCP
+连接制造握手错误。即使脚本失败，退出的也只是 `bash` 子进程，不会关闭当前终端。
+
 相机合同统一使用规范顺序，当前网络 runner 支持以下四种组合：
 
 - `head`
@@ -89,6 +144,9 @@ pixi run evaluate-policy -- \
 worker 对应既有单路 RGB 网络，只接受 `cameras: ["head"]`；给它声明腕部相机会在
 启动模型前明确报错。这里的“可选”表示 runner 能按 checkpoint 合同选择，并不表示
 head-only checkpoint 能在评估时临时增加腕部输入。
+
+当相机合同含 `right_wrist` 时，公共 review 会自动增加右腕模型输入画面；若第二画面
+本身已经选择 `right_wrist`，则不重复显示。该规则同时适用于 EgoSteer 和 π0.5。
 
 ## 当前 runner 覆盖
 
@@ -120,7 +178,7 @@ pixi run evaluate-policy -- \
   --deployment-manifest /path/to/ram_pi05/deployment.json \
   --output-dir /path/to/ram_pi05_eval \
   --cameras head left_wrist right_wrist \
-  --num-trials 20 --video-count 5 \
+  --num-trials 20 --video-count 20 --execute-steps 16 horizon \
   -- --server ws://127.0.0.1:18783
 ```
 
@@ -132,7 +190,8 @@ pixi run evaluate-policy -- \
   --task vase-wipe --model-family egotouch \
   --deployment-manifest /path/to/vase_egotouch/deployment.json \
   --output-dir /path/to/vase_egotouch_eval \
-  --cameras head --num-trials 20 --video-count 5 \
+  --cameras head --num-trials 20 --video-count 20 \
+  --execute-steps 16 horizon \
   -- --model-python /path/to/egotouch/python \
      --model-project /path/to/egotouch
 ```
@@ -153,6 +212,14 @@ pixi run evaluate-policy -- \
 - 任务 reset、seed、超时和安全限制；
 - 任务成功指标、失败原因、逐 trial 结果和聚合统计；
 - 可选评估视频与触觉复核产物。
+
+## 串行与并行
+
+当前正式 batch 是串行评估，固定 `workers=1`。protocol 中的 `workers` 字段是运行记录，
+不是仅修改数值就会生效的并行开关。要并行需要 batch 调度器同时管理多个独立 trial
+子进程、输出目录、失败回收和聚合写入；还必须确认模型服务的并发语义。当前 EgoSteer
+和 π0.5 WebSocket 服务在事件循环中同步调用单个模型的 `infer`，多个 rollout 即使并发
+连接，GPU 推理仍会串行，并可能改变随机采样请求顺序。因此正式可比结果仍使用串行模式。
 
 评估视频内容和参数见[模型评测视频](policy_evaluation_video.md)。
 

@@ -5,6 +5,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from kaihand_tactile_env.shared.evaluation_video import compose_evaluation_frame
+from kaihand_tactile_env.shared.policy_cameras import (
+  include_model_right_wrist_panel,
+)
 from kaihand_tactile_env.tasks.poker_draw.review_metrics import PokerReviewMetrics
 
 
@@ -61,6 +64,17 @@ def test_compositor_can_show_both_model_cameras_and_global():
   )
 
   assert frame.size == (1920, 1080)
+
+
+def test_right_wrist_model_input_gets_a_dedicated_review_panel():
+  assert include_model_right_wrist_panel(("head", "right_wrist"), "global")
+  assert include_model_right_wrist_panel(
+    ("head", "left_wrist", "right_wrist"), "overhead"
+  )
+  assert not include_model_right_wrist_panel(("head",), "global")
+  assert not include_model_right_wrist_panel(
+    ("head", "right_wrist"), "right_wrist"
+  )
 
 
 def test_poker_metrics_preserve_negative_current_and_physics_peak():

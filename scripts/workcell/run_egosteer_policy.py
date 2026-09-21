@@ -844,6 +844,9 @@ async def _run(args: argparse.Namespace) -> RolloutStats:
           )
         if args.record:
           from kaihand_tactile_env.shared.evaluation_video import EvaluationVideo
+          from kaihand_tactile_env.shared.policy_cameras import (
+            include_model_right_wrist_panel,
+          )
 
           recorder = EvaluationVideo(
             simulation,
@@ -854,6 +857,9 @@ async def _run(args: argparse.Namespace) -> RolloutStats:
             render_width=args.review_render_width,
             render_height=args.review_render_height,
             second_camera=args.review_second_camera,
+            include_model_wrist=include_model_right_wrist_panel(
+              camera_names, args.review_second_camera
+            ),
             metadata={
               "server": args.server,
               "server_metadata": metadata,

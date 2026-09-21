@@ -188,6 +188,8 @@ def main():
       "fps": args.record_fps,
       "output_size": [1920, 1080],
       "bilateral_fingertip_force": True,
+      "model_views": deployment["observation_contract"].get("cameras", ["head"]),
+      "audit_view": "global",
     },
     "save_rgb": False,
     "head_input": "320x240 RGB, JPEG95, 30Hz; history6/stride30",
@@ -311,6 +313,11 @@ def main():
       review_metadata = json.loads((review / "review.json").read_text())
       if review_metadata.get("completed") is not True:
         raise RuntimeError(f"seed {seed}: review did not complete")
+      expected_model_views = ["head"]
+      if "right_wrist" in deployment["observation_contract"].get("cameras", []):
+        expected_model_views.append("right_wrist")
+      if review_metadata.get("model_input_cameras_displayed") != expected_model_views:
+        raise RuntimeError(f"seed {seed}: review omitted a model camera")
       if review_metadata.get("diagnostic_only") is not bool(
         args.disable_penetration_guard
       ):

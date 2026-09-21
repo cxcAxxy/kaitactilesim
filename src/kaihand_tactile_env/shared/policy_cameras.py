@@ -36,6 +36,13 @@ def policy_camera_names(
   return names
 
 
+def include_model_right_wrist_panel(
+  camera_names: tuple[str, ...] | list[str], second_camera: str
+) -> bool:
+  """Show the model's right-wrist view unless the second panel already does."""
+  return "right_wrist" in camera_names and second_camera != "right_wrist"
+
+
 def image_shape_hwc(observation_contract: Mapping[str, Any]) -> tuple[int, int, int]:
   """Read and validate the shared RGB image shape."""
   shape = observation_contract.get("image_shape_hwc", (240, 320, 3))

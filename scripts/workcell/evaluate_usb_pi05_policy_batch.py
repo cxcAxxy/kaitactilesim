@@ -4,23 +4,22 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
+from collections import Counter
+from pathlib import Path
 
 from kaihand_tactile_env.shared.config import default_model_path, model_fingerprint
 
-
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts/workcell/run_usb_pi05_policy.py"
+EGL_VENDOR = ROOT / "scripts/collect/nvidia_egl_vendor.json"
 OPENPI_CLIENT = (
-  Path("/cpfs_infra/user/chenxianchi/code/openpi")
-  / "packages/openpi-client/src"
+  Path("/cpfs_infra/user/chenxianchi/code/openpi") / "packages/openpi-client/src"
 )
 REVIEW_FILES = (
   "review.mp4",
@@ -62,9 +61,10 @@ def fingerprints() -> dict:
 
 
 def classify(report: dict) -> tuple[str, bool]:
-  if report.get("status") == "success" and report.get("evaluation", {}).get(
-    "success"
-  ) is True:
+  if (
+    report.get("status") == "success"
+    and report.get("evaluation", {}).get("success") is True
+  ):
     return "success", True
   if report.get("status") == "task_not_completed":
     return "time_limit", True
@@ -110,6 +110,8 @@ def main() -> None:
     parser.error("execute-steps must be positive")
   if args.max_sim_seconds <= 0 or args.trial_wall_limit <= 0:
     parser.error("time limits must be positive")
+  if not EGL_VENDOR.is_file():
+    raise FileNotFoundError(f"NVIDIA EGL vendor configuration is missing: {EGL_VENDOR}")
 
   deployment_path, deployment = load_manifest(args.deployment_manifest)
   horizon = int(deployment["prediction_horizon"])
@@ -177,9 +179,7 @@ def main() -> None:
     "MKL_NUM_THREADS": "1",
     "MUJOCO_GL": "egl",
     "KAIHAND_RENDER_BACKEND": "hardware",
-    "__EGL_VENDOR_LIBRARY_FILENAMES": str(
-      ROOT / ".venv/etc/kaihand/10_nvidia.json"
-    ),
+    "__EGL_VENDOR_LIBRARY_FILENAMES": str(EGL_VENDOR),
     "NO_PROXY": "127.0.0.1,localhost",
     "no_proxy": "127.0.0.1,localhost",
   }
@@ -275,10 +275,16 @@ def main() -> None:
     }
     if identity_errors:
       raise RuntimeError(f"seed {seed}: trial identity mismatch: {identity_errors}")
+    reason, valid = classify(summary)
     if trial_index < args.video_count:
       review = trial / "review"
       missing = [name for name in REVIEW_FILES if not (review / name).is_file()]
       if missing:
+        if not valid:
+          raise RuntimeError(
+            f"seed {seed}: trial failed before review completion: "
+            f"{summary.get('error') or f'returncode={returncode}'}; missing={missing}"
+          )
         raise RuntimeError(f"seed {seed}: incomplete review artifact: {missing}")
       review_metadata = json.loads((review / "review.json").read_text())
       if review_metadata.get("completed") is not True:
@@ -293,7 +299,6 @@ def main() -> None:
       ):
         raise RuntimeError(f"seed {seed}: review diagnostic-mode mismatch")
 
-    reason, valid = classify(summary)
     row = {
       "seed": seed,
       "success": reason == "success",
