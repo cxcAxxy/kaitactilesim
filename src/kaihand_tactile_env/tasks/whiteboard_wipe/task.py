@@ -80,6 +80,7 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
     self.handle_id = self.model.geom("eraser_handle").id
     self.pickup_center = self.object_pose("eraser")[:3].copy()
     self.grip = grasp.CLOSED_HAND.copy()
+    self.spread_grip = grasp.SPREAD_HAND.copy()
     self.open_grip = grasp.OPEN_HAND.copy()
     self.pickup_rotation = C.INITIAL_ERASER_ROTATION @ grasp.WRIST_ROTATION
     self.wrist_offset = C.INITIAL_ERASER_ROTATION @ (
@@ -87,7 +88,7 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
     )
     result = self.solve_ik(
       "right",
-      self.pickup_center + [0, 0, 0.12] + self.wrist_offset,
+      self.pickup_center + [0, 0, C.PICKUP_CLEARANCE_M] + self.wrist_offset,
       self.pickup_rotation,
       # This is an IK branch seed, not the reset posture.
       seed=grasp.APPROACH_ARM_SEED,

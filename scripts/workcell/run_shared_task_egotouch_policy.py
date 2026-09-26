@@ -57,6 +57,8 @@ def parse_args(argv=None):
   parser.add_argument("--response-timeout", type=float, default=180.0)
   parser.add_argument("--record", action=argparse.BooleanOptionalAction, default=True)
   parser.add_argument("--record-fps", type=int, choices=(5, 10), default=10)
+  parser.add_argument("--reference-dataset", type=Path)
+  parser.add_argument("--reference-episode-index", type=int, default=0)
   parser.add_argument("--review-width", type=int, default=1920)
   parser.add_argument("--review-height", type=int, default=1080)
   parser.add_argument("--review-render-width", type=int, default=640)
@@ -282,6 +284,10 @@ def run(args) -> dict:
           render_width=args.review_render_width,
           render_height=args.review_render_height,
           second_camera=args.review_second_camera,
+          include_review_wrist=args.review_second_camera != "right_wrist",
+          comparison=True,
+          reference_dataset=args.reference_dataset,
+          reference_episode_index=args.reference_episode_index,
           metrics=adapter,
           heading=f"{args.task.upper()} EGOTOUCH MODEL EVALUATION",
           metadata={

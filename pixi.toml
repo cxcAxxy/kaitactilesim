@@ -26,8 +26,8 @@ view-whiteboard-wipe = { cmd = "python scripts/workcell/view_whiteboard_wipe.py"
 run-whiteboard-wipe = { cmd = "python scripts/workcell/view_whiteboard_wipe.py --run-task", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", LP_NUM_THREADS = "4" }, description = "Pick up the eraser, wipe the board, and put it down" }
 check-whiteboard-wipe = { cmd = "python scripts/workcell/view_whiteboard_wipe.py --headless", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Headless whiteboard startup check" }
 record-whiteboard-example = { cmd = "python scripts/workcell/record_whiteboard_example.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", LP_NUM_THREADS = "4", MUJOCO_GL = "egl", MPLCONFIGDIR = "/tmp/whiteboard_matplotlib" }, description = "Record shared Raw whiteboard data, synchronized review videos and force analysis" }
-collect = { cmd = "python scripts/collect/collect.py", description = "Unified server collection for all seven tasks; see scripts/collect/README.md" }
-convert-dataset = { cmd = "python scripts/convert/convert.py", description = "Unified Raw to EgoSteer, pi0.5 or EgoTouch conversion; caller supplies paths, task and cameras" }
+collect = { cmd = "python scripts/collect/collect.py", description = "Unified server collection for all eight tasks; see scripts/collect/README.md" }
+convert-dataset = { cmd = "python scripts/convert/convert.py", description = "Unified Raw to EgoSteer, pi0.5, EgoTouch or model-neutral LeRobot v3 conversion" }
 evaluate-policy = { cmd = "python scripts/evaluate/evaluate.py", description = "Unified task/model policy evaluation dispatcher with manifest camera-contract validation" }
 view-install-ram = { cmd = "python scripts/workcell/view_install_ram.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Inspect the independent realistic-size DIMM installation scene" }
 run-install-ram = { cmd = "python scripts/workcell/view_install_ram.py --run-task", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Run RAM grasp, alignment, insertion and release" }

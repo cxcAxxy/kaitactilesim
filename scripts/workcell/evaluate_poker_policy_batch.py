@@ -13,6 +13,7 @@ from pathlib import Path
 from kaihand_tactile_env.shared.config import default_model_path, model_fingerprint
 
 ROOT = Path(__file__).resolve().parents[2]
+EGL_VENDOR = ROOT / "scripts/collect/nvidia_egl_vendor.json"
 RUNNER = ROOT / "scripts/workcell/run_poker_egosteer_policy.py"
 REVIEW_FILES = (
   "review.mp4",
@@ -127,6 +128,8 @@ def main():
     help="Record the first N requested seeds; 0 disables review videos",
   )
   parser.add_argument("--record-fps", type=int, choices=(5, 10), default=10)
+  parser.add_argument("--reference-dataset", type=Path)
+  parser.add_argument("--reference-episode-index", type=int, default=0)
   parser.add_argument(
     "--execute-steps",
     type=int,
@@ -139,6 +142,8 @@ def main():
     help="Diagnostic-only: do not stop on supported card/table penetration >0.6 mm",
   )
   args = parser.parse_args()
+  if args.reference_dataset is not None:
+    args.reference_dataset = args.reference_dataset.expanduser().resolve()
   if len(set(args.seeds)) != len(args.seeds) or any(s < 0 for s in args.seeds):
     parser.error("distinct nonnegative seeds required")
   if not 0 <= args.video_count <= len(args.seeds):
@@ -161,6 +166,10 @@ def main():
     "deployment_id": deployment["deployment_id"],
     "checkpoint": deployment["checkpoint_path"],
     "checkpoint_sha256": deployment["checkpoint_sha256"],
+    "reference_dataset": (
+      None if args.reference_dataset is None else str(args.reference_dataset)
+    ),
+    "reference_episode_index": args.reference_episode_index,
     "model_family": deployment["model_family"],
     "server": args.server,
     "seeds": args.seeds,
@@ -205,6 +214,8 @@ def main():
   (output / "protocol.json").write_text(json.dumps(protocol, indent=2))
   results = []
   started = time.monotonic()
+  if not EGL_VENDOR.is_file():
+    raise FileNotFoundError(f"NVIDIA EGL vendor configuration is missing: {EGL_VENDOR}")
   env = {
     **os.environ,
     "OPENBLAS_NUM_THREADS": "1",
@@ -213,9 +224,7 @@ def main():
     "LP_NUM_THREADS": "1",
     "MUJOCO_GL": "egl",
     "KAIHAND_RENDER_BACKEND": "hardware",
-    "__EGL_VENDOR_LIBRARY_FILENAMES": str(
-      ROOT / ".venv/etc/kaihand/10_nvidia.json"
-    ),
+    "__EGL_VENDOR_LIBRARY_FILENAMES": str(EGL_VENDOR),
     "NO_PROXY": "127.0.0.1,localhost",
     "no_proxy": "127.0.0.1,localhost",
   }
@@ -262,6 +271,11 @@ def main():
       "global",
       "--record" if trial_index < args.video_count else "--no-record",
     ]
+    if args.reference_dataset is not None:
+      command.extend((
+        "--reference-dataset", str(args.reference_dataset),
+        "--reference-episode-index", str(args.reference_episode_index),
+      ))
     if args.disable_penetration_guard:
       command.append("--disable-penetration-guard")
     print(f"START {len(results) + 1}/{len(args.seeds)} seed={seed}", flush=True)

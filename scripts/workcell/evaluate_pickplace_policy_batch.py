@@ -5,18 +5,20 @@ from __future__ import annotations
 
 import argparse
 import ast
-from collections import Counter
 import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
+from collections import Counter
+from pathlib import Path
 
 from kaihand_tactile_env.shared.config import default_model_path, model_fingerprint
+from kaihand_tactile_env.shared.evaluation_resume import require_valid_resume_trials
 
 ROOT = Path(__file__).resolve().parents[2]
+EGL_VENDOR = ROOT / "scripts/collect/nvidia_egl_vendor.json"
 REVIEW_FILES = ("review.mp4", "review.json", "frames.jsonl", "first_frame.png", "last_frame.png")
 RUNNERS = {
   "EgoSteer": ROOT / "scripts/workcell/run_pickplace_egosteer_policy.py",
@@ -97,6 +99,8 @@ def main() -> None:
   parser.add_argument("--trial-wall-limit", type=float, default=1800)
   parser.add_argument("--video-count", type=int, default=20)
   parser.add_argument("--record-fps", choices=(5, 10), type=int, default=10)
+  parser.add_argument("--reference-dataset", type=Path)
+  parser.add_argument("--reference-episode-index", type=int, default=0)
   parser.add_argument(
     "--diagnostic-relax-ik", action="store_true",
     help="EgoSteer-only simulation diagnostic: execute best-effort IK instead of aborting on reachability thresholds",
@@ -111,6 +115,8 @@ def main() -> None:
   )
   parser.add_argument("--output-dir", required=True, type=Path)
   args = parser.parse_args()
+  if args.reference_dataset is not None:
+    args.reference_dataset = args.reference_dataset.expanduser().resolve()
   if args.allow_source_change and not args.resume:
     parser.error("--allow-source-change requires --resume")
   if any(seed < 0 for seed in args.seeds) or len(set(args.seeds)) != len(args.seeds):
@@ -137,6 +143,10 @@ def main() -> None:
     "deployment_id": manifest["deployment_id"],
     "checkpoint_path": manifest["checkpoint_path"],
     "checkpoint_sha256": manifest["checkpoint_sha256"],
+    "reference_dataset": (
+      None if args.reference_dataset is None else str(args.reference_dataset)
+    ),
+    "reference_episode_index": args.reference_episode_index,
     "model_family": family, "prediction_horizon": horizon,
     "action_dim": manifest["action_dim"], "observation_contract": manifest["observation_contract"],
     "action_representation": manifest["action_representation"],
@@ -151,7 +161,14 @@ def main() -> None:
     "kinematic_reachability_guards_enabled": (
       not args.diagnostic_relax_ik if family == "EgoSteer" else None
     ),
-    "review": {"count": args.video_count, "fps": args.record_fps, "resolution": [1920, 1080], "second_camera": "global", "tactile_heatmaps_and_curves": True},
+    "review": {
+      "count": args.video_count,
+      "fps": args.record_fps,
+      "resolution": [1920, 1080],
+      "second_camera": "global",
+      "tactile_heatmaps": True,
+      "time_series_displayed": False,
+    },
     "source_hashes": frozen,
   }
   rows = []
@@ -205,6 +222,7 @@ def main() -> None:
       raise RuntimeError(
         f"resume trials must be the requested seed prefix: {completed_seeds} != {expected_prefix}"
       )
+    require_valid_resume_trials(rows)
     for index, seed in enumerate(completed_seeds):
       trial = output / f"seed_{seed:03d}"
       if not (trial / "summary.json").is_file():
@@ -228,10 +246,12 @@ def main() -> None:
     (output / "protocol.json").write_text(
       json.dumps(protocol, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+  if not EGL_VENDOR.is_file():
+    raise FileNotFoundError(f"NVIDIA EGL vendor configuration is missing: {EGL_VENDOR}")
   environment = {
     **os.environ, "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
     "MUJOCO_GL": "egl", "KAIHAND_RENDER_BACKEND": "hardware",
-    "__EGL_VENDOR_LIBRARY_FILENAMES": str(ROOT / ".venv/etc/kaihand/10_nvidia.json"),
+    "__EGL_VENDOR_LIBRARY_FILENAMES": str(EGL_VENDOR),
     "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
   }
   paths = [str(ROOT / "src"), "/cpfs_infra/user/chenxianchi/code/openpi/packages/openpi-client/src"]
@@ -255,6 +275,11 @@ def main() -> None:
       "--max-sim-seconds", str(args.max_sim_seconds), "--record-fps", str(args.record_fps),
       "--record" if index < args.video_count else "--no-record",
     ]
+    if args.reference_dataset is not None:
+      command.extend((
+        "--reference-dataset", str(args.reference_dataset),
+        "--reference-episode-index", str(args.reference_episode_index),
+      ))
     if args.diagnostic_relax_ik:
       command.append("--diagnostic-relax-ik")
     print(f"START {index + 1}/{len(args.seeds)} family={family} seed={seed}", flush=True)
@@ -293,8 +318,11 @@ def main() -> None:
       if review_meta.get("model_input_cameras_displayed") != expected_model_views:
         raise RuntimeError(f"seed={seed}: review omitted a model camera")
     status = summary.get("status")
-    success = status == "success" and summary.get("evaluation", {}).get("success") is True
-    valid = status in ("success", "task_not_completed")
+    success = (
+      returncode == 0 and status == "success"
+      and summary.get("evaluation", {}).get("success") is True
+    )
+    valid = returncode == 0 and status in ("success", "task_not_completed")
     row = {
       "seed": seed, "status": status, "success": success, "valid_trial": valid,
       "returncode": returncode, "sim_seconds": summary.get("sim_seconds"),

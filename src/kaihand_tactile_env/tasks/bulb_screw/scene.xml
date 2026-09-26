@@ -47,18 +47,123 @@
     <material name="bulb_metal" rgba="0.52 0.48 0.35 1" specular="0.7" shininess="0.6"/>
     <material name="bulb_fixture" rgba="0.12 0.23 0.29 1"/>
     <material name="bulb_mark" rgba="0.85 0.22 0.09 1"/>
+    <!-- One convex annular sector. Rotated copies form a hollow collision
+         funnel; a single annulus mesh would have a solid convex collision hull. -->
+    <mesh name="bulb_funnel_sector" vertex="0.016656274 -0.002192840 -0.012000000 0.016656274 0.002192840 -0.012000000 0.043623574 0.005743152 -0.012000000 0.043623574 -0.005743152 -0.012000000 0.016656274 -0.002192840 0.004000000 0.016656274 0.002192840 0.004000000 0.043623574 0.005743152 0.004000000 0.043623574 -0.005743152 0.004000000 0.029743346 -0.003915786 0.028000000 0.029743346 0.003915786 0.028000000 0.043623574 0.005743152 0.028000000 0.043623574 -0.005743152 0.028000000"
+          face="0 1 2 0 2 3 8 10 9 8 11 10 0 4 5 0 5 1 4 8 9 4 9 5 3 2 6 3 6 7 7 6 10 7 10 11 0 3 7 0 7 4 4 7 11 4 11 8 1 5 6 1 6 2 5 9 10 5 10 6"/>
   </asset>
   <worldbody>
     <camera name="bulb_closeup" pos="0.50 0.06 0.95" fovy="45"
             xyaxes="-0.9701425001 -0.2425356250 0.0000000000 0.1547522438 -0.6190089750 0.7699867738"/>
     <body name="bulb_fixture" pos="0.620 -0.180 0.680">
-      <geom name="bulb_fixture_base" class="bulb_collision" type="box"
-            pos="0 0 0.006" size="0.045 0.040 0.006" material="bulb_fixture"/>
+      <!-- Broad, low cylindrical plinth reaches the original socket walls. -->
+      <geom name="bulb_fixture_base" class="bulb_collision" type="cylinder"
+            pos="0 0 0.012" size="0.044 0.012" material="bulb_fixture"/>
       <geom name="bulb_fixture_pedestal" class="bulb_collision" type="cylinder"
-            pos="0 0 0.024" size="0.024 0.012" material="bulb_ceramic"/>
+            pos="0 0 0.031" size="0.044 0.007" material="bulb_fixture"/>
     </body>
     <body name="bulb_socket" pos="0.620 -0.180 0.730">
       <site name="bulb_socket_mouth" pos="0 0 0.006" size="0.001" group="3" rgba="0 1 0 0.7"/>
+      <!-- Continuous 44 mm outer radius from plinth top z=0.718. Inside,
+           the 16.8 mm throat reaches z=0.734 before opening to 30 mm at
+           z=0.758. The lower section overlaps the original socket wall;
+           the throat clears the 16 mm neck at the original thread entry. -->
+      <geom name="bulb_socket_funnel_00" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="1.0000000000 0 0 0.0000000000"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_01" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="0.9914448614 0 0 0.1305261922"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_02" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="0.9659258263 0 0 0.2588190451"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_03" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="0.9238795325 0 0 0.3826834324"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_04" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="0.8660254038 0 0 0.5000000000"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_05" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="0.7933533403 0 0 0.6087614290"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_06" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="0.7071067812 0 0 0.7071067812"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_07" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="0.6087614290 0 0 0.7933533403"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_08" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="0.5000000000 0 0 0.8660254038"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_09" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="0.3826834324 0 0 0.9238795325"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_10" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="0.2588190451 0 0 0.9659258263"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_11" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="0.1305261922 0 0 0.9914448614"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_12" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="0.0000000000 0 0 1.0000000000"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_13" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="-0.1305261922 0 0 0.9914448614"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_14" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="-0.2588190451 0 0 0.9659258263"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_15" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="-0.3826834324 0 0 0.9238795325"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_16" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="-0.5000000000 0 0 0.8660254038"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_17" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="-0.6087614290 0 0 0.7933533403"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_18" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="-0.7071067812 0 0 0.7071067812"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_19" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="-0.7933533403 0 0 0.6087614290"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_20" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="-0.8660254038 0 0 0.5000000000"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_21" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="-0.9238795325 0 0 0.3826834324"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_22" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="-0.9659258263 0 0 0.2588190451"
+            material="bulb_ceramic"/>
+      <geom name="bulb_socket_funnel_23" class="bulb_collision"
+            type="mesh" mesh="bulb_funnel_sector"
+            quat="-0.9914448614 0 0 0.1305261922"
+            material="bulb_ceramic"/>
       <!-- Raised solid stop: top z=0.728889, 1.111 mm below entry. -->
       <!-- Thin compliant seat pads load progressively over the final 0.4 mm. -->
       <geom name="bulb_socket_cushion_00" type="box" pos="0.0155000000 0.0000000000 0.0062" quat="1.0000000000 0 0 0.0000000000" size="0.0015 0.0028 0.0002" class="bulb_collision" solref="0.03 1" solimp="0.15 0.95 0.0005 0.5 2" friction="0.4 0.001 0.0001" priority="1" rgba="0.20 0.22 0.22 1"/>

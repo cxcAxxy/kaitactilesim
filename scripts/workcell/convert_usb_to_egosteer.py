@@ -28,7 +28,7 @@ import tempfile
 import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -67,6 +67,7 @@ from convert_to_egosteer import (
   publish_validated_staging,
 )
 from kaihand_tactile_env.shared.egosteer_archive import archived_motion, text
+from unified_lerobot_collection import discover_unified_artifacts
 from usb_delivery_common import validate_usb_outcome
 from validate_egosteer_dataset import DatasetValidator
 
@@ -385,6 +386,37 @@ def _discover_batch(input_dir: Path, expected_episodes: int) -> tuple[
 ]:
   """Validate the complete summary and every HDF5/JSON file pairing."""
 
+  discovered = discover_unified_artifacts(
+    input_dir, task="usb-insert", expected_episodes=expected_episodes, limit=None
+  )
+  if discovered is not None:
+    artifacts, _ = discovered
+    episodes = []
+    for item in artifacts:
+      match = CAPTURE_NAME.fullmatch(item.hdf5_path.name)
+      if match is None:
+        raise ValueError(f"unsupported USB episode filename: {item.hdf5_path.name}")
+      internal_index = int(match.group("episode"))
+      result = _read_json(
+        item.hdf5_path.with_suffix(".result.json"), "result sidecar"
+      )
+      row = {
+        "episode_index": internal_index,
+        "raw_path": item.hdf5_path.name,
+        "status": "success",
+        "success": True,
+        "failure_reason": None,
+        "object_seed": result.get("object_seed"),
+        "noise_seed": result.get("noise_seed"),
+        "motion_profile": result.get("motion_profile"),
+      }
+      episode = _validate_flat_pair(item.hdf5_path.parent, row)
+      episodes.append(replace(episode, episode_index=item.episode_index))
+    return {
+      "schema_version": "task_collection_v2",
+      "episodes": [item.episode_index for item in artifacts],
+    }, tuple(episodes)
+
   if not input_dir.is_dir():
     raise FileNotFoundError(f"--input-dir is not a directory: {input_dir}")
   if input_dir.is_symlink():
@@ -508,7 +540,8 @@ def _load_open_episode(
   validate_usb_outcome(metadata, outcome)
   if outcome != capture["outcome"] or outcome != result["outcome"]:
     raise ValueError(f"episode {source.episode_index}: HDF5/sidecar outcomes differ")
-  if metadata.get("episode_index") != source.episode_index:
+  match = CAPTURE_NAME.fullmatch(source.hdf5_path.name)
+  if match is None or metadata.get("episode_index") != int(match.group("episode")):
     raise ValueError(f"episode {source.episode_index}: HDF5 episode index mismatch")
   for field, expected in (
     ("object_seed", source.object_seed),
@@ -764,7 +797,7 @@ def _export_episode(
           camera_name: group["rgb"][start:stop]
           for camera_name, group in camera_groups.items()
         }
-        for offset, rgb in enumerate(rgb_blocks["head"]):
+        for offset, _rgb in enumerate(rgb_blocks["head"]):
           frame = start + offset
           calibration = []
           for camera_name in camera_views:
@@ -908,7 +941,7 @@ def _write_release_metadata(
       "result_sidecars": [
         {
           "episode_index": item.episode_index,
-          "path": item.result_path.name,
+          "path": item.result_path.relative_to(input_dir).as_posix(),
           "sha256": item.result_sidecar_sha256,
         }
         for item in selected

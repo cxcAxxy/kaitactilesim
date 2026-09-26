@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Unified Raw -> EgoSteer / pi0.5 / EgoTouch conversion entry point."""
+"""Unified Raw -> model data or model-neutral LeRobot v3 conversion entry point."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -18,6 +19,7 @@ from kaihand_tactile_env.pipeline.conversion import (
   TASKS,
   adapter_catalog,
   adapter_for,
+  default_cameras_for,
   inspect_raw_dataset,
 )
 from kaihand_tactile_env.shared.cameras import TRAINING_CAMERA_NAMES
@@ -47,8 +49,9 @@ def parse_args(argv=None):
   parser.add_argument("--format", choices=FORMATS)
   parser.add_argument("--task", default="auto", choices=("auto", *TASKS))
   parser.add_argument(
-    "--cameras", nargs="+", default=("head",),
+    "--cameras", nargs="+",
     choices=TRAINING_CAMERA_NAMES,
+    help="model input cameras; defaults to the adapter's fixed set or head",
   )
   parser.add_argument("--workers", type=int, default=4)
   parser.add_argument(
@@ -56,14 +59,25 @@ def parse_args(argv=None):
     help="fail unless this many selected Raw episodes are found; 0 accepts any count",
   )
   parser.add_argument("--staging-root", type=Path)
+  parser.add_argument(
+    "--work-dir", type=Path,
+    help="persistent checkpoint directory for LeRobot v3 conversion",
+  )
   parser.add_argument("--verify-source-hash", action="store_true")
   parser.add_argument("--resume", action="store_true")
   parser.add_argument("--instruction")
   parser.add_argument("--dataset-name")
   parser.add_argument(
+    "--repo-id", help="LeRobot v3 repository identifier stored in metadata",
+  )
+  parser.add_argument(
     "--openpi-root", type=Path, default=ROOT.parent / "openpi",
   )
   parser.add_argument("--pi05-python", type=Path)
+  parser.add_argument(
+    "--lerobot-v3-python", type=Path,
+    help="Python with LeRobot 0.4.x/v3 support; required if this Python lacks lerobot",
+  )
   parser.add_argument("--dry-run", action="store_true")
   args = parser.parse_args(argv)
   if args.workers <= 0:
@@ -78,6 +92,27 @@ def parse_args(argv=None):
 
 
 def _command(args, dataset, contract):
+  if contract.output_format == "lerobot-v3":
+    command = [
+      str(args.lerobot_v3_python or sys.executable),
+      str(ROOT / "scripts/workcell" / contract.backend),
+      "--input-dir", str(dataset.root),
+      "--output-dir", str(args.output_dir),
+      "--task", dataset.task,
+      "--expected-episodes", str(len(dataset.episodes)),
+      "--workers", str(args.workers),
+    ]
+    if args.repo_id:
+      command += ["--repo-id", args.repo_id]
+    if args.work_dir:
+      command += ["--work-dir", str(args.work_dir)]
+    if args.staging_root:
+      command += ["--staging-root", str(args.staging_root)]
+    if args.verify_source_hash:
+      command.append("--verify-source-hash")
+    if args.resume:
+      command.append("--resume")
+    return command
   if contract.output_format == "egosteer":
     cmd = [
       sys.executable,
@@ -289,7 +324,7 @@ def _existing_tict_record(
 def _validate_resume_manifest(output: Path, dataset) -> None:
   path = output / "conversion_manifest.json"
   if not path.is_file():
-    return
+    raise ValueError(f"cannot resume EgoTouch output without manifest: {path}")
   try:
     manifest = json.loads(path.read_text(encoding="utf-8"))
   except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -302,11 +337,23 @@ def _validate_resume_manifest(output: Path, dataset) -> None:
     }
     or manifest.get("task") != dataset.task
     or tuple(manifest.get("cameras", ())) != dataset.cameras
+    or manifest.get("source_root") != str(dataset.root)
+    or manifest.get("source_episodes") != [
+      source.relative_to(dataset.root).as_posix() for source in dataset.episodes
+    ]
   ):
     raise ValueError(
       "--resume output was created for a different task/camera contract: "
       f"{path}"
     )
+  expected_sessions = {
+    _session_id(dataset.root, source) for source in dataset.episodes
+  }
+  episodes_dir = output / "episodes"
+  if episodes_dir.is_dir():
+    extra = {entry.name for entry in episodes_dir.iterdir()} - expected_sessions
+    if extra:
+      raise ValueError(f"cannot resume EgoTouch output with stale sessions: {sorted(extra)}")
 
 
 def _source_identity(
@@ -340,6 +387,8 @@ def _source_identity(
 
 def _convert_egotouch(args, dataset):
   output = args.output_dir.expanduser().resolve()
+  if args.resume and not output.is_dir():
+    raise ValueError(f"cannot resume missing EgoTouch output: {output}")
   if output.exists() and not args.resume:
     raise FileExistsError(f"output exists; use --resume: {output}")
   if not args.dry_run:
@@ -365,7 +414,9 @@ def _convert_egotouch(args, dataset):
         source_sha256_verification,
         source_size_bytes,
         source_mtime_ns,
-      ) = _source_identity(source, verify_source_hash=args.verify_source_hash)
+      ) = _source_identity(
+        source, verify_source_hash=args.verify_source_hash or has_existing
+      )
     for camera in dataset.cameras:
       destination = output / "episodes" / session / camera
       record = {
@@ -419,6 +470,11 @@ def _convert_egotouch(args, dataset):
           "schema": "kaihand_unified_egotouch_batch_v2",
           "task": dataset.task,
           "cameras": dataset.cameras,
+          "source_root": str(dataset.root),
+          "source_episodes": [
+            source.relative_to(dataset.root).as_posix()
+            for source in dataset.episodes
+          ],
           "complete": False,
           "records": records,
         },
@@ -427,6 +483,10 @@ def _convert_egotouch(args, dataset):
     "schema": "kaihand_unified_egotouch_batch_v2",
     "task": dataset.task,
     "cameras": dataset.cameras,
+    "source_root": str(dataset.root),
+    "source_episodes": [
+      source.relative_to(dataset.root).as_posix() for source in dataset.episodes
+    ],
     "complete": len(records) == len(dataset.episodes) * len(dataset.cameras),
     "records": sorted(records, key=lambda row: (row["session_id"], row["camera"])),
   }
@@ -439,8 +499,12 @@ def main(argv=None):
   if args.list_support:
     print(json.dumps({"formats": FORMATS, "adapters": adapter_catalog()}, indent=2))
     return 0
-  dataset = inspect_raw_dataset(
-    args.input_dir, task=args.task, cameras=args.cameras
+  probe = inspect_raw_dataset(args.input_dir, task=args.task, cameras=("head",))
+  cameras = args.cameras or default_cameras_for(probe.task, args.format)
+  dataset = (
+    probe if tuple(cameras) == ("head",) else inspect_raw_dataset(
+      args.input_dir, task=probe.task, cameras=cameras,
+    )
   )
   if args.expected_episodes and len(dataset.episodes) != args.expected_episodes:
     raise ValueError(
@@ -448,6 +512,20 @@ def main(argv=None):
       f"found {len(dataset.episodes)}"
     )
   contract = adapter_for(dataset, args.format)
+  if args.format == "lerobot-v3":
+    if args.lerobot_v3_python is None and importlib.util.find_spec("lerobot") is None:
+      raise ValueError(
+        "this Python lacks LeRobot; pass --lerobot-v3-python PATH to the "
+        "LeRobot v3 environment"
+      )
+    if args.lerobot_v3_python is not None and not args.lerobot_v3_python.is_file():
+      raise FileNotFoundError(f"LeRobot v3 Python not found: {args.lerobot_v3_python}")
+  elif args.lerobot_v3_python is not None:
+    raise ValueError("--lerobot-v3-python is only supported for lerobot-v3")
+  if args.format != "lerobot-v3" and (args.work_dir or args.repo_id):
+    raise ValueError("--work-dir and --repo-id are only supported for lerobot-v3")
+  if args.format == "lerobot-v3" and (args.instruction or args.dataset_name):
+    raise ValueError("lerobot-v3 uses fixed task instructions; --instruction and --dataset-name are unsupported")
   if args.resume and not contract.resumable:
     raise ValueError(
       f"{args.format} adapter publishes atomically but does not yet support resume"
@@ -468,7 +546,7 @@ def main(argv=None):
   print(json.dumps(plan, indent=2, ensure_ascii=False))
   if args.dry_run:
     return 0
-  if args.output_dir.exists():
+  if args.output_dir.exists() and not (args.resume and args.format == "lerobot-v3"):
     raise FileExistsError(f"output must not already exist: {args.output_dir}")
   return subprocess.run(command, check=False).returncode
 

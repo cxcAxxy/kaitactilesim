@@ -21,6 +21,14 @@ RUNNERS = {
   "pi05": ROOT / "scripts/workcell/run_shared_task_pi05_policy.py",
   "egotouch": ROOT / "scripts/workcell/run_shared_task_egotouch_policy.py",
 }
+_REVIEW_ARTIFACTS = ("review.mp4", "review.json", "frames.jsonl")
+_COMPARISON_ARTIFACTS = (
+  "evaluation_rollout_trace.npz",
+  "evaluation_comparison.json",
+  "evaluation_right_wrist_state.png",
+  "evaluation_right_hand_actuated_dof.png",
+  "evaluation_right_fingertip_tactile.png",
+)
 
 
 def _family(value: object) -> str:
@@ -64,7 +72,10 @@ def classify(report: dict) -> tuple[str, bool]:
     return "success", True
   if report.get("status") == "task_not_completed":
     return "time_limit", True
-  error = str(report.get("error", ""))
+  # Guard messages originate in several task adapters and are not guaranteed
+  # to use the same capitalization.  They are task terminations, so classify
+  # them as valid failed trials instead of infrastructure errors.
+  error = str(report.get("error", "")).casefold()
   for needle, reason in (
     ("wrist target jump", "wrist_target_guard"),
     ("arm IK failed", "arm_ik_guard"),
@@ -80,9 +91,60 @@ def classify(report: dict) -> tuple[str, bool]:
     ("Sponge element inverted", "sponge_integrity_guard"),
     ("nonfinite simulation", "nonfinite_state"),
   ):
-    if needle in error:
+    if needle.casefold() in error:
       return reason, True
   return "infrastructure_or_contract_error", False
+
+
+def validate_recorded_review(
+  trial: Path,
+  deployment: dict,
+  reference_dataset: Path | None,
+  reference_episode_index: int,
+) -> str | None:
+  """Return an invalid-trial reason when recorded artifacts break the contract."""
+  review = trial / "review"
+  missing = [
+    name
+    for name in _REVIEW_ARTIFACTS
+    if not (review / name).is_file() or (review / name).stat().st_size == 0
+  ]
+  if missing:
+    return "incomplete_review_artifact"
+  try:
+    metadata = json.loads((review / "review.json").read_text(encoding="utf-8"))
+  except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    return "invalid_review_metadata"
+  if not isinstance(metadata, dict):
+    return "invalid_review_metadata"
+  expected_model_views = ["head"]
+  if "right_wrist" in deployment["observation_contract"].get("cameras", []):
+    expected_model_views.append("right_wrist")
+  if metadata.get("model_input_cameras_displayed") != expected_model_views:
+    return "review_omitted_model_camera"
+  if reference_dataset is None:
+    return None
+
+  comparison_missing = [
+    name
+    for name in _COMPARISON_ARTIFACTS
+    if not (review / name).is_file() or (review / name).stat().st_size == 0
+  ]
+  if comparison_missing:
+    return "incomplete_comparison_artifact"
+  try:
+    recorded_reference = Path(metadata["reference_dataset"]).expanduser().resolve()
+  except (KeyError, TypeError, ValueError, OSError):
+    return "reference_comparison_mismatch"
+  if (
+    recorded_reference != reference_dataset
+    or metadata.get("reference_episode_index") != reference_episode_index
+  ):
+    return "reference_comparison_mismatch"
+  comparison = metadata.get("comparison_plots")
+  if not isinstance(comparison, dict) or comparison.get("status") != "ok":
+    return "reference_comparison_unavailable"
+  return None
 
 
 def parse_args(argv=None):
@@ -92,6 +154,8 @@ def parse_args(argv=None):
   parser.add_argument("--seeds", nargs="+", type=int, required=True)
   parser.add_argument("--video-count", type=int, required=True)
   parser.add_argument("--record-fps", type=int, choices=(5, 10), default=10)
+  parser.add_argument("--reference-dataset", type=Path)
+  parser.add_argument("--reference-episode-index", type=int, default=0)
   parser.add_argument("--execute-steps", type=int, default=5)
   parser.add_argument("--max-sim-seconds", type=float, default=90.0)
   parser.add_argument("--trial-wall-limit", type=float, default=1800.0)
@@ -100,12 +164,16 @@ def parse_args(argv=None):
   parser.add_argument("--model-project", type=Path)
   parser.add_argument("--snapshot", type=Path)
   args, passthrough = parser.parse_known_args(argv)
+  if args.reference_dataset is not None:
+    args.reference_dataset = args.reference_dataset.expanduser().resolve()
   if len(set(args.seeds)) != len(args.seeds) or any(seed < 0 for seed in args.seeds):
     parser.error("--seeds must contain distinct nonnegative integers")
   if not 0 <= args.video_count <= len(args.seeds):
     parser.error("video-count must be between zero and the number of seeds")
   if args.execute_steps <= 0:
     parser.error("execute-steps must be positive")
+  if args.reference_episode_index < 0:
+    parser.error("reference-episode-index must be nonnegative")
   if args.max_sim_seconds <= 0 or args.trial_wall_limit <= 0:
     parser.error("time limits must be positive")
   reserved = {
@@ -183,6 +251,10 @@ def main(argv=None):
     "deployment_manifest": str(deployment_path),
     "checkpoint_path": deployment["checkpoint_path"],
     "checkpoint_sha256": deployment["checkpoint_sha256"],
+    "reference_dataset": (
+      None if args.reference_dataset is None else str(args.reference_dataset)
+    ),
+    "reference_episode_index": args.reference_episode_index,
     "prediction_horizon": deployment["prediction_horizon"],
     "action_dim": deployment["action_dim"],
     "observation_contract": deployment["observation_contract"],
@@ -227,6 +299,11 @@ def main(argv=None):
       "--save-first-request" if trial_index == 0 else "--no-save-first-request",
       "--record" if trial_index < args.video_count else "--no-record",
     ]
+    if args.reference_dataset is not None:
+      command.extend((
+        "--reference-dataset", str(args.reference_dataset),
+        "--reference-episode-index", str(args.reference_episode_index),
+      ))
     if family in {"egosteer", "pi05"}:
       command.extend(("--server", args.server))
     else:
@@ -282,21 +359,14 @@ def main(argv=None):
     if identity_errors:
       reason, valid = "trial_identity_mismatch", False
     if valid and trial_index < args.video_count:
-      required_review = ("review.mp4", "review.json", "frames.jsonl")
-      missing = [
-        name for name in required_review if not (trial / "review" / name).is_file()
-      ]
-      if missing:
-        reason, valid = "incomplete_review_artifact", False
-      else:
-        review_metadata = json.loads(
-          (trial / "review" / "review.json").read_text(encoding="utf-8")
-        )
-        expected_model_views = ["head"]
-        if "right_wrist" in deployment["observation_contract"].get("cameras", []):
-          expected_model_views.append("right_wrist")
-        if review_metadata.get("model_input_cameras_displayed") != expected_model_views:
-          reason, valid = "review_omitted_model_camera", False
+      artifact_error = validate_recorded_review(
+        trial,
+        deployment,
+        args.reference_dataset,
+        args.reference_episode_index,
+      )
+      if artifact_error is not None:
+        reason, valid = artifact_error, False
     row = {
       "seed": seed,
       "success": reason == "success",

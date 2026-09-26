@@ -10,10 +10,11 @@ from pathlib import Path
 from prepare_usb_pi05_deployment import (
   _canonical_hash,
   checkpoint_identity,
+  normalizer_asset_id,
   sha256_file,
 )
 
-CONFIG_NAME = "pi05_kaihand_card_0914_200"
+CONFIG_NAME = "pi05_kaihand"
 EXPECTED_TASK = (
   "Slide the face-down card toward the table edge, pinch it between the fingers "
   "and thumb, lift it, and turn its face toward the robot to look at it."
@@ -60,7 +61,6 @@ def main() -> None:
       "observation.images.head",
       "observation.images.right_wrist",
     ],
-    "task": EXPECTED_TASK,
   }
   mismatches = {
     key: {"expected": expected, "actual": metadata.get(key)}
@@ -73,6 +73,13 @@ def main() -> None:
     raise RuntimeError("model horizon and policy metadata disagree")
   if int(train_config.model.action_dim) != metadata["model_action_dim"]:
     raise RuntimeError("model action dimension and policy metadata disagree")
+  if train_config.data.__class__.__name__ != "LeRobotKaiHandDataConfig":
+    raise RuntimeError(
+      f"expected LeRobotKaiHandDataConfig, got {train_config.data.__class__.__name__}"
+    )
+  if train_config.data.use_delta_arm_actions is not True:
+    raise RuntimeError("Poker pi0.5 inference requires delta arm action transforms")
+  asset_id = normalizer_asset_id(checkpoint)
 
   print(f"Hashing committed inference payload under {checkpoint} ...", flush=True)
   checkpoint_sha256, checkpoint_files = checkpoint_identity(
@@ -81,7 +88,6 @@ def main() -> None:
   source_paths = [
     openpi_root / "src/openpi/training/config.py",
     openpi_root / "src/openpi/policies/kaihand_policy.py",
-    openpi_root / "src/openpi/policies/kaihand_card_policy.py",
     openpi_root / "src/openpi/policies/policy_config.py",
     openpi_root / "src/openpi/serving/websocket_policy_server.py",
   ]
@@ -97,6 +103,7 @@ def main() -> None:
     "task": "poker-draw",
     "model_family": "pi0.5",
     "model_config_name": CONFIG_NAME,
+    "normalizer_asset_id": asset_id,
     "checkpoint_path": str(checkpoint),
     "checkpoint_sha256": checkpoint_sha256,
     "checkpoint_step": step,
@@ -128,7 +135,7 @@ def main() -> None:
     "checkpoint_frozen_by_content_hash": True,
     "control_hz": metadata["control_hz"],
     "suggested_execute_steps": metadata["suggested_replan_steps"],
-    "instruction": metadata["task"],
+    "instruction": EXPECTED_TASK,
     "model_project_path": str(openpi_root),
     "openpi_source_sha256": _canonical_hash(source_rows),
     "openpi_source_files": source_rows,

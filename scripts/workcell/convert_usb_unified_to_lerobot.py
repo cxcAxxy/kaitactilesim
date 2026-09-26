@@ -12,85 +12,34 @@ mapping the outer collection index to the LeRobot source episode index.
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
 import importlib.util
-import json
-from pathlib import Path
 import sys
+from dataclasses import replace
+from pathlib import Path
 
-
-def _object(path: Path) -> dict:
-  value = json.loads(path.read_text(encoding="utf-8"))
-  if not isinstance(value, dict):
-    raise ValueError(f"expected a JSON object: {path}")
-  return value
-
-
-def _inside(root: Path, value: str, *, context: str) -> Path:
-  path = (root / value).resolve(strict=True)
-  if not path.is_relative_to(root):
-    raise ValueError(f"{context} escapes input directory: {value}")
-  return path
+from unified_lerobot_collection import discover_unified_artifacts
 
 
 def _unified_pairs(module, input_dir: Path, expected_episodes: int, limit: int | None):
   summary_path = input_dir / "summary.json"
-  collection_path = input_dir / "collection.json"
-  if not summary_path.is_file() or not collection_path.is_file():
+  discovered = discover_unified_artifacts(
+    input_dir,
+    task="usb-insert",
+    expected_episodes=expected_episodes,
+    limit=limit,
+  )
+  if discovered is None:
     # Preserve compatibility with historical flat USB batches.
     return module._legacy_discover_pairs(input_dir, expected_episodes, limit)
 
-  collection = _object(collection_path)
-  if (
-    collection.get("schema") != "task_collection_v2"
-    or collection.get("tasks") != ["usb-insert"]
-    or collection.get("collection_mode") != "target-successes"
-  ):
-    return module._legacy_discover_pairs(input_dir, expected_episodes, limit)
-
   summary_snapshot = module.common._snapshot_file(summary_path)
-  summary = _object(summary_path)
-  rows = summary.get("episodes")
-  if not isinstance(rows, list):
-    raise ValueError(f"{summary_path}: episodes must be a list")
-  successful = [row for row in rows if isinstance(row, dict) and row.get("status") == "success"]
-  declared_successes = summary.get("success_count")
-  task_counts = summary.get("by_task", {}).get("usb-insert", {})
-  if declared_successes != len(successful) or task_counts.get("success") != len(successful):
-    raise ValueError(f"{summary_path}: successful episode counts disagree")
-  if summary.get("target_met", {}).get("usb-insert") is not True:
-    raise ValueError(f"{summary_path}: USB success target was not met")
-  if expected_episodes and len(successful) != expected_episodes:
-    raise ValueError(
-      f"expected {expected_episodes} successful episodes, found {len(successful)}"
-    )
-
-  pairs = []
-  seen_indices = set()
-  for row_number, row in enumerate(successful):
-    index = row.get("episode_index")
-    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
-      raise ValueError(f"{summary_path}: success row {row_number} has invalid episode_index")
-    if index in seen_indices:
-      raise ValueError(f"{summary_path}: duplicate successful episode index {index}")
-    seen_indices.add(index)
-    paths = row.get("hdf5")
-    if not isinstance(paths, list) or len(paths) != 1 or not isinstance(paths[0], str):
-      raise ValueError(f"{summary_path}: episode {index} must name exactly one HDF5")
-    hdf5_path = _inside(input_dir, paths[0], context=f"episode {index} HDF5")
-    sidecar_path = hdf5_path.with_suffix(".json").resolve(strict=True)
-    if not sidecar_path.is_relative_to(input_dir):
-      raise ValueError(f"episode {index} sidecar escapes input directory")
-    pairs.append(module.SourcePair(index, hdf5_path, sidecar_path))
-
-  pairs.sort(key=lambda pair: pair.episode_index)
-  available = len(pairs)
-  if limit is not None:
-    if limit > available:
-      raise ValueError(f"--limit {limit} exceeds the {available} available episodes")
-    pairs = pairs[:limit]
+  artifacts, available = discovered
+  pairs = tuple(
+    module.SourcePair(item.episode_index, item.hdf5_path, item.sidecar_path)
+    for item in artifacts
+  )
   module.common._assert_unchanged(summary_snapshot)
-  return tuple(pairs), available, summary_snapshot
+  return pairs, available, summary_snapshot
 
 
 def _load_converter(openpi_root: Path):

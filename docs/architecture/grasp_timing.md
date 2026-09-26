@@ -30,4 +30,4 @@ pixi run python scripts/workcell/replay_episode.py /path/to/new_episode.h5 \
   --viewer none --review-dir /path/to/new_review --fps 10
 ```
 
-预览页分别位于 [USB](../datasets/usb_insert_example/approach_then_grasp_v8/index.html) 和 [内存](../datasets/install_ram_example/approach_then_grasp_v8/index.html)，包括抓取近景、指尖距离曲线和新采集的完整多模态回放。近景使用记录的关节状态重渲染，展示相机不参与采集。
+历史预览页未随仓库保留。可用上面的回放命令从现有 Raw HDF5 重新生成近景与多模态复核；展示相机不参与采集。

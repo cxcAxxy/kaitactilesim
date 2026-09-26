@@ -8,12 +8,10 @@ from pathlib import Path
 
 import h5py
 import numpy as np
-from PIL import Image
 
 from .config import FINGERTIP_LINK_NAMES
 from .evaluation_video import (
   CHANNEL_NAMES,
-  CURVE_ABS_MAX_N_PER_TAXEL,
   NORMAL_TAXEL_MAX_N,
   TANGENT_TAXEL_MAX_N,
   compose_evaluation_frame,
@@ -33,7 +31,7 @@ from .poker_review import (
 from .recording import validate_episode
 from .task_video import _FfmpegPipeWriter, _find_ffmpeg_executable
 
-REVIEW_SCHEMA = "usb-offline-tactile-review-v1"
+REVIEW_SCHEMA = "usb-offline-tactile-review-v2"
 
 
 def _force_layout(file: h5py.File) -> np.ndarray:
@@ -74,7 +72,7 @@ def export_usb_review_video(
   tolerance_s: float = 0.020,
   source_scene: str = "usb-insert",
 ) -> dict:
-  """Export synchronized head/wrist RGB, tactile maps, and fingertip curves."""
+  """Export synchronized head/wrist RGB and enlarged tactile heatmaps."""
   if source_scene not in ("usb-insert", "poker-draw"):
     raise ValueError("bilateral tactile review supports USB or Card episodes")
   source = Path(source).expanduser().resolve()
@@ -183,7 +181,7 @@ def export_usb_review_video(
       _validate_probe(probe, count=len(frames), fps=fps, width=width, height=height)
       summary = {
         "schema_version": (
-          "card-offline-tactile-review-v1"
+          "card-offline-tactile-review-v2"
           if source_scene == "poker-draw"
           else REVIEW_SCHEMA
         ),
@@ -198,25 +196,20 @@ def export_usb_review_video(
         "source_validation": asdict(validation),
         "camera_names": ["head", "right_wrist"],
         "fingertip_order": list(FINGERTIP_LINK_NAMES),
-        "curve_channel_order": list(CHANNEL_NAMES),
-        "curve_value": "arithmetic mean across each fingertip's 7x5 taxels",
-        "curve_scale_n_per_taxel": [
-          -CURVE_ABS_MAX_N_PER_TAXEL,
-          CURVE_ABS_MAX_N_PER_TAXEL,
-        ],
+        "time_series_displayed": False,
+        "force_mean_channel_order": list(CHANNEL_NAMES),
+        "force_mean_value": "arithmetic mean across each fingertip's 7x5 taxels",
+        "force_mean_storage": "frames.jsonl.force_mean_n_per_taxel",
         "normal_color_scale_n_per_taxel": [0, NORMAL_TAXEL_MAX_N],
         "tangent_color_scale_n_per_taxel": [0, TANGENT_TAXEL_MAX_N],
-        "layout": (
-          "head/right-wrist RGB; bilateral Fn/|Ft| spatial maps; "
-          "ten fingertip Ft_col/Ft_row/Fn mean curves"
-        ),
+        "layout": "enlarged head/right-wrist RGB; enlarged bilateral Fn/|Ft| maps",
         "force_sources": {
           "normal": f"/{_FORCE_GROUP}/{_NORMAL}",
           "signed_tangent": f"/{_FORCE_GROUP}/{_TANGENT}",
         },
         "force_visualization": (
-          "heatmaps show Fn and per-taxel |Ft|; curves preserve signed "
-          "Ft_col/Ft_row and nonnegative Fn"
+          "heatmaps show Fn and per-taxel |Ft|; signed Ft_col/Ft_row and "
+          "nonnegative Fn means remain in frames.jsonl"
         ),
         "source_camera_frame_count": len(file["cameras/head/rgb"]),
         "output_frame_count": len(frames),

@@ -13,6 +13,9 @@ DEFAULT_YAW_JITTER = 0.0
 TABLETOP_HEIGHT_M = 0.680
 BULB_INITIAL_POSITION_M = np.array([0.500, -0.180, 0.6805])
 SOCKET_MOUTH_POSITION_M = np.array([0.620, -0.180, 0.736])
+SOCKET_FUNNEL_TOP_Z_M = 0.758
+SOCKET_APPROACH_CLEARANCE_M = 0.050
+SOCKET_TRANSFER_CLEARANCE_M = 0.060
 THREAD_ENTRY_POSITION_M = np.array([0.620, -0.180, 0.730])
 THREAD_ENTRY_DEPTH_M = 0.006
 THREAD_CAPTURE_LOAD_N = 0.02
@@ -50,6 +53,7 @@ SCENE_GEOM_NAMES = (
   "bulb_orientation_mark",
   "bulb_fixture_base",
   "bulb_fixture_pedestal",
+  *(f"bulb_socket_funnel_{i:02d}" for i in range(24)),
   "bulb_socket_backstop",
   *(f"bulb_socket_wall_{i:02d}" for i in range(16)),
   *(f"bulb_socket_cushion_{i:02d}" for i in range(16)),

@@ -614,7 +614,7 @@ def _documentation(output: Path, summary: dict, *, camera_hz: int):
     "它们与录制的共享相机 RGB 分开标注，详情见 review/closeups.json。\n\n"
     "内存条和卡槽使用近似真实尺度的碰撞几何；端部卡扣固定在打开状态，"
     "不模拟扣合、电气导通及全部 288 根弹片力。尺寸依据 Kingston 标准 DDR4 UDIMM 图纸及 TE DDR4 插槽资料；"
-    "详细建模约定见仓库 docs/install_ram_dimensions.md。"
+    "详细建模约定见仓库 docs/tasks/install_ram_dimensions.md。"
     "HDF5/install_ram 保存实际任务测量、执行器控制和外力审计；"
     "本示例已检查 RAM 自由关节外加力和 xfrc_applied 为零、终态就位且右手卸载。\n\n"
     "正手方向以原始 palm_down_cosine 核验；实际求解的弹性触片载荷、轴向摩擦阻力、固定侧壁力和底挡载荷分别保存。"

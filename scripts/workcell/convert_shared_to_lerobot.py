@@ -8,6 +8,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import numpy as np
 from fast_pi05_conversion import install_fast_conversion
 
 WHITEBOARD_INSTRUCTION = (
@@ -18,6 +19,35 @@ VASE_INSTRUCTION = (
   "Pick up the sponge with the right hand, wipe all stains from the far inner "
   "wall of the vase with loaded sliding contact, then lift the sponge clear."
 )
+SPONGE_GRASP_INSTRUCTION = (
+  "Pick up the upright sponge with the right hand, carry it to the plate on "
+  "the robot's right, place it inside the plate, and release it."
+)
+
+
+def _sponge_control_tick_prefix(timestamps: np.ndarray, physics_hz: int):
+  """Check 30 Hz deadlines captured on sponge's exact 100 Hz control ticks."""
+  if timestamps.ndim != 1 or timestamps.size < 2:
+    raise ValueError("head camera needs at least two timestamps")
+  if not np.all(np.isfinite(timestamps)) or not np.all(np.diff(timestamps) > 0):
+    raise ValueError("head camera timestamps must be finite and increasing")
+  if physics_hz <= 0:
+    raise ValueError("physics_hz must be positive")
+  # The recorder observes the simulator after complete 10 ms control steps.
+  # At 30 Hz the first frames therefore occur at 0, 40, 70, 100, 140 ms,
+  # rather than on the physics clock's ideal 33.333 ms grid.
+  frame = np.arange(timestamps.size, dtype=np.int64)
+  control_steps = (frame * 100 + 29) // 30
+  expected = timestamps[0] + control_steps / 100.0
+  error = np.abs(timestamps - expected)
+  tolerance = 0.51 / physics_hz + 1.0e-12
+  mismatches = np.flatnonzero(error > tolerance)
+  prefix = int(mismatches[0]) if mismatches.size else int(timestamps.size)
+  if prefix < 2:
+    raise ValueError(
+      "head camera has no two-frame 100 Hz control-tick/30 Hz deadline prefix"
+    )
+  return prefix, float(np.max(error[:prefix]))
 
 
 def main(argv=None):
@@ -42,6 +72,7 @@ def main(argv=None):
     **module.TASK_INSTRUCTIONS,
     "vase-wipe": VASE_INSTRUCTION,
     "whiteboard-wipe": WHITEBOARD_INSTRUCTION,
+    "sponge-grasp": SPONGE_GRASP_INSTRUCTION,
   }
   args = module._parse_args(remaining)
   # Vase intentionally records state/tactile at 500 Hz while the other shared
@@ -50,7 +81,11 @@ def main(argv=None):
   # validation and provenance accurate instead of downsampling Raw in place.
   if args.task == "vase-wipe":
     module.CONTROL_HZ = 500
-  install_fast_conversion(module, workers=args.fingerprint_workers)
+  elif args.task == "sponge-grasp":
+    module.common._strict_30hz_prefix = _sponge_control_tick_prefix
+  install_fast_conversion(
+    module, workers=args.fingerprint_workers, adapter_path=Path(__file__)
+  )
   module.run(args)
   return 0
 

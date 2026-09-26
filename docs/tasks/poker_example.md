@@ -76,7 +76,7 @@ seed 示例相比：
 
 ## 重新生成一条独立示例
 
-采集沿用[统一采集](data_collection.md)的 `poker-draw` 入口，
+采集沿用[统一采集](../workflows/data_collection.md)的 `poker-draw` 入口，
 先选择一个**尚未存在**的新批次目录，不向旧批次混写。
 取得成功 Raw 后，下面的离线导出入口使用单线程软件渲染：
 

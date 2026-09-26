@@ -35,6 +35,7 @@ FFMPEG_THREADS_PER_WORKER = 1
 FRAME_BATCH = 32
 
 _CONVERTER: Any | None = None
+_ADAPTER_PATH: Path | None = None
 
 
 def _jsonable(value: Any) -> Any:
@@ -65,6 +66,22 @@ def _write_json(path: Path, value: Any) -> None:
     temporary.unlink(missing_ok=True)
 
 
+def _write_json_lines(path: Path, values: Any) -> None:
+  path.parent.mkdir(parents=True, exist_ok=True)
+  temporary = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex}")
+  try:
+    with temporary.open("x", encoding="utf-8") as stream:
+      for value in values:
+        stream.write(
+          json.dumps(_jsonable(value), ensure_ascii=False, sort_keys=True) + "\n"
+        )
+      stream.flush()
+      os.fsync(stream.fileno())
+    os.replace(temporary, path)
+  finally:
+    temporary.unlink(missing_ok=True)
+
+
 def _load_object(path: Path) -> dict[str, Any]:
   try:
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -88,6 +105,22 @@ def _fingerprint(value: Any) -> str:
     _jsonable(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")
   ).encode("utf-8")
   return hashlib.sha256(payload).hexdigest()
+
+
+def _conversion_source_hashes() -> dict[str, str]:
+  if _CONVERTER is None or not getattr(_CONVERTER, "__file__", None):
+    raise RuntimeError("fast converter has no source file to freeze")
+  sources = {
+    Path(__file__).resolve(),
+    Path(_CONVERTER.__file__).resolve(),
+    Path(__file__).with_name("unified_lerobot_collection.py").resolve(),
+  }
+  common = getattr(_CONVERTER, "common", None)
+  if common is not None and getattr(common, "__file__", None):
+    sources.add(Path(common.__file__).resolve())
+  if _ADAPTER_PATH is not None:
+    sources.add(_ADAPTER_PATH.resolve())
+  return {str(path): _sha256_file(path) for path in sorted(sources)}
 
 
 def _fsync_file(path: Path) -> None:
@@ -144,6 +177,28 @@ def _plan_identity(plan: Any) -> dict[str, Any]:
     "source": _source_identity(plan.source),
     "plan": _jsonable(scalar_fields),
   }
+
+
+def _source_manifest_rows(
+  plans: tuple[Any, ...], *, verify_source_hash: bool
+) -> list[dict[str, Any]]:
+  rows = []
+  for output_index, plan in enumerate(plans):
+    source = _source_identity(plan.source)
+    rows.append({
+      "output_episode_index": output_index,
+      "source_episode_index": source["episode_index"],
+      "source_hdf5": source["hdf5"]["path"],
+      "source_hdf5_sha256": source["hdf5"]["sha256"],
+      "source_hdf5_size_bytes": source["hdf5"]["size_bytes"],
+      "source_sidecar": source["sidecar"]["path"],
+      "source_hash_verification": (
+        "recomputed" if verify_source_hash else "trusted_acquisition_sidecar"
+      ),
+      "task": source["task"],
+      "exported_frames_30hz": int(plan.exported_frames),
+    })
+  return rows
 
 
 def _camera_names(plan: Any) -> tuple[str, ...]:
@@ -494,6 +549,7 @@ def _completed_episode(
       not isinstance(identity, dict)
       or not artifact.is_file()
       or artifact.stat().st_size != identity.get("size_bytes")
+      or _sha256_file(artifact) != identity.get("sha256")
     ):
       return None
   return done
@@ -732,11 +788,17 @@ def _assemble(
         "output_episode_index": output_index,
         "source_episode_index": plan.source.episode_index,
         "frames": plan.exported_frames,
+        "exported_frames_30hz": plan.exported_frames,
+        "source_hdf5": str(plan.source.hdf5.path),
         "artifacts": result["artifacts"],
       }
       for output_index, (plan, result) in enumerate(zip(plans, results, strict=True))
     ],
   }
+  _write_json_lines(
+    staging / "meta" / "kaihand_source_episodes.jsonl",
+    _source_manifest_rows(plans, verify_source_hash=verify_source_hash),
+  )
   _write_json(staging / "meta" / "kaihand_fast_pi05_conversion.json", manifest)
   _validate_dataset(staging, plans)
 
@@ -807,6 +869,7 @@ def _fast_convert(
     "repo_id": _repo_id(plans[0]),
     "video_preset": VIDEO_PRESET,
     "video_crf": VIDEO_CRF,
+    "conversion_sources": _conversion_source_hashes(),
     "plans": [_plan_identity(plan) for plan in plans],
   }
   plan_fingerprint = _fingerprint(plan_payload)
@@ -916,13 +979,16 @@ def _parallel_preflight(sources: tuple[Any, ...], workers: int) -> tuple[Any, ..
   return resolved
 
 
-def install_fast_conversion(converter: Any, *, workers: int = 1) -> None:
+def install_fast_conversion(
+  converter: Any, *, workers: int = 1, adapter_path: Path | None = None
+) -> None:
   """Install the high-throughput output backend on an OpenPI converter."""
 
   if workers <= 0:
     raise ValueError("fast conversion workers must be positive")
-  global _CONVERTER
+  global _CONVERTER, _ADAPTER_PATH
   _CONVERTER = converter
+  _ADAPTER_PATH = adapter_path
   if hasattr(converter, "_preflight_episode"):
     converter._preflight = lambda sources: _parallel_preflight(sources, workers)
   converter._convert = _fast_convert

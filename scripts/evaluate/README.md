@@ -1,6 +1,6 @@
 # Evaluation documentation
 
-The canonical inference and evaluation guide is [docs/model_evaluation.md](../../docs/model_evaluation.md).
+The canonical inference and evaluation guide is [docs/workflows/model_evaluation.md](../../docs/workflows/model_evaluation.md).
 
 Run from the repository root:
 

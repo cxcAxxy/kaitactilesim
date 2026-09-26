@@ -44,6 +44,8 @@ def main() -> None:
   parser.add_argument("--execute-steps", required=True, type=int)
   parser.add_argument("--max-sim-seconds", type=float, default=50.0)
   parser.add_argument("--record-fps", type=int, choices=(5, 10), default=10)
+  parser.add_argument("--reference-dataset", type=Path)
+  parser.add_argument("--reference-episode-index", type=int, default=0)
   parser.add_argument("--record", action=argparse.BooleanOptionalAction, default=True)
   parser.add_argument(
     "--diagnostic-relax-ik", action="store_true",
@@ -67,6 +69,11 @@ def main() -> None:
     "--max-sim-seconds", str(args.max_sim_seconds),
     "--execute-steps", str(args.execute_steps), "--no-real-time",
   ]
+  if args.reference_dataset is not None:
+    generic_argv.extend([
+      "--reference-dataset", str(args.reference_dataset),
+      "--reference-episode-index", str(args.reference_episode_index),
+    ])
   if args.diagnostic_relax_ik:
     generic_argv.extend([
       "--max-wrist-jump", "inf", "--max-arm-position-error", "inf",
@@ -89,8 +96,18 @@ def main() -> None:
   finally:
     review_path = output / "review/review.json"
     review = json.loads(review_path.read_text(encoding="utf-8")) if review_path.is_file() else {}
-    status = review.get("task_status", "error")
-    evaluation = review.get("evaluation") or {}
+    if review:
+      status = review.get("task_status", "error")
+      evaluation = review.get("evaluation") or {}
+      sim_seconds = review.get("last_pose_time_s")
+    elif stats is not None and error_text is None:
+      status = "success" if stats.stable_success else "task_not_completed"
+      evaluation = {"success": bool(stats.stable_success)}
+      sim_seconds = stats.action_steps / 30.0
+    else:
+      status = "error"
+      evaluation = {}
+      sim_seconds = None
     result = {
       "task": "pick-place", "controller": "egosteer-pickplace-canonical-v1",
       "checkpoint_path": deployment["checkpoint_path"],
@@ -109,7 +126,7 @@ def main() -> None:
       "formal_metrics_valid": not args.diagnostic_relax_ik,
       "kinematic_reachability_guards_enabled": not args.diagnostic_relax_ik,
       "status": status, "evaluation": evaluation,
-      "sim_seconds": review.get("last_pose_time_s"),
+      "sim_seconds": sim_seconds,
       "wall_seconds": time.monotonic() - started,
       "stats": asdict(stats) if stats is not None else {},
       "error": error_text or review.get("task_error"),

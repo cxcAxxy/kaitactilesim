@@ -78,3 +78,21 @@ def test_hold_gap_resets_timer():
   sample(m, clearance=0.03, opposed=False)
   assert m.hold_seconds == 0
   assert not m.success
+
+
+def test_five_second_hold_requires_continuous_lift():
+  m = PokerOutcomeMonitor(required_hold_seconds=5.0, require_clearance_during_hold=True)
+  sample(m)
+  sample(m)
+  sample(m, supported=False, clearance=0.03)
+  for _ in range(2000):
+    sample(m, supported=False, clearance=0.03)
+  assert not m.success
+  sample(m, supported=False, clearance=0.0)
+  assert m.hold_seconds == 0
+  for _ in range(2499):
+    sample(m, supported=False, clearance=0.03)
+  assert not m.success
+  sample(m, supported=False, clearance=0.03)
+  assert m.success
+  assert m.report()["required_hold_seconds"] == 5.0

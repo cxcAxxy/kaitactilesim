@@ -7,6 +7,8 @@ pixi run convert-dataset -- --help
 pixi run convert-dataset -- --list-support
 ```
 
+只想复用一套采集、转换、评估命令时，先看[统一命令速查](pipeline_quickstart.md)。
+
 调用者显式指定 Raw 输入、输出目录、模型数据格式、任务和相机。统一入口负责发现、合同检查和 adapter 分发；它不会根据文件名猜测任务 action 的含义。
 
 ## 基本参数
@@ -14,20 +16,31 @@ pixi run convert-dataset -- --list-support
 ```text
 --input-dir PATH
 --output-dir PATH
---format egosteer|pi05|egotouch
---task auto|pick-place|poker-draw|usb-insert|bulb-screw|vase-wipe|install-ram|whiteboard-wipe
+--format egosteer|pi05|egotouch|lerobot-v3
+--task auto|pick-place|poker-draw|usb-insert|bulb-screw|vase-wipe|install-ram|whiteboard-wipe|sponge-grasp
 --cameras head [left_wrist] [right_wrist]
 --workers N
 --expected-episodes N
 --staging-root PATH
+--work-dir PATH                 # 仅 LeRobot v3
+--repo-id ID                   # 仅 LeRobot v3
+--lerobot-v3-python PATH        # 当前 Python 未安装 LeRobot 时必填
 --verify-source-hash
 --resume
 --dry-run
 ```
 
-相机默认只有 `head`；显式选择时必须包含 `head`，顺序会规范为
+固定相机合同的 adapter 会自动选择其相机集合，其余默认只有 `head`；
+显式选择时必须包含 `head`，顺序会规范为
 `head, left_wrist, right_wrist` 的共享顺序。Raw 可以采三相机，但转换时只读取
 `--cameras` 指定的子集；未选相机不会进入模型数据集。
+
+`--format lerobot-v3` 接入模型中立的右臂/右手 LeRobot v3 转换器，支持全部
+八个采集任务，固定使用 `head` 与 `right_wrist`。它和 `--format pi05` 的任务专属
+训练数据不是同一种合同。Sponge 额外核对已通过的采集审计，并按 100 Hz 控制步
+上的 30 Hz 相机 deadline 验证源时间戳；其柔体顶点和盘子支撑力保留为任务诊断。
+该后端接受统一采集批次和其支持的历史/合并批次，
+续跑时传 `--resume`，可用 `--work-dir` 指定持久断点位置。
 
 `--expected-episodes 0` 接受实际发现数量；正式批次建议显式给出预期数量，避免把
 路径写错后仍转换一个不完整批次。
@@ -41,10 +54,10 @@ pixi run convert-dataset -- --list-support
 - `--list-support` 从代码里的 adapter 注册表直接输出当前支持能力，文档表格不是
   调度依据。
 
-目录发现是递归的。PickPlace 和 Card 的 π0.5 本地 wrapper 同时接受历史平铺
-批次与 `task_collection_v2` 嵌套批次；统一批次严格以 `summary.json` 中已成功、已发布的
-episode 为准，并把外层采集编号保存为来源编号。Bulb、RAM、Vase 和 Whiteboard 的共享
-后端直接递归发现 Raw，并从路径中的外层 attempt 结构恢复采集编号。
+统一采集批次以 `summary.json` 中已成功、已发布的 episode 为准；转换入口和后端
+使用相同的选择范围。PickPlace、Card、USB 的 EgoSteer 与 π0.5 适配器同时接受历史
+平铺批次和 `task_collection_v2` 嵌套批次，保存外层采集编号。Bulb、RAM、Vase、
+Whiteboard 和 Sponge 的共享后端也接受嵌套 Raw。
 
 ## 使用示例
 
@@ -71,8 +84,60 @@ pixi run convert-dataset -- \
 ```
 
 USB π0.5 适配器同时接受历史扁平 Raw 批次和统一采集器生成的
-`task_collection_v2` 嵌套目录。统一批次只选择 `summary.json` 中已成功、已发布的
-episode；外层采集编号会映射为 LeRobot 来源编号，原始 HDF5 不会改名或改写。
+`task_collection_v2` 嵌套目录，包含 `attempts`、`target-successes` 和多任务采集根目录。
+统一批次只选择 USB 的成功 episode；外层采集编号会映射为 LeRobot 来源编号，
+原始 HDF5 不会改名或改写。
+
+Sponge Raw 转 π0.5（模型使用头部和右腕相机）：
+
+```bash
+pixi run convert-dataset -- \
+  --input-dir /path/to/sponge_raw \
+  --output-dir /path/to/sponge_pi05 \
+  --format pi05 --task sponge-grasp \
+  --cameras head right_wrist \
+  --workers 4 --expected-episodes 200 \
+  --staging-root /path/to/staging \
+  --dataset-name sponge_grasp_dataset \
+  --openpi-root /path/to/openpi \
+  --pi05-python /path/to/openpi/.venv-pi05/bin/python
+```
+
+Sponge 的 30 Hz 相机帧落在 100 Hz 控制步上；专属校验会核对每帧的精确控制步
+位置，保留 Raw 时间戳与来源编号，不修改其他任务的相机时间规则。正式输出目录须不存在。
+
+同一批 Sponge Raw 转模型中立 LeRobot v3：
+
+```bash
+HF_HOME=/path/to/writable/huggingface_cache pixi run convert-dataset -- \
+  --input-dir /path/to/sponge_raw_collection \
+  --output-dir /path/to/sponge_lerobot_v3 \
+  --format lerobot-v3 --task sponge-grasp \
+  --expected-episodes 200 --workers 3 \
+  --lerobot-v3-python /path/to/lerobot-env/bin/python \
+  --dry-run
+```
+
+确认计划后移除 `--dry-run`。该格式要求已达成功数目标的统一采集批次；
+训练集的视频以名义 30 fps 编码，来源帧的真实 30/40 ms 控制步间隔保存在 provenance 中。
+官方 LeRobot reader 会使用 Hugging Face 缓存；在默认 HOME 不可写的节点上必须把
+`HF_HOME` 指向可写目录。
+
+USB 等八任务转换为模型中立 LeRobot v3（现有 Pixi 环境未安装 LeRobot，故显式选择
+安装了 LeRobot 0.4.x 的 Python）：
+
+```bash
+pixi run convert-dataset -- \
+  --input-dir /path/to/raw_collection \
+  --output-dir /path/to/usb_lerobot_v3 \
+  --format lerobot-v3 --task usb-insert \
+  --expected-episodes 200 --workers 3 \
+  --lerobot-v3-python /path/to/lerobot-env/bin/python \
+  --work-dir /path/to/usb_v3_checkpoints --dry-run
+```
+
+确认后移除 `--dry-run`；中断时沿用相同命令加 `--resume`。多任务成功数批次中，
+`--task` 只选择该任务的已发布成功轨迹；该后端暂不接受 attempts-only 批次。
 
 PickPlace 和 Card 的 π0.5 wrapper 不改名、不复制也不改写 Raw。统一采集批次中每个
 隔离 recorder 可以都生成内部编号 0；wrapper 会使用 `summary.json` 的外层编号作为
@@ -110,15 +175,16 @@ pixi run convert-dataset -- \
 
 ## 当前支持矩阵
 
-| 任务 | EgoSteer | π0.5 | EgoTouch |
-|---|---|---|---|
-| PickPlace | head | head | 待接入 |
-| Card | 包含 head 的任意 Raw 相机子集 | head + right_wrist | 包含 head 的任意子集 |
-| USB | 包含 head 的任意 Raw 相机子集 | head + right_wrist | 包含 head 的任意子集 |
-| Bulb | 包含 head 的任意 Raw 相机子集 | 包含 head 的任意 Raw 相机子集 | 待接入 |
-| RAM | 包含 head 的任意 Raw 相机子集 | 包含 head 的任意 Raw 相机子集 | 待接入 |
-| Vase | 待接入 | 包含 head 的任意 Raw 相机子集 | 待接入 |
-| Whiteboard | 包含 head 的任意 Raw 相机子集 | 包含 head 的任意 Raw 相机子集 | 包含 head 的任意子集 |
+| 任务 | EgoSteer | π0.5 | LeRobot v3 | EgoTouch |
+|---|---|---|---|---|
+| PickPlace | head | head | head + right_wrist | 待接入 |
+| Card | 包含 head 的任意 Raw 相机子集 | head + right_wrist | head + right_wrist | 包含 head 的任意子集 |
+| USB | 包含 head 的任意 Raw 相机子集 | head + right_wrist | head + right_wrist | 包含 head 的任意子集 |
+| Bulb | 包含 head 的任意 Raw 相机子集 | 包含 head 的任意 Raw 相机子集 | head + right_wrist | 待接入 |
+| RAM | 包含 head 的任意 Raw 相机子集 | 包含 head 的任意 Raw 相机子集 | head + right_wrist | 待接入 |
+| Vase | 待接入 | 包含 head 的任意 Raw 相机子集 | head + right_wrist | 待接入 |
+| Whiteboard | 包含 head 的任意 Raw 相机子集 | 包含 head 的任意 Raw 相机子集 | head + right_wrist | 包含 head 的任意子集 |
+| Sponge grasp | 待接入 | head + right_wrist | head + right_wrist | 待接入 |
 
 Bulb/RAM 的 EgoSteer 与 π0.5 adapter 已冻结并注册：EgoSteer 使用归档的双手腕/
 十指 taskspace 形成 48 维下一帧动作；π0.5 使用右臂 7 关节与右手 20 关节形成
@@ -127,7 +193,8 @@ Vase 的 π0.5 adapter 使用相同的 27 维右臂+右手合同，保留真实 
 在 30 Hz 相机时刻插值状态并使用下一相机帧作为动作，不就地降采样或改写 Raw。
 Bulb、RAM、Vase 的 EgoTouch 以及 Vase 的 EgoSteer 仍须完成各自的模型数据合同，
 不能仅凭 Raw 结构宣称可训练。Whiteboard 使用共享右臂+右手动作合同，三种
-输出格式均已在注册表中显式接入。
+输出格式均已在注册表中显式接入。Sponge 使用相同的右臂 7 关节＋右手 20 关节
+合同，但只注册 π0.5 的头部＋右腕双相机转换。
 
 ## 历史 Raw 数据兼容性
 
@@ -144,39 +211,26 @@ Bulb、RAM、Vase 的 EgoTouch 以及 Vase 的 EgoSteer 仍须完成各自的模
 因此“可用”分为两层：Raw 可读/可回放不等于已有对应模型的语义转换 adapter；
 转换时必须严格选择该批数据真实存在的相机。
 
-## Bulb/RAM 0917_200 完整转换
+## Bulb/RAM 完整转换
 
-默认转换 `head + left_wrist + right_wrist`，200 条源数据先在 CPFS staging 中完成，
-验证后原子发布到各任务的 `egosteer/0917_200` 与 `pi05/0917_200`。四项任务默认
-串行运行，避免同时读取约四份三相机数据而拖慢 NAS：
+对每个任务分别选择输出格式并先执行 `--dry-run`。例如 RAM 的 EgoSteer 转换：
 
 ```bash
-cd /cpfs_infra/user/chenxianchi/code/sim_code_merged_20260917
-bash scripts/convert/convert_bulb_ram_0917_200.sh
+pixi run convert-dataset -- \
+  --input-dir /path/to/ram_raw \
+  --output-dir /path/to/ram_egosteer \
+  --format egosteer --task install-ram \
+  --cameras head left_wrist right_wrist \
+  --workers 4 --expected-episodes 200 \
+  --staging-root /path/to/staging
 ```
 
-后台运行并保存总日志：
-
-```bash
-cd /cpfs_infra/user/chenxianchi/code/sim_code_merged_20260917
-mkdir -p /cpfs_infra/user/chenxianchi/conversion_logs/0917_200
-nohup bash scripts/convert/convert_bulb_ram_0917_200.sh \
-  > /cpfs_infra/user/chenxianchi/conversion_logs/0917_200/all.log 2>&1 &
-echo $!
-```
-
-查看进度：
-
-```bash
-tail -f /cpfs_infra/user/chenxianchi/conversion_logs/0917_200/all.log
-```
-
-正式输出目录必须不存在。转换器默认信任采集时已写入 sidecar 的 SHA-256，避免重复
-读取全部 HDF5；若需要独立复核源摘要，再在单项命令中增加 `--verify-source-hash`。
+正式输出目录必须不存在。需要独立复核源 HDF5 摘要时增加 `--verify-source-hash`；
+采集续跑和高速 π0.5 转换续跑会重新核对已发布产物的内容哈希。
 
 ## 性能、校验与恢复
 
-- PickPlace、Poker、Bulb、RAM、Vase 和 Whiteboard 的 π0.5 `--workers N`
+- PickPlace、Poker、Bulb、RAM、Vase、Whiteboard 和 Sponge 的 π0.5 `--workers N`
   表示同时转换 N 条 episode；每个 worker 使用一个 FFmpeg 编码线程。
 - 这些高速 π0.5 adapter 直接把 HDF5 RGB 管道送入 H.264 MP4，不生成逐帧临时
   PNG；输出仍是 OpenPI 锁定环境可读取的标准 LeRobot v2.1 数据集。
@@ -189,7 +243,9 @@ tail -f /cpfs_infra/user/chenxianchi/conversion_logs/0917_200/all.log
   `--verify-source-hash` 才并行重算源摘要。结构、时钟、动作对齐、FFprobe 视频合同、
   metadata 总数和官方 reader 解码检查仍然保留。
 - EgoSteer 后端同样直接从 HDF5 编码，不需要临时 PNG。EgoTouch 支持
-  episode/camera 级 `--resume`。
+  episode/camera 级 `--resume`；续跑要求已有转换 manifest 中的源根目录、episode
+  集合与当前输入完全一致，并重新核对已有源 HDF5 的 SHA-256。旧版缺少这些字段的
+  EgoTouch 输出应使用新的输出目录重新转换。
 - USB 的独立 π0.5 adapter 仍沿用既有 image-backed v2.1 合同；另有模型中立的
   LeRobot v3 高速转换器，二者不要混为同一种训练格式。
 - 正式输出目录必须不存在，避免覆盖已经发布的数据集。

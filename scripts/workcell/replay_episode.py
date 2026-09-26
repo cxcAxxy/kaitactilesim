@@ -181,6 +181,15 @@ def _replay_model_selection(file: h5py.File) -> tuple[str, Path]:
   layout = metadata.get("model_layout")
   if layout == TASK_ISOLATED_MODEL_LAYOUT:
     return scene, default_model_path(scene)
+  # Early Vase/Sponge recordings were mislabeled by a duplicate global object
+  # name. The frozen combined model never contained a sponge, so their recorded
+  # freejoint coordinates can only be replayed with the isolated task model.
+  if (
+    scene in {"vase-wipe", "sponge-grasp"}
+    and layout == LEGACY_COMBINED_MODEL_LAYOUT
+    and metadata.get("active_objects") == ["sponge"]
+  ):
+    return scene, default_model_path(scene)
   if layout in (None, LEGACY_COMBINED_MODEL_LAYOUT, "combined-v1", "legacy"):
     return scene, legacy_model_path()
   raise ValueError(f"episode has unsupported model_layout {layout!r}")

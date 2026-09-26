@@ -27,6 +27,7 @@ import mujoco
 import numpy as np
 from kaihand_tactile_env.shared.config import model_fingerprint
 from PIL import Image
+from unified_lerobot_collection import discover_unified_artifacts
 
 SOURCE_SCHEMA_VERSION = "kaihand_tactile_episode_v1"
 SOURCE_MANIFEST_VERSION = "kaihand_hdf5_source_snapshot_v1"
@@ -100,12 +101,12 @@ def camera_member_order(cameras: Sequence[str]) -> tuple[str, ...]:
   )
 
 
-def _tree_size_signature(root: Path) -> tuple[tuple[str, int], ...]:
-  """Return a cheap deterministic signature without re-reading file payloads."""
+def _tree_content_signature(root: Path) -> tuple[tuple[str, int, str], ...]:
+  """Record every output path, size, and SHA-256 before publication."""
 
   return tuple(
     sorted(
-      (path.relative_to(root).as_posix(), path.stat().st_size)
+      (path.relative_to(root).as_posix(), path.stat().st_size, _sha256_file(path))
       for path in root.rglob("*")
       if path.is_file() and not path.is_symlink()
     )
@@ -116,10 +117,8 @@ def publish_validated_staging(staging_dir: Path, output_dir: Path) -> None:
   """Atomically publish a validated tree, including across filesystems.
 
   Same-filesystem publication is a single rename.  For CPFS-to-NAS publication,
-  copy into a hidden NAS directory, compare the complete path/size inventory,
-  then rename that hidden directory into place.  Dataset payload validation and
-  tar hashing have already happened in ``staging_dir`` and are intentionally not
-  repeated after the sequential copy.
+  copy into a hidden NAS directory, compare complete path/size/content hashes,
+  then rename that hidden directory into place.
   """
 
   if os.path.lexists(output_dir):
@@ -133,7 +132,7 @@ def publish_validated_staging(staging_dir: Path, output_dir: Path) -> None:
     f".{output_dir.name}.upload-{os.getpid()}-{uuid.uuid4().hex}"
   )
   try:
-    source_signature = _tree_size_signature(staging_dir)
+    source_signature = _tree_content_signature(staging_dir)
     total_files = len(source_signature)
     copied_files = 0
 
@@ -154,8 +153,8 @@ def publish_validated_staging(staging_dir: Path, output_dir: Path) -> None:
       flush=True,
     )
     shutil.copytree(staging_dir, upload_dir, copy_function=copy_with_progress)
-    if _tree_size_signature(upload_dir) != source_signature:
-      raise OSError("cross-filesystem publication path/size verification failed")
+    if _tree_content_signature(upload_dir) != source_signature:
+      raise OSError("cross-filesystem publication content verification failed")
     if os.path.lexists(output_dir):
       raise FileExistsError(f"output appeared during publication: {output_dir}")
     os.rename(upload_dir, output_dir)
@@ -300,7 +299,18 @@ def _discover_sources(
   input_dir: Path,
   model_override: Path | None,
 ) -> tuple[SourceEpisode, ...]:
-  paths = sorted(input_dir.glob("episode_*.h5"))
+  discovered = discover_unified_artifacts(
+    input_dir, task="pick-place", expected_episodes=0, limit=None
+  )
+  if discovered is None:
+    paths = sorted(input_dir.glob("episode_*.h5"))
+    outer_indices = {}
+  else:
+    artifacts, _ = discovered
+    paths = [artifact.hdf5_path for artifact in artifacts]
+    outer_indices = {
+      artifact.hdf5_path: artifact.episode_index for artifact in artifacts
+    }
   if not paths:
     raise FileNotFoundError(f"no episode_*.h5 files found in {input_dir}")
 
@@ -345,6 +355,7 @@ def _discover_sources(
         raise ValueError(f"{path}: metadata episode_index must be an integer")
       if episode_index != filename_index:
         raise ValueError(f"{path}: filename and metadata episode indices differ")
+      episode_index = outer_indices.get(path, episode_index)
       recorded_model_hash = str(file.attrs.get("model_sha256", ""))
       if len(recorded_model_hash) != 64:
         raise ValueError(f"{path}: missing or invalid model_sha256")
@@ -860,11 +871,11 @@ def _source_manifest(
   episodes = [
     {
       "episode_index": source.episode_index,
-      "hdf5": source.path.name,
+      "hdf5": source.path.relative_to(input_dir).as_posix(),
       "hdf5_sha256": source.hdf5_sha256,
       "model_path": str(source.model_path),
       "model_sha256": source.model_sha256,
-      "sidecar": source.sidecar_path.name,
+      "sidecar": source.sidecar_path.relative_to(input_dir).as_posix(),
       "sidecar_sha256": source.sidecar_sha256,
       "size_bytes": source.size_bytes,
     }

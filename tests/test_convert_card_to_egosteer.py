@@ -218,6 +218,54 @@ def test_optional_full_source_hash_is_verified(tmp_path: Path) -> None:
   assert facts.source_hash_verified is True
 
 
+def test_head_only_card_accepts_missing_unselected_wrist(tmp_path: Path) -> None:
+  source = tmp_path / "raw"
+  _write_batch(source, (0,))
+  episode = source / "episode_000000_card_right.h5"
+  with h5py.File(episode, "r+") as file:
+    del file["cameras/right_wrist"]
+  sidecar = episode.with_suffix(".json")
+  capture = json.loads(sidecar.read_text())
+  del capture["camera_samples"]["right_wrist"]
+  capture["sha256"] = _sha256(episode)
+  sidecar.write_text(json.dumps(capture))
+  selected = converter._discover_batch(
+    source, expected_episodes=1, camera_views=("head",)
+  )
+  assert len(selected) == 1
+
+
+def test_unified_collection_converts_nested_card_with_outer_index(tmp_path: Path) -> None:
+  root = tmp_path / "collection"
+  data = root / "poker-draw/000042/attempt_001/data/raw"
+  data.mkdir(parents=True)
+  _write_episode(data, 0)
+  source = data / "episode_000000_card_right.h5"
+  (root / "collection.json").write_text(json.dumps({
+    "schema": "task_collection_v2",
+    "tasks": ["poker-draw"],
+    "collection_mode": "attempts",
+  }))
+  (root / "summary.json").write_text(json.dumps({
+    "episodes": [{
+      "task": "poker-draw", "episode_index": 42,
+      "status": "success", "hdf5": [source.relative_to(root).as_posix()],
+    }],
+    "by_task": {"poker-draw": {"success": 1}},
+  }))
+  output = tmp_path / "egosteer"
+  converter.main([
+    "--input-dir", str(root), "--output-dir", str(output),
+    "--expected-episodes", "1", "--workers", "1",
+    "--cameras", "head", "right_wrist",
+  ])
+  report = json.loads((output / "conversion_report.json").read_text())
+  assert report["converted_episodes"] == 1
+  source_manifest = json.loads((output / "source_snapshot_manifest.json").read_text())
+  assert source_manifest["episodes"][0]["episode_index"] == 42
+  assert source_manifest["episodes"][0]["hdf5"] == source.relative_to(root).as_posix()
+
+
 def test_parallel_export_writes_one_valid_standard_shard_per_episode(
   tmp_path: Path,
 ) -> None:

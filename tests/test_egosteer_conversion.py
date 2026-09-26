@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 from runpy import run_path
 
+import h5py
 import numpy as np
 import pytest
+from kaihand_tactile_env.shared.config import default_model_path, model_fingerprint
+
+sys.path.insert(0, str(Path(__file__).parents[1] / "scripts" / "workcell"))
 
 _CONVERTER = run_path(
   str(
@@ -63,3 +69,54 @@ def test_canonical_wrist_mapping_is_a_proper_rotation(side: str) -> None:
 
   np.testing.assert_allclose(rotation.T @ rotation, np.eye(3), atol=1.0e-12)
   assert np.linalg.det(rotation) == pytest.approx(1.0)
+
+
+def test_pickplace_discovery_uses_unified_outer_index(tmp_path: Path) -> None:
+  root = tmp_path / "collection"
+  data = root / "pick-place/000042/attempt_001/data/raw"
+  data.mkdir(parents=True)
+  source = data / "episode_000000_pick_place.h5"
+  model = default_model_path("pick-place")
+  sha256 = _CONVERTER["_sha256_file"]
+  with h5py.File(source, "w") as file:
+    file.attrs["schema_version"] = "kaihand_tactile_episode_v1"
+    file.attrs["metadata_json"] = json.dumps({
+      "scene": "pick-place", "episode_index": 0,
+    })
+    file.attrs["outcome_json"] = json.dumps({
+      "success": True, "placed_in_box": True,
+    })
+    file.attrs["model_path"] = str(model)
+    file.attrs["model_sha256"] = sha256(model)
+    file.attrs["model_fingerprint"] = model_fingerprint(model)
+  source.with_suffix(".json").write_text(json.dumps({
+    "episode": source.name, "sha256": sha256(source),
+  }))
+  (root / "collection.json").write_text(json.dumps({
+    "schema": "task_collection_v2", "tasks": ["pick-place"],
+    "collection_mode": "attempts",
+  }))
+  (root / "summary.json").write_text(json.dumps({
+    "episodes": [{
+      "task": "pick-place", "episode_index": 42,
+      "status": "success", "hdf5": [source.relative_to(root).as_posix()],
+    }],
+    "by_task": {"pick-place": {"success": 1}},
+  }))
+
+  episodes = _CONVERTER["_discover_sources"](root, None)
+  assert len(episodes) == 1
+  assert episodes[0].episode_index == 42
+  snapshot = _CONVERTER["_source_manifest"](root, episodes, "test")
+  assert snapshot["episodes"][0]["hdf5"] == source.relative_to(root).as_posix()
+
+
+def test_publication_signature_detects_same_size_corruption(tmp_path: Path) -> None:
+  source = tmp_path / "source"
+  copy = tmp_path / "copy"
+  source.mkdir()
+  copy.mkdir()
+  (source / "shard.tar").write_bytes(b"original")
+  (copy / "shard.tar").write_bytes(b"modified")
+  signature = _CONVERTER["_tree_content_signature"]
+  assert signature(source) != signature(copy)

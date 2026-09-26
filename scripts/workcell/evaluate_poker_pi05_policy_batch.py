@@ -18,9 +18,9 @@ from kaihand_tactile_env.tasks.poker_draw.mid_full import CONTACT_MODEL_VERSION
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts/workcell/run_poker_pi05_policy.py"
+EGL_VENDOR = ROOT / "scripts/collect/nvidia_egl_vendor.json"
 OPENPI_CLIENT = (
-  Path("/cpfs_infra/user/chenxianchi/code/openpi")
-  / "packages/openpi-client/src"
+  Path("/cpfs_infra/user/chenxianchi/code/openpi") / "packages/openpi-client/src"
 )
 REVIEW_FILES = (
   "review.mp4",
@@ -28,6 +28,12 @@ REVIEW_FILES = (
   "frames.jsonl",
   "first_frame.png",
   "last_frame.png",
+)
+RAW_FILES = (
+  "raw/episode.h5",
+  "raw/episode.json",
+  "raw/episode.result.json",
+  "curves/right_hand_force_curves.png",
 )
 
 
@@ -53,6 +59,7 @@ def fingerprints() -> dict:
     ROOT / "src/kaihand_tactile_env/shared/rendering.py",
     ROOT / "src/kaihand_tactile_env/shared/evaluation_video.py",
     ROOT / "src/kaihand_tactile_env/shared/policy_video.py",
+    ROOT / "scripts/workcell/poker_pi05_rollout_artifacts.py",
   ]
   result = {
     str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -65,9 +72,10 @@ def fingerprints() -> dict:
 
 
 def classify(report: dict) -> tuple[str, bool]:
-  if report.get("status") == "success" and report.get("evaluation", {}).get(
-    "success"
-  ) is True:
+  if (
+    report.get("status") == "success"
+    and report.get("evaluation", {}).get("success") is True
+  ):
     return "success", True
   if report.get("status") == "task_not_completed":
     return "time_limit", True
@@ -91,8 +99,16 @@ def main() -> None:
   parser.add_argument("--seeds", nargs="+", type=int, default=list(range(20)))
   parser.add_argument("--trial-wall-limit", type=float, default=1800.0)
   parser.add_argument("--max-sim-seconds", type=float, default=50.0)
+  parser.add_argument("--success-hold-seconds", type=float, default=0.10)
+  parser.add_argument("--full-duration-evaluation", action="store_true")
   parser.add_argument("--video-count", type=int, default=3)
+  parser.add_argument("--save-raw", action="store_true")
+  parser.add_argument(
+    "--review-second-camera", choices=("global", "overhead"), default="global"
+  )
   parser.add_argument("--record-fps", type=int, choices=(5, 10), default=10)
+  parser.add_argument("--reference-dataset", type=Path)
+  parser.add_argument("--reference-episode-index", type=int, default=0)
   parser.add_argument("--execute-steps", type=int, default=8)
   parser.add_argument(
     "--disable-penetration-guard",
@@ -105,6 +121,12 @@ def main() -> None:
   parser.add_argument("--xy-jitter-mm", type=float, default=4.0)
   parser.add_argument("--yaw-jitter-deg", type=float, default=0.5)
   args = parser.parse_args()
+  if args.full_duration_evaluation:
+    args.disable_penetration_guard = True
+  if not 0 < args.success_hold_seconds <= args.max_sim_seconds:
+    parser.error("success-hold-seconds must be positive and at most max-sim-seconds")
+  if args.reference_dataset is not None:
+    args.reference_dataset = args.reference_dataset.expanduser().resolve()
   if len(set(args.seeds)) != len(args.seeds) or any(seed < 0 for seed in args.seeds):
     parser.error("distinct nonnegative seeds required")
   if not 0 <= args.video_count <= len(args.seeds):
@@ -115,6 +137,8 @@ def main() -> None:
     parser.error("time limits must be positive")
   if not 0 <= args.xy_jitter_mm <= 5.0 or not 0 <= args.yaw_jitter_deg <= 1.0:
     parser.error("poker randomization is limited to 5 mm XY and 1 degree yaw")
+  if not EGL_VENDOR.is_file():
+    raise FileNotFoundError(f"NVIDIA EGL vendor configuration is missing: {EGL_VENDOR}")
 
   deployment_path, deployment = load_manifest(args.deployment_manifest)
   horizon = int(deployment["prediction_horizon"])
@@ -129,6 +153,10 @@ def main() -> None:
     "deployment_id": deployment["deployment_id"],
     "checkpoint": deployment["checkpoint_path"],
     "checkpoint_sha256": deployment["checkpoint_sha256"],
+    "reference_dataset": (
+      None if args.reference_dataset is None else str(args.reference_dataset)
+    ),
+    "reference_episode_index": args.reference_episode_index,
     "model_family": deployment["model_family"],
     "server": args.server,
     "seeds": args.seeds,
@@ -139,13 +167,15 @@ def main() -> None:
     "execute_steps": args.execute_steps,
     "control_hz": 30,
     "replan_period_s": args.execute_steps / 30,
+    "success_hold_seconds": args.success_hold_seconds,
+    "full_duration_evaluation": args.full_duration_evaluation,
     "diagnostic_only": bool(args.disable_penetration_guard),
     "formal_metrics_valid": not args.disable_penetration_guard,
     "penetration_guard": {
       "enabled": not args.disable_penetration_guard,
       "threshold_m": 0.0006,
       "nonfinite_state_guard_enabled": True,
-      "fallen_card_guard_enabled": True,
+      "fallen_card_guard_enabled": not args.full_duration_evaluation,
     },
     "max_sim_seconds": args.max_sim_seconds,
     "trial_wall_limit": args.trial_wall_limit,
@@ -156,10 +186,12 @@ def main() -> None:
       "count": args.video_count,
       "fps": args.record_fps,
       "output_size": [1920, 1080],
+      "second_camera": args.review_second_camera,
       "model_views": ["head", "right_wrist"],
-      "audit_view": "global",
+      "audit_view": args.review_second_camera,
       "bilateral_fingertip_force": True,
     },
+    "save_raw": args.save_raw,
     "initial_randomization": {
       "xy_uniform_mm": [-args.xy_jitter_mm, args.xy_jitter_mm],
       "yaw_uniform_deg": [-args.yaw_jitter_deg, args.yaw_jitter_deg],
@@ -171,7 +203,7 @@ def main() -> None:
     "success_rule": (
       "contact; supported flat card >=40% overhang and >=50mm robotward travel; "
       "opposed lift >=20mm; face-to-head and face-to-robot cosines >=0.8; "
-      "inspection position error <=30mm; stable for 0.1s"
+      f"inspection position error <=30mm; card clearance >=20mm; stable for {args.success_hold_seconds:g}s"
     ),
     "source_hashes": frozen,
   }
@@ -186,9 +218,7 @@ def main() -> None:
     "MKL_NUM_THREADS": "1",
     "MUJOCO_GL": "egl",
     "KAIHAND_RENDER_BACKEND": "hardware",
-    "__EGL_VENDOR_LIBRARY_FILENAMES": str(
-      ROOT / ".venv/etc/kaihand/10_nvidia.json"
-    ),
+    "__EGL_VENDOR_LIBRARY_FILENAMES": str(EGL_VENDOR),
     "NO_PROXY": "127.0.0.1,localhost",
     "no_proxy": "127.0.0.1,localhost",
   }
@@ -231,6 +261,8 @@ def main() -> None:
       str(args.execute_steps),
       "--max-sim-seconds",
       str(args.max_sim_seconds),
+      "--success-hold-seconds",
+      str(args.success_hold_seconds),
       "--output-dir",
       str(trial),
       "--record-fps",
@@ -240,13 +272,21 @@ def main() -> None:
       "--review-height",
       "1080",
       "--review-second-camera",
-      "global",
+      args.review_second_camera,
       "--show-model-wrist-in-review",
       "--record" if record else "--no-record",
+      "--save-raw" if args.save_raw else "--no-save-raw",
       "--save-first-request" if record else "--no-save-first-request",
     ]
+    if args.reference_dataset is not None:
+      command.extend((
+        "--reference-dataset", str(args.reference_dataset),
+        "--reference-episode-index", str(args.reference_episode_index),
+      ))
     if args.disable_penetration_guard:
       command.append("--disable-penetration-guard")
+    if args.full_duration_evaluation:
+      command.append("--full-duration-evaluation")
     print(f"START {trial_index + 1}/{len(args.seeds)} seed={seed}", flush=True)
     trial_started = time.monotonic()
     with (output / f"seed_{seed:03d}.log").open("x") as log:
@@ -274,6 +314,8 @@ def main() -> None:
       "model_action_dim": deployment["model_action_dim"],
       "action_dim": deployment["action_dim"],
       "execute_steps": args.execute_steps,
+      "success_hold_seconds": args.success_hold_seconds,
+      "full_duration_evaluation": args.full_duration_evaluation,
       "control_hz": 30,
       "diagnostic_only": bool(args.disable_penetration_guard),
       "formal_metrics_valid": not args.disable_penetration_guard,
@@ -286,12 +328,44 @@ def main() -> None:
     }
     if identity_errors:
       raise RuntimeError(f"seed {seed}: trial identity mismatch: {identity_errors}")
+    reason, valid = classify(summary)
+    if record and not valid:
+      detail = summary.get("error")
+      if not detail:
+        detail = (
+          "trial exceeded its wall-time limit"
+          if returncode == -999
+          else f"runner exited with returncode={returncode}"
+        )
+      raise RuntimeError(
+        f"seed {seed}: runner failed before recorded-artifact validation: "
+        f"{detail}; summary={summary_path}; "
+        f"log={output / f'seed_{seed:03d}.log'}"
+      )
+    if args.save_raw and valid:
+      missing_raw = [name for name in RAW_FILES if not (trial / name).is_file()]
+      if missing_raw or summary.get("raw", {}).get("validated") is not True:
+        raise RuntimeError(
+          f"seed {seed}: incomplete Raw/force artifacts: {missing_raw}; "
+          f"error={summary.get('raw_record_error')}"
+        )
     if record:
       review = trial / "review"
       missing = [name for name in REVIEW_FILES if not (review / name).is_file()]
       if missing:
+        if not valid:
+          raise RuntimeError(
+            f"seed {seed}: trial failed before review completion: "
+            f"{summary.get('error') or f'returncode={returncode}'}; missing={missing}"
+          )
         raise RuntimeError(f"seed {seed}: incomplete review artifact: {missing}")
       if not (trial / "first_request.npz").is_file():
+        if summary.get("error"):
+          raise RuntimeError(
+            f"seed {seed}: runner failed before first-request audit: "
+            f"{summary['error']}; summary={summary_path}; "
+            f"log={output / f'seed_{seed:03d}.log'}"
+          )
         raise RuntimeError(f"seed {seed}: missing two-camera first request audit")
       review_metadata = json.loads((review / "review.json").read_text())
       if review_metadata.get("completed") is not True:
@@ -306,7 +380,6 @@ def main() -> None:
       ):
         raise RuntimeError(f"seed {seed}: review diagnostic-mode mismatch")
 
-    reason, valid = classify(summary)
     row = {
       "seed": seed,
       "success": reason == "success",
@@ -323,6 +396,7 @@ def main() -> None:
       "formal_result_valid": not args.disable_penetration_guard,
       "penetration_diagnostics": summary.get("penetration_diagnostics", {}),
       "summary": str(summary_path.relative_to(output)),
+      "raw": summary.get("raw"),
     }
     results.append(row)
     valid_count = sum(result["valid_trial"] for result in results)
@@ -344,6 +418,7 @@ def main() -> None:
       "penetration_guard_enabled": not args.disable_penetration_guard,
       "penetration_guard_threshold_m": 0.0006,
       "max_sim_seconds": args.max_sim_seconds,
+      "save_raw": args.save_raw,
       "planned": len(args.seeds),
       "attempted": len(results),
       "valid_trials": valid_count,

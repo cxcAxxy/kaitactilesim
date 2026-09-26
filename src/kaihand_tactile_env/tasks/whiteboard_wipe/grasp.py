@@ -37,6 +37,35 @@ CLOSED_HAND = np.array(
     0.5976667094640339,
   ]
 )
+# Fully spread pose used from reset until the wrist has descended to the
+# eraser.  Keep this task-local: other environments have different approach
+# geometry, even though this matches the shared neutral hand pose.
+SPREAD_HAND = np.array(
+  [
+    0.0,
+    0.25,
+    0.05,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+  ]
+)
+# Collision-free hand shape immediately before tactile-regulated closure.
+# It is reached only after the fully spread hand has finished descending.
 OPEN_HAND = np.array(
   [
     0.10456546109177035,

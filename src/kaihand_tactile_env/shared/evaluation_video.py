@@ -17,7 +17,7 @@ from .contact_tactile import SolverDistributedTactileProvider
 from .render_backend import current_backend
 from .task_video import _FfmpegPipeWriter
 
-SCHEMA_VERSION = "kaihand-policy-evaluation-review-v2"
+SCHEMA_VERSION = "kaihand-policy-evaluation-review-v3"
 FINGER_LABELS = ("Thumb", "Index", "Middle", "Ring", "Pinky")
 HAND_LABELS = ("LEFT", "RIGHT")
 CHANNEL_NAMES = ("Ft_col", "Ft_row", "Fn")
@@ -102,7 +102,11 @@ def _draw_camera(
   _paste_fit(image, pixels, box)
   draw.rectangle(box, outline=(78, 82, 94), width=2)
   label_font = _font(18)
-  draw.rectangle((box[0], box[1], box[0] + 140, box[1] + 28), fill=(0, 0, 0))
+  label_width = draw.textbbox((0, 0), label, font=label_font)[2] + 14
+  draw.rectangle(
+    (box[0], box[1], min(box[2], box[0] + label_width), box[1] + 28),
+    fill=(0, 0, 0),
+  )
   draw.text((box[0] + 7, box[1] + 4), label, fill=(245, 245, 248), font=label_font)
 
 
@@ -224,10 +228,17 @@ def compose_evaluation_frame(
   phase: str,
   second_camera_label: str,
   model_wrist_rgb: np.ndarray | None = None,
+  review_wrist_rgb: np.ndarray | None = None,
+  head_is_model_input: bool = True,
   metrics: Mapping[str, Any] | None = None,
   heading: str = "MODEL EVALUATION",
 ) -> Image.Image:
-  """Compose two/three cameras, bilateral force maps and ten 3-axis plots."""
+  """Compose two/three cameras and enlarged bilateral force maps.
+
+  ``force_history`` remains part of the public call signature and is validated
+  for compatibility with existing recorders, but it is no longer rendered in
+  the evaluation video.
+  """
   normal = np.asarray(normal_taxel_force_n, dtype=np.float64)
   tangent = np.asarray(tangent_taxel_force_n, dtype=np.float64)
   history = np.asarray(force_history, dtype=np.float64)
@@ -241,6 +252,8 @@ def compose_evaluation_frame(
     raise ValueError("force data must be finite")
   if np.any(normal < -1.0e-12):
     raise ValueError("normal force must be nonnegative")
+  if model_wrist_rgb is not None and review_wrist_rgb is not None:
+    raise ValueError("right wrist cannot be both a model and review-only panel")
 
   image = Image.new("RGB", (width, height), (14, 15, 19))
   draw = ImageDraw.Draw(image)
@@ -251,7 +264,7 @@ def compose_evaluation_frame(
     fill=(246, 246, 249),
     font=_font(22),
   )
-  detail = "10 fingertips | curves: Ft_col / Ft_row / Fn mean [N/taxel]"
+  detail = "10 fingertips | heatmaps: bilateral Fn / |Ft| [N per taxel]"
   metric_text = _metrics_text(metrics or {})
   if metric_text:
     detail += " | " + metric_text
@@ -259,12 +272,13 @@ def compose_evaluation_frame(
 
   margin = 8
   top, bottom = 76, height - margin
-  left_end = int(width * 0.34)
-  middle_end = int(width * 0.61)
+  left_end = int(width * 0.45)
   camera_gap = 8
-  cameras = [(head_rgb, "HEAD / MODEL VIEW")]
+  cameras = [(head_rgb, "HEAD / MODEL VIEW" if head_is_model_input else "HEAD / REVIEW ONLY")]
   if model_wrist_rgb is not None:
     cameras.append((model_wrist_rgb, "RIGHT WRIST / MODEL VIEW"))
+  elif review_wrist_rgb is not None:
+    cameras.append((review_wrist_rgb, "RIGHT WRIST / REVIEW ONLY"))
   cameras.append((second_rgb, second_camera_label))
   camera_height = (bottom - top - camera_gap * (len(cameras) - 1)) // len(cameras)
   for index, (pixels, label) in enumerate(cameras):
@@ -278,7 +292,7 @@ def compose_evaluation_frame(
       label,
     )
 
-  tactile_left, tactile_right = left_end + margin, middle_end - margin
+  tactile_left, tactile_right = left_end + margin, width - margin
   tactile_height = bottom - top
   tactile_row_height = tactile_height // 4
   tangent_norm = np.linalg.norm(tangent, axis=-1)
@@ -305,21 +319,6 @@ def compose_evaluation_frame(
           maximum,
         )
 
-  curve_left, curve_right = middle_end + margin, width - margin
-  curve_width = (curve_right - curve_left - 5) // 2
-  curve_height = (bottom - top - 16) // 5
-  for finger_index, finger in enumerate(FINGER_LABELS):
-    row_top = top + finger_index * (curve_height + 4)
-    for side_index, hand in enumerate(("L", "R")):
-      box_left = curve_left + side_index * (curve_width + 5)
-      _draw_curve(
-        draw,
-        history,
-        side_index * 5 + finger_index,
-        (box_left, row_top, box_left + curve_width, row_top + curve_height),
-        f"{hand} {finger}",
-        CURVE_ABS_MAX_N_PER_TAXEL,
-      )
   return image
 
 
@@ -346,6 +345,10 @@ class EvaluationVideo:
     render_height: int = 480,
     second_camera: str = "global",
     include_model_wrist: bool = False,
+    include_review_wrist: bool = False,
+    comparison: bool = False,
+    reference_dataset: Path | None = None,
+    reference_episode_index: int = 0,
     tactile_provider: Any | None = None,
     metrics: EvaluationMetrics | None = None,
     heading: str = "MODEL EVALUATION",
@@ -361,6 +364,8 @@ class EvaluationVideo:
       raise ValueError("second camera must be global, right_wrist or overhead")
     if include_model_wrist and second_camera == "right_wrist":
       raise ValueError("model wrist view would duplicate the second camera")
+    if reference_episode_index < 0:
+      raise ValueError("reference episode index must be nonnegative")
     output.mkdir(parents=True, exist_ok=False)
     self.simulation = simulation
     self.output = output
@@ -369,6 +374,11 @@ class EvaluationVideo:
     self.stride = 30 // fps
     self.second_camera_name = second_camera
     self.include_model_wrist = bool(include_model_wrist)
+    self.include_review_wrist = bool(include_review_wrist)
+    self.show_dedicated_wrist = (
+      second_camera != "right_wrist"
+      and (self.include_model_wrist or self.include_review_wrist)
+    )
     self.metrics = metrics
     self.heading = heading
     self.count = 0
@@ -390,6 +400,60 @@ class EvaluationVideo:
     self._source_indices = np.asarray(
       [provider_links.index(name) for name in FINGERTIP_LINK_NAMES], dtype=np.intp
     )
+    supplied_metadata = _json_safe(dict(metadata or {}))
+    observation_contract = supplied_metadata.get("observation_contract")
+    server_metadata = supplied_metadata.get("server_metadata")
+    if not isinstance(observation_contract, Mapping) and isinstance(server_metadata, Mapping):
+      observation_contract = server_metadata.get("observation_contract")
+    declared_cameras = (
+      observation_contract.get("cameras")
+      if isinstance(observation_contract, Mapping)
+      else None
+    )
+    if isinstance(server_metadata, Mapping) and server_metadata.get("cameras") is not None:
+      declared_cameras = server_metadata["cameras"]
+    contract_cameras = (
+      tuple(declared_cameras)
+      if isinstance(declared_cameras, (list, tuple))
+      else None
+    )
+    self.head_is_model_input = contract_cameras is None or "head" in contract_cameras
+    self.wrist_is_model_input = (
+      self.include_model_wrist
+      or (contract_cameras is not None and "right_wrist" in contract_cameras)
+    )
+    wrist_displayed = self.show_dedicated_wrist or second_camera == "right_wrist"
+    model_cameras_displayed = []
+    if self.head_is_model_input:
+      model_cameras_displayed.append("head")
+    if wrist_displayed and self.wrist_is_model_input:
+      model_cameras_displayed.append("right_wrist")
+    review_only_cameras_displayed = []
+    if not self.head_is_model_input:
+      review_only_cameras_displayed.append("head")
+    if second_camera != "right_wrist" or not self.wrist_is_model_input:
+      review_only_cameras_displayed.append(second_camera)
+    if self.show_dedicated_wrist and not self.wrist_is_model_input:
+      review_only_cameras_displayed.append("right_wrist")
+    reference_value = (
+      reference_dataset
+      if reference_dataset is not None
+      else supplied_metadata.get("reference_dataset")
+    )
+    self.reference_dataset = Path(reference_value) if reference_value else None
+    self.reference_episode_index = int(reference_episode_index)
+    self.comparison_enabled = bool(comparison)
+    self.comparison_trace = None
+    self.comparison_error: str | None = None
+    self._comparison_capture_enabled = False
+    if self.comparison_enabled:
+      try:
+        from .evaluation_comparison import EvaluationComparisonTrace
+
+        self.comparison_trace = EvaluationComparisonTrace(tactile_provider=self.provider)
+        self._comparison_capture_enabled = True
+      except Exception as exc:
+        self.comparison_error = f"comparison recorder unavailable: {type(exc).__name__}: {exc}"
     self.camera = None
     if second_camera == "global":
       self.camera = mujoco.MjvCamera()
@@ -399,43 +463,57 @@ class EvaluationVideo:
       self.camera.azimuth = 135
       self.camera.elevation = -25
     self.metadata = {
-      "schema": SCHEMA_VERSION,
       "task": getattr(simulation, "scene", "unknown"),
       "fps": fps,
       "output_size": [width, height],
       "review_render_size": [render_width, render_height],
       "layout": (
-        "head/right-wrist/global-or-named RGB; bilateral Fn/|Ft| maps; bilateral 3-axis mean curves"
-        if include_model_wrist
-        else "head/global-or-named RGB; bilateral Fn/|Ft| maps; bilateral 3-axis mean curves"
+        "enlarged head/right-wrist/global-or-named RGB; enlarged bilateral Fn/|Ft| maps"
+        if self.show_dedicated_wrist
+        else "enlarged head/global-or-named RGB; enlarged bilateral Fn/|Ft| maps"
       ),
       "second_camera": second_camera,
-      "model_input_cameras_displayed": (
-        ["head", "right_wrist"] if include_model_wrist else ["head"]
-      ),
       "head_camera_modified": False,
       "render_shadows": False,
       "physics_modified": False,
       "tactile_source": self.provider.source,
       "tactile_semantics": self.provider.taxel_force_semantics,
       "fingertip_order": list(FINGERTIP_LINK_NAMES),
-      "curve_channel_order": list(CHANNEL_NAMES),
-      "curve_channel_aliases": {
+      "force_mean_channel_order": list(CHANNEL_NAMES),
+      "force_mean_channel_aliases": {
         "Fx(sensor_chart)": "Ft_col",
         "Fy(sensor_chart)": "Ft_row",
         "Fz(sensor_chart)": "Fn",
       },
-      "curve_value": "arithmetic mean across each fingertip's 7x5 taxels",
-      "curve_scale": {
-        "minimum_n_per_taxel": -CURVE_ABS_MAX_N_PER_TAXEL,
-        "maximum_n_per_taxel": CURVE_ABS_MAX_N_PER_TAXEL,
+      "force_mean_value": "arithmetic mean across each fingertip's 7x5 taxels",
+      "force_mean_storage": (
+        "frames.jsonl.force_mean_n_per_taxel; not rendered in review.mp4"
+      ),
+      "heatmap_scale": {
+        "Fn_n_per_taxel": [0.0, NORMAL_TAXEL_MAX_N],
+        "Ft_magnitude_n_per_taxel": [0.0, TANGENT_TAXEL_MAX_N],
         "fixed": True,
       },
-      "tangent_display": "heatmap is per-taxel |Ft|; signed components are curves and frames.jsonl",
+      "tangent_display": (
+        "heatmap is per-taxel |Ft|; signed components remain in frames.jsonl "
+        "and are not rendered in review.mp4"
+      ),
       "timing": "same cached FK and solver state for both cameras and tactile; recorder never steps/forwards physics",
       "video_clock": "simulation time; final off-grid frame allowed",
       "task_metrics": None if metrics is None else _json_safe(metrics.metadata()),
-      **_json_safe(dict(metadata or {})),
+      **supplied_metadata,
+      "schema": SCHEMA_VERSION,
+      "time_series_displayed": False,
+      "model_input_cameras_displayed": model_cameras_displayed,
+      "review_only_cameras_displayed": review_only_cameras_displayed,
+      "right_wrist_camera_role": (
+        "model_input" if self.wrist_is_model_input else "review_only"
+      ) if wrist_displayed else None,
+      "comparison_requested": self.comparison_enabled,
+      "reference_dataset": (
+        str(self.reference_dataset) if self.reference_dataset is not None else None
+      ),
+      "reference_episode_index": self.reference_episode_index if self.comparison_enabled else None,
     }
     try:
       self.renderer = mujoco.Renderer(
@@ -482,17 +560,40 @@ class EvaluationVideo:
     )
     return np.maximum(normal, 0.0), tangent, means
 
+  def _capture_comparison(
+    self,
+    normal: np.ndarray | None = None,
+    tangent: np.ndarray | None = None,
+  ) -> None:
+    if not self._comparison_capture_enabled or self.comparison_trace is None:
+      return
+    try:
+      if normal is None or tangent is None:
+        self.comparison_trace.capture(self.simulation)
+      else:
+        self.comparison_trace.capture(
+          self.simulation,
+          normal_taxel_force_n=normal,
+          tangent_taxel_force_n=tangent,
+        )
+    except Exception as exc:
+      self.comparison_error = f"comparison capture failed: {type(exc).__name__}: {exc}"
+      self._comparison_capture_enabled = False
+
   def capture(self, tick: int, phase: str, *, force: bool = False) -> None:
     if self.closed:
       raise RuntimeError("video already closed")
-    if not force and tick % self.stride:
-      return
     timestamp = float(
       getattr(self.simulation, "observation_time", self.simulation.data.time)
     )
-    if self.last_time is not None and timestamp <= self.last_time + 1.0e-10:
+    video_due = (force or tick % self.stride == 0) and (
+      self.last_time is None or timestamp > self.last_time + 1.0e-10
+    )
+    if not video_due:
+      self._capture_comparison()
       return
     normal, tangent, means = self._sample()
+    self._capture_comparison(normal, tangent)
     self.force_history.append(means.copy())
     assert self.renderer is not None and self.writer is not None and self.log is not None
     self.renderer.update_scene(self.simulation.data, camera="head")
@@ -501,9 +602,14 @@ class EvaluationVideo:
     self.renderer.update_scene(self.simulation.data, camera=second_camera)
     second = self.renderer.render().copy()
     wrist = None
-    if self.include_model_wrist:
+    if self.show_dedicated_wrist:
       self.renderer.update_scene(self.simulation.data, camera="right_wrist")
       wrist = self.renderer.render().copy()
+    second_camera_label = self.second_camera_name.replace("_", " ").upper()
+    if self.second_camera_name == "right_wrist":
+      second_camera_label += (
+        " / MODEL VIEW" if self.wrist_is_model_input else " / REVIEW ONLY"
+      )
     task_metrics = {} if self.metrics is None else dict(self.metrics.snapshot(self.simulation))
     if self.first_time is None:
       self.first_time = timestamp
@@ -517,8 +623,10 @@ class EvaluationVideo:
       height=self.height,
       simulation_time_s=float(self.simulation.data.time),
       phase=phase,
-      second_camera_label=self.second_camera_name.replace("_", " ").upper(),
-      model_wrist_rgb=wrist,
+      second_camera_label=second_camera_label,
+      model_wrist_rgb=wrist if self.wrist_is_model_input else None,
+      review_wrist_rgb=wrist if not self.wrist_is_model_input else None,
+      head_is_model_input=self.head_is_model_input,
       metrics=task_metrics,
       heading=self.heading,
     )
@@ -554,6 +662,7 @@ class EvaluationVideo:
       and self.last_time is not None
       and timestamp < self.last_time + 1.0 / self.fps - 1.0e-10
     ):
+      self._capture_comparison()
       return
     self.capture(self.count * self.stride, phase, force=True)
 
@@ -573,6 +682,31 @@ class EvaluationVideo:
         self.log.close()
       if self.renderer is not None:
         self.renderer.close()
+      comparison_summary = None
+      if self.comparison_enabled:
+        if self.comparison_trace is None:
+          comparison_summary = {
+            "status": "unavailable",
+            "reason": self.comparison_error,
+          }
+        else:
+          try:
+            comparison_summary = self.comparison_trace.finish(
+              self.output,
+              reference_dataset=self.reference_dataset,
+              reference_episode_index=self.reference_episode_index,
+            )
+          except Exception as exc:
+            comparison_summary = {
+              "status": "error",
+              "reason": f"comparison export failed: {type(exc).__name__}: {exc}",
+            }
+          if self.comparison_error is not None:
+            comparison_summary = {
+              **comparison_summary,
+              "status": "capture_error",
+              "reason": self.comparison_error,
+            }
       self.metadata.update(
         completed=completed,
         task_status=status,
@@ -583,7 +717,17 @@ class EvaluationVideo:
         last_pose_time_s=self.last_time,
         playback_duration_s=self.count / self.fps,
       )
+      if comparison_summary is not None:
+        self.metadata["comparison_plots"] = _json_safe(comparison_summary)
       (self.output / "review.json").write_text(
         json.dumps(self.metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+      )
+    if (
+      comparison_summary is not None
+      and comparison_summary.get("status") not in {"ok", "reference_unavailable"}
+    ):
+      raise RuntimeError(
+        "evaluation comparison artifact failed: "
+        f"{comparison_summary.get('reason', comparison_summary.get('status'))}"
       )
     return self.metadata

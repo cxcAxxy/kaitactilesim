@@ -15,8 +15,10 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNERS = {
   ("pick-place", "egosteer"): "evaluate_pickplace_policy_batch.py",
   ("pick-place", "pi05"): "evaluate_pickplace_policy_batch.py",
+  ("pick-place", "lingbot-vla2"): "evaluate_pickplace_lingbot_vla2_batch.py",
   ("poker-draw", "egosteer"): "evaluate_poker_policy_batch.py",
   ("poker-draw", "pi05"): "evaluate_poker_pi05_policy_batch.py",
+  ("poker-draw", "pi05+trex"): "evaluate_poker_pi05+trex_policy_batch.py",
   ("usb-insert", "egosteer"): "evaluate_usb_policy_batch.py",
   ("usb-insert", "pi05"): "evaluate_usb_pi05_policy_batch.py",
   ("bulb-screw", "egosteer"): "evaluate_shared_task_policy_batch.py",
@@ -32,6 +34,41 @@ RUNNERS = {
   ("whiteboard-wipe", "pi05"): "evaluate_shared_task_policy_batch.py",
   ("whiteboard-wipe", "egotouch"): "evaluate_shared_task_policy_batch.py",
 }
+
+_SOURCE_TASK_DIRECTORY = {"usb-insert": "usb_insert"}
+
+
+def _reference_dataset_from_checkpoint(payload: dict, task: str) -> Path | None:
+  """Infer only the matching task/version LeRobot source, never a newer dataset.
+
+  Fast pi0.5 training keeps the dataset and ``checkpoints`` in the same version
+  directory.  Older conversions keep checkpoints under a model-family tree and
+  the reference under the sibling ``lerobot_v3`` tree.  Preserve the legacy
+  layout when it exists; otherwise use a colocated dataset whose LeRobot
+  metadata is present.  Keep the legacy path as the final fallback for
+  manifests that are inspected away from their source machine.
+  """
+  checkpoint = payload.get("checkpoint_path")
+  if not isinstance(checkpoint, str) or not Path(checkpoint).is_absolute():
+    return None
+  parts = Path(checkpoint).parts
+  task_directory = _SOURCE_TASK_DIRECTORY.get(task, task)
+  for index, component in enumerate(parts):
+    if (
+      component == "sim"
+      and len(parts) > index + 4
+      and parts[index + 1] == task_directory
+      and parts[index + 2] in {"pi05", "egosteer", "egotouch"}
+      and parts[index + 4] == "checkpoints"
+    ):
+      colocated = Path(*parts[:index + 4])
+      legacy = Path(*parts[:index + 2]) / "lerobot_v3" / parts[index + 3]
+      if (legacy / "meta/info.json").is_file():
+        return legacy
+      if (colocated / "meta/info.json").is_file():
+        return colocated
+      return legacy
+  return None
 
 
 def _execute_steps_request(value: str) -> int | str:
@@ -55,18 +92,22 @@ def parse_args(argv=None):
     epilog="Pass runner-specific flags after --, for example: -- --server ws://127.0.0.1:18783",
   )
   parser.add_argument(
+    "--list-support", action="store_true",
+    help="list registered task/model evaluation runners without a deployment",
+  )
+  parser.add_argument(
     "--task",
-    required=True,
     choices=(
       "pick-place", "poker-draw", "usb-insert", "bulb-screw", "vase-wipe",
       "install-ram", "whiteboard-wipe",
     ),
   )
   parser.add_argument(
-    "--model-family", required=True, choices=("egosteer", "pi05", "egotouch")
+    "--model-family",
+    choices=("egosteer", "pi05", "pi05+trex", "egotouch", "lingbot-vla2")
   )
-  parser.add_argument("--deployment-manifest", required=True, type=Path)
-  parser.add_argument("--output-dir", required=True, type=Path)
+  parser.add_argument("--deployment-manifest", type=Path)
+  parser.add_argument("--output-dir", type=Path)
   parser.add_argument(
     "--num-trials",
     type=int,
@@ -89,13 +130,18 @@ def parse_args(argv=None):
     "--execute-steps",
     type=_execute_steps_request,
     nargs="+",
-    default=(16, "horizon"),
+    default=("horizon",),
     metavar="N|horizon",
     help=(
-      "One or more action-chunk execution lengths. The formal default runs two "
-      "batches: 16 and the deployment prediction horizon"
+      "One or more action-chunk execution lengths. The default executes the "
+      "deployment prediction horizon"
     ),
   )
+  parser.add_argument(
+    "--reference-dataset", type=Path,
+    help="LeRobot dataset containing a reference episode for comparison plots",
+  )
+  parser.add_argument("--reference-episode-index", type=int, default=0)
   parser.add_argument(
     "--max-sim-seconds",
     type=float,
@@ -117,6 +163,13 @@ def parse_args(argv=None):
   args, rest = parser.parse_known_args(argv)
   if rest and rest[0] == "--":
     rest = rest[1:]
+  if args.list_support:
+    if rest:
+      parser.error("--list-support does not accept runner-specific arguments")
+    return args, rest
+  for name in ("task", "model_family", "deployment_manifest", "output_dir"):
+    if getattr(args, name) is None:
+      parser.error(f"--{name.replace('_', '-')} is required")
   if args.num_trials <= 0:
     parser.error("--num-trials must be positive")
   if args.seed_start < 0:
@@ -129,6 +182,8 @@ def parse_args(argv=None):
     parser.error("--execute-steps entries must be distinct")
   if args.max_sim_seconds is not None and args.max_sim_seconds <= 0:
     parser.error("--max-sim-seconds must be positive")
+  if args.reference_episode_index < 0:
+    parser.error("--reference-episode-index must be nonnegative")
   duplicated = [
     option
     for option in (
@@ -137,6 +192,16 @@ def parse_args(argv=None):
       "--execute-steps",
       "--max-sim-seconds",
       "--record-fps",
+      "--reference-dataset",
+      "--reference-episode-index",
+      "--deployment-manifest",
+      "--output-dir",
+      "--task",
+      "--model-family",
+      "--cameras",
+      "--num-trials",
+      "--seed-start",
+      "--dry-run",
     )
     if any(value == option or value.startswith(option + "=") for value in rest)
   ]
@@ -154,19 +219,32 @@ def _validate_manifest(path, task, family, cameras=None):
   if not isinstance(payload, dict):
     raise ValueError("deployment manifest must contain a JSON object")
   declared_task = payload.get("task")
-  if declared_task is not None and declared_task != task:
+  if not isinstance(declared_task, str) or not declared_task:
+    raise ValueError("deployment manifest must declare task")
+  if declared_task != task:
     raise ValueError(
       f"deployment task {declared_task!r} differs from requested task {task!r}"
     )
   declared_family = str(payload.get("model_family", "")).lower().replace(".", "")
-  aliases = {"egosteer": "egosteer", "pi05": "pi05", "π05": "pi05"}
+  aliases = {
+    "egosteer": "egosteer", "pi05": "pi05", "π05": "pi05",
+    "lingbot-vla-20": "lingbot-vla2",
+  }
+  if not declared_family:
+    raise ValueError("deployment manifest must declare model_family")
   normalized_family = aliases.get(declared_family, declared_family)
-  if declared_family and normalized_family != family:
+  # The tactile checkpoint extends this frozen pi0.5 deployment; the tactile
+  # batch runner and single-trial runner validate its separate identity.
+  accepted_families = {"pi05", "pi05+trex"} if family == "pi05+trex" else {family}
+  if normalized_family not in accepted_families:
     raise ValueError(
       f"deployment model_family {payload.get('model_family')!r} differs from {family!r}"
     )
-  declared_cameras = payload.get("observation_contract", {}).get("cameras")
-  camera_names = policy_camera_names(payload.get("observation_contract", {}))
+  observation = payload.get("observation_contract")
+  if not isinstance(observation, dict) or "cameras" not in observation:
+    raise ValueError("deployment manifest must declare observation_contract.cameras")
+  declared_cameras = observation["cameras"]
+  camera_names = policy_camera_names(observation)
   if normalized_family == "egotouch" and camera_names != ("head",):
     raise ValueError(
       "the current EgoTouch worker is single-RGB and requires cameras=['head']"
@@ -207,9 +285,28 @@ def _resolve_execution_modes(requests, payload):
 
 def main(argv=None):
   args, runner_args = parse_args(argv)
+  if args.list_support:
+    print(json.dumps({
+      "runners": [
+        {"task": task, "model_family": family, "backend": backend}
+        for (task, family), backend in sorted(RUNNERS.items())
+      ],
+    }, indent=2, ensure_ascii=False))
+    return 0
   manifest, payload = _validate_manifest(
     args.deployment_manifest, args.task, args.model_family, args.cameras
   )
+  reference_dataset = args.reference_dataset
+  if reference_dataset is None:
+    declared_reference = payload.get("reference_dataset")
+    if isinstance(declared_reference, str) and declared_reference:
+      reference_dataset = Path(declared_reference)
+      if not reference_dataset.is_absolute():
+        reference_dataset = manifest.parent / reference_dataset
+  if reference_dataset is None:
+    reference_dataset = _reference_dataset_from_checkpoint(payload, args.task)
+  if reference_dataset is not None:
+    reference_dataset = reference_dataset.expanduser().resolve()
   modes = _resolve_execution_modes(args.execute_steps, payload)
   try:
     runner = RUNNERS[(args.task, args.model_family)]
@@ -236,6 +333,11 @@ def main(argv=None):
       command.extend(("--max-sim-seconds", str(args.max_sim_seconds)))
     if args.record_fps is not None:
       command.extend(("--record-fps", str(args.record_fps)))
+    if reference_dataset is not None:
+      command.extend((
+        "--reference-dataset", str(reference_dataset),
+        "--reference-episode-index", str(args.reference_episode_index),
+      ))
     command.extend(runner_args)
     evaluations.append({**mode, "output_dir": str(output), "command": command})
   description = {
@@ -249,6 +351,10 @@ def main(argv=None):
     "execute_steps": [mode["value"] for mode in modes],
     "max_sim_seconds": args.max_sim_seconds,
     "record_fps": args.record_fps,
+    "reference_dataset": (
+      None if reference_dataset is None else str(reference_dataset)
+    ),
+    "reference_episode_index": args.reference_episode_index,
     "evaluations": evaluations,
   }
   if not multiple_modes:

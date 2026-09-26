@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 WORKCELL = Path(__file__).parents[1] / "scripts" / "workcell"
 sys.path.insert(0, str(WORKCELL))
 
+from convert_usb_unified_to_lerobot import _unified_pairs  # noqa: E402
 from unified_lerobot_collection import discover_unified_artifacts  # noqa: E402
 
 
@@ -71,3 +73,23 @@ def test_returns_none_for_legacy_flat_batch(tmp_path: Path) -> None:
     expected_episodes=0,
     limit=None,
   ) is None
+
+
+def test_usb_wrapper_accepts_attempts_in_mixed_collection(tmp_path: Path) -> None:
+  root = _collection(tmp_path, task="usb-insert")
+  contract_path = root / "collection.json"
+  contract = json.loads(contract_path.read_text())
+  contract["tasks"] = ["usb-insert", "poker-draw"]
+  contract["collection_mode"] = "attempts"
+  contract_path.write_text(json.dumps(contract))
+  module = SimpleNamespace(
+    SourcePair=lambda index, hdf5, sidecar: (index, hdf5, sidecar),
+    _legacy_discover_pairs=lambda *_: pytest.fail("legacy discovery was selected"),
+    common=SimpleNamespace(
+      _snapshot_file=lambda path: path,
+      _assert_unchanged=lambda *_: None,
+    ),
+  )
+  pairs, available, _ = _unified_pairs(module, root, 1, None)
+  assert available == 1
+  assert pairs[0][0] == 42

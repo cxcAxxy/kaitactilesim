@@ -267,6 +267,50 @@ def test_mouth_cannot_capture_and_threads_have_real_contact(sim):
     sim.reset()
 
 
+def test_funnel_contacts_and_guides_misaligned_bulb(sim):
+  import xml.etree.ElementTree as ET
+
+  scene = ET.parse(default_model_path("bulb-screw")).getroot()
+  mesh = scene.find("asset/mesh[@name='bulb_funnel_sector']")
+  assert mesh is not None
+  vertices = np.asarray([float(v) for v in mesh.attrib["vertex"].split()]).reshape(-1, 3)
+  bottom_radius = np.linalg.norm(vertices[0, :2])
+  throat_radius = np.linalg.norm(vertices[4, :2])
+  top_radius = np.linalg.norm(vertices[8, :2])
+  outer_radius = np.linalg.norm(vertices[10, :2])
+  assert throat_radius == pytest.approx(bottom_radius, abs=1e-8)
+  assert throat_radius == pytest.approx(0.0168, abs=1e-6)
+  assert top_radius == pytest.approx(0.030, abs=1e-6)
+  assert outer_radius == pytest.approx(0.044, abs=1e-6)
+  assert sim.model.geom("bulb_fixture_base").size[0] == pytest.approx(outer_radius, abs=1e-6)
+  slope_angle = np.arctan2(vertices[8, 2] - vertices[4, 2], top_radius - throat_radius)
+  assert slope_angle > np.deg2rad(60)
+
+  # The 11 mm lateral error is outside the original socket wall. The sloped
+  # collision faces must actually deflect a falling free bulb toward its axis.
+  sim.reset()
+  sim.set_object_pose("bulb", [0.631, -0.180, 0.738])
+  funnel = {
+    sim.model.geom(f"bulb_socket_funnel_{i:02d}").id for i in range(24)
+  }
+  assert any(
+    sim.data.contact[i].geom1 in funnel or sim.data.contact[i].geom2 in funnel
+    for i in range(sim.data.ncon)
+  )
+  sim.step(25)
+  assert sim.object_pose("bulb")[0] < 0.630
+
+  # The original entrance still admits a centered bulb and thread capture.
+  sim.reset()
+  sim.set_object_pose("bulb", config.THREAD_ENTRY_POSITION_M)
+  assert not any(
+    sim.data.contact[i].geom1 in funnel or sim.data.contact[i].geom2 in funnel
+    for i in range(sim.data.ncon)
+  )
+  assert sim.try_engage_thread()
+  sim.reset()
+
+
 def test_axial_loading_does_not_create_nonhelical_steps(sim):
   sim.initialize_threaded()
   monitor = BulbScrewMonitor(sim)

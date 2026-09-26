@@ -53,6 +53,9 @@ def test_commands_and_seed_isolation(tmp_path):
   assert "--stain-seed" not in runner.command("vase-wipe", tmp_path, 42, True)
   assert "--ink-seed" in runner.command("whiteboard-wipe", tmp_path, 42)
   assert "--ink-seed" not in runner.command("whiteboard-wipe", tmp_path, 42, True)
+  assert runner.command("sponge-grasp", tmp_path, 42)[
+    runner.command("sponge-grasp", tmp_path, 42).index("--seed") + 1
+  ] == "42"
   assert runner.environment("hardware")["LIBGL_ALWAYS_SOFTWARE"] == "0"
   software = runner.environment("software")
   assert software["KAIHAND_RENDER_BACKEND"] == "software"
@@ -81,7 +84,7 @@ def test_existing_tasks_use_unified_three_camera_collection_contract(tmp_path):
 
 
 def test_new_tasks_share_the_same_robot_camera_contract(tmp_path):
-  for task in ("bulb-screw", "vase-wipe", "install-ram", "whiteboard-wipe"):
+  for task in ("bulb-screw", "vase-wipe", "install-ram", "whiteboard-wipe", "sponge-grasp"):
     command = runner.command(task, tmp_path / task, 42)
     start = command.index("--cameras") + 1
     assert command[start : start + 3] == ["head", "left_wrist", "right_wrist"]
@@ -99,6 +102,20 @@ def test_new_tasks_share_the_same_robot_camera_contract(tmp_path):
   assert runner.command("whiteboard-wipe", tmp_path, 42)[
     runner.command("whiteboard-wipe", tmp_path, 42).index("--buffer-rows") + 1
   ] == "128"
+
+
+def test_sponge_outcome_requires_validated_audited_raw(tmp_path):
+  raw = tmp_path / "raw"
+  raw.mkdir()
+  episode = raw / "sponge_grasp_000000.h5"
+  episode.write_bytes(b"test raw")
+  result = episode.with_suffix(".result.json")
+  sidecar = episode.with_suffix(".json")
+  result.write_text(json.dumps({"success": True}))
+  sidecar.write_text(json.dumps({"validation": {"valid": True}, "task_audit_passed": True}))
+  assert runner.outcome("sponge-grasp", tmp_path)
+  sidecar.write_text(json.dumps({"validation": {"valid": True}, "task_audit_passed": False}))
+  assert not runner.outcome("sponge-grasp", tmp_path)
 
 
 def test_staged_publication_verifies_bytes_and_renames_atomically(tmp_path):
@@ -123,6 +140,12 @@ def test_staged_publication_verifies_bytes_and_renames_atomically(tmp_path):
   assert runner.actual_artifact_hashes(target) == hashes
   assert runner.artifact_sizes(target) == sizes
   assert not list(target.parent.glob(".data.publishing-*"))
+  episode = target / "raw/episode.h5"
+  episode.write_bytes(content[:-1] + b"x")
+  assert runner.artifact_sizes(target) == sizes
+  assert not runner.artifacts_match(target, {
+    "artifact_bytes": sizes, "artifact_sha256": hashes,
+  })
 
 
 def test_nonzero_and_timeout_are_not_completed(tmp_path):

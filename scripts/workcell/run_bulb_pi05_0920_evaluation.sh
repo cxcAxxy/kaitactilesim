@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Bulb pi0.5 0920: N=20/video=20 at execute_steps=16 and the model horizon.
+# Bulb pi0.5 0920: N=20/video=20 at the model prediction horizon.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SIM="${SIM_CODE_DIR:-$(cd -- "$SCRIPT_DIR/../.." && pwd)}"
 OPENPI="${OPENPI_CODE_DIR:-/cpfs_infra/user/chenxianchi/code/openpi}"
 CHECKPOINT_ROOT="${BULB_PI05_CHECKPOINT_ROOT:-/nas/chenxianchi/datasets/sim/bulb-screw/pi05/0920_200/checkpoints/pi05_kaihand/bulb-scew_bs128_skip7}"
+DEFAULT_REFERENCE_DATASET="${CHECKPOINT_ROOT%%/checkpoints/*}"
+REFERENCE_DATASET="${BULB_PI05_REFERENCE_DATASET:-$DEFAULT_REFERENCE_DATASET}"
 PORT="${BULB_PI05_PORT:-18783}"
 GPU="${BULB_PI05_GPU:-0}"
 RUN_ROOT="${BULB_PI05_OUTPUT_DIR:-/cpfs_infra/user/chenxianchi/evaluations/bulb_pi05_0920_N20_video20_$(date +%Y%m%d_%H%M%S)_$$}"
@@ -25,6 +27,8 @@ Optional environment variables:
   BULB_PI05_PORT             model server port (default: 18783)
   BULB_PI05_OUTPUT_DIR       new output root
   BULB_PI05_CHECKPOINT_ROOT  directory containing step checkpoints
+  BULB_PI05_REFERENCE_DATASET matching LeRobot dataset root
+                              (default: prefix of checkpoint root before /checkpoints/)
   BULB_PI05_SMOKE_SECONDS    smoke-test simulation seconds (default: 2)
 EOF
 }
@@ -45,6 +49,16 @@ for executable in "$MODEL_PYTHON" "$SIM_PYTHON"; do
     exit 2
   fi
 done
+if [[ ! -d "$REFERENCE_DATASET" || ! -f "$REFERENCE_DATASET/meta/info.json" ]]; then
+  echo "Reference dataset or meta/info.json is missing: $REFERENCE_DATASET" >&2
+  exit 2
+fi
+if [[ ! -f "$REFERENCE_DATASET/meta/kaihand_source_episodes.jsonl" \
+      && ! -f "$REFERENCE_DATASET/meta/kaihand_fast_pi05_conversion.json" ]]; then
+  echo "Reference dataset has no supported source provenance manifest: $REFERENCE_DATASET" >&2
+  exit 2
+fi
+REFERENCE_DATASET="$(cd -- "$REFERENCE_DATASET" && pwd -P)"
 if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   echo "BULB_PI05_PORT must be in 1..65535" >&2
   exit 2
@@ -105,17 +119,20 @@ evaluate() {
     --deployment-manifest "$MANIFEST" \
     --output-dir "$output" \
     --cameras head right_wrist \
+    --reference-dataset "$REFERENCE_DATASET" \
+    --reference-episode-index 0 \
     "$@" \
     -- --server "ws://127.0.0.1:$PORT"
 }
 
 check_smoke() {
-  "$SIM_PYTHON" - "$1" <<'PY'
+  "$SIM_PYTHON" - "$1" "$2" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
+reference = Path(sys.argv[2]).resolve()
 batch = json.loads((root / "summary.json").read_text(encoding="utf-8"))
 trial = json.loads((root / "seed_000/summary.json").read_text(encoding="utf-8"))
 if batch.get("valid_trials") != 1:
@@ -131,6 +148,23 @@ for name in ("review.mp4", "review.json", "frames.jsonl"):
 metadata = json.loads((review / "review.json").read_text(encoding="utf-8"))
 if metadata.get("model_input_cameras_displayed") != ["head", "right_wrist"]:
   raise SystemExit(f"smoke review omitted a model camera: {review}")
+if Path(metadata.get("reference_dataset", "")).resolve() != reference:
+  raise SystemExit(f"smoke review used the wrong reference dataset: {review}")
+comparison = metadata.get("comparison_plots", {})
+if comparison.get("status") != "ok":
+  raise SystemExit(
+    f"smoke reference comparison is unavailable: {comparison.get('reason', comparison)}"
+  )
+for name in (
+  "evaluation_rollout_trace.npz",
+  "evaluation_comparison.json",
+  "evaluation_right_wrist_state.png",
+  "evaluation_right_hand_actuated_dof.png",
+  "evaluation_right_fingertip_tactile.png",
+):
+  artifact = review / name
+  if not artifact.is_file() or artifact.stat().st_size == 0:
+    raise SystemExit(f"smoke comparison artifact is missing or empty: {artifact}")
 print(f"SMOKE_OK={root}", flush=True)
 PY
 }
@@ -153,7 +187,8 @@ for STEP in "${STEPS[@]}"; do
   echo "START_SERVER step=$STEP port=$PORT gpu=$GPU" >&2
   (
     cd "$OPENPI"
-    exec env CUDA_VISIBLE_DEVICES="$GPU" XLA_PYTHON_CLIENT_PREALLOCATE=false \
+    exec env PYTHONPATH="$SIM/src${PYTHONPATH:+:$PYTHONPATH}" \
+      CUDA_VISIBLE_DEVICES="$GPU" XLA_PYTHON_CLIENT_PREALLOCATE=false \
       "$MODEL_PYTHON" "$SIM/scripts/workcell/serve_shared_task_pi05_policy.py" \
       --deployment-manifest "$MANIFEST" --port "$PORT"
   ) >"$SERVER_LOG" 2>&1 &
@@ -162,16 +197,16 @@ for STEP in "${STEPS[@]}"; do
 
   echo "SMOKE step=$STEP seconds=$SMOKE_SECONDS" >&2
   if ! evaluate "$SMOKE" \
-    --num-trials 1 --video-count 1 --execute-steps 16 \
+    --num-trials 1 --video-count 1 --execute-steps horizon \
     --max-sim-seconds "$SMOKE_SECONDS" --record-fps 10; then
     tail -n 100 "$SMOKE/seed_000.log" >&2 || true
     exit 1
   fi
-  check_smoke "$SMOKE"
+  check_smoke "$SMOKE" "$REFERENCE_DATASET"
 
-  echo "FORMAL step=$STEP N=20 videos=20 execute_steps=16,horizon" >&2
+  echo "FORMAL step=$STEP N=20 videos=20 execute_steps=horizon" >&2
   if ! evaluate "$FORMAL" \
-    --num-trials 20 --video-count 20 --execute-steps 16 horizon \
+    --num-trials 20 --video-count 20 --execute-steps horizon \
     --record-fps 10; then
     echo "Formal evaluation failed; inspect $FORMAL and $SERVER_LOG" >&2
     exit 1

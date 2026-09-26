@@ -9,6 +9,8 @@ import json
 import logging
 from pathlib import Path
 
+from kaihand_tactile_env.shared.pi05_deployment_integrity import verify_pi05_deployment
+
 CONFIG_NAME = "pi05_kaihand"
 
 
@@ -65,6 +67,7 @@ def main() -> None:
   from openpi.training import config as openpi_config
 
   manifest_path, manifest = _load_manifest(args.deployment_manifest)
+  verify_pi05_deployment(manifest)
   config = bind_checkpoint_assets(
     openpi_config.get_config(manifest["model_config_name"]), manifest
   )

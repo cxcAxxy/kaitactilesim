@@ -127,6 +127,77 @@ def test_shared_batch_environment_includes_openpi_client(monkeypatch):
   assert Path(environment["__EGL_VENDOR_LIBRARY_FILENAMES"]).is_file()
 
 
+def test_shared_batch_counts_lowercase_collision_guard_as_valid_failure():
+  batch = load_script("evaluate_shared_task_policy_batch.py")
+
+  reason, valid = batch.classify(
+    {"status": "error", "error": "RuntimeError: hand struck the whiteboard"}
+  )
+
+  assert (reason, valid) == ("collision_guard", True)
+
+
+def test_shared_batch_requires_complete_requested_reference_comparison(tmp_path):
+  batch = load_script("evaluate_shared_task_policy_batch.py")
+  trial = tmp_path / "seed_000"
+  review = trial / "review"
+  review.mkdir(parents=True)
+  reference = (tmp_path / "reference").resolve()
+  for name in (*batch._REVIEW_ARTIFACTS, *batch._COMPARISON_ARTIFACTS):
+    (review / name).write_bytes(b"artifact")
+  (review / "review.json").write_text(json.dumps({
+    "model_input_cameras_displayed": ["head", "right_wrist"],
+    "reference_dataset": str(reference),
+    "reference_episode_index": 0,
+    "comparison_plots": {"status": "ok"},
+  }), encoding="utf-8")
+  deployment = {"observation_contract": {"cameras": ["head", "right_wrist"]}}
+
+  assert batch.validate_recorded_review(trial, deployment, reference, 0) is None
+
+  (review / "evaluation_right_wrist_state.png").unlink()
+  assert batch.validate_recorded_review(trial, deployment, reference, 0) == (
+    "incomplete_comparison_artifact"
+  )
+
+
+def test_shared_batch_rejects_unavailable_requested_reference_comparison(tmp_path):
+  batch = load_script("evaluate_shared_task_policy_batch.py")
+  trial = tmp_path / "seed_000"
+  review = trial / "review"
+  review.mkdir(parents=True)
+  reference = (tmp_path / "reference").resolve()
+  for name in (*batch._REVIEW_ARTIFACTS, *batch._COMPARISON_ARTIFACTS):
+    (review / name).write_bytes(b"artifact")
+  (review / "review.json").write_text(json.dumps({
+    "model_input_cameras_displayed": ["head", "right_wrist"],
+    "reference_dataset": str(reference),
+    "reference_episode_index": 0,
+    "comparison_plots": {"status": "reference_unavailable"},
+  }), encoding="utf-8")
+  deployment = {"observation_contract": {"cameras": ["head", "right_wrist"]}}
+
+  assert batch.validate_recorded_review(trial, deployment, reference, 0) == (
+    "reference_comparison_unavailable"
+  )
+
+
+def test_bulb_launcher_forwards_and_verifies_reference_dataset():
+  script = (
+    ROOT / "scripts/workcell/run_bulb_pi05_0920_evaluation.sh"
+  ).read_text(encoding="utf-8")
+
+  assert "BULB_PI05_REFERENCE_DATASET" in script
+  assert '--reference-dataset "$REFERENCE_DATASET"' in script
+  assert 'comparison.get("status") != "ok"' in script
+  for artifact in (
+    "evaluation_right_wrist_state.png",
+    "evaluation_right_hand_actuated_dof.png",
+    "evaluation_right_fingertip_tactile.png",
+  ):
+    assert artifact in script
+
+
 def test_prepare_rejects_wrong_camera_contract():
   prepare = load_script("prepare_shared_task_pi05_deployment.py")
   metadata = policy_metadata()

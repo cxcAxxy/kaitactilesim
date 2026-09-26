@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Aloha 数据回放台</title>
+    <link rel="stylesheet" href="static/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="数据条目">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <div>
+            <p class="eyebrow">DATASET REVIEW</p>
+            <h1>Aloha 回放台</h1>
+          </div>
+        </div>
+
+        <div class="dataset-summary">
+          <div>
+            <strong id="episodeCount">—</strong>
+            <span>条可用数据</span>
+          </div>
+          <div>
+            <strong id="videoCount">—</strong>
+            <span>路视频</span>
+          </div>
+        </div>
+
+        <label class="search-box" for="episodeSearch">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.4A7.75 7.75 0 1 1 3.5 11.25a7.75 7.75 0 0 1 15.5 0Z"/></svg>
+          <input id="episodeSearch" type="search" autocomplete="off" placeholder="搜索编号或任务…">
+          <kbd>/</kbd>
+        </label>
+
+        <div class="list-heading">
+          <span>EPISODES</span>
+          <button id="refreshButton" class="icon-button" type="button" title="重新扫描数据集" aria-label="重新扫描数据集">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
+          </button>
+        </div>
+        <div id="episodeList" class="episode-list" role="listbox" aria-label="Episode 列表"></div>
+
+        <div class="sidebar-footer">
+          <span><kbd>Space</kbd> 播放</span>
+          <span><kbd>←</kbd><kbd>→</kbd> 快退/快进</span>
+          <span><kbd>[</kbd><kbd>]</kbd> 切换</span>
+        </div>
+      </aside>
+
+      <main class="main-panel">
+        <header class="topbar">
+          <div class="episode-nav">
+            <button id="previousButton" class="icon-button" type="button" title="上一条 ([)" aria-label="上一条">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <div class="active-title">
+              <p id="activeKicker" class="eyebrow">SELECT AN EPISODE</p>
+              <h2 id="activeTitle">请选择一条数据</h2>
+            </div>
+            <button id="nextButton" class="icon-button" type="button" title="下一条 (])" aria-label="下一条">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+          </div>
+
+          <div class="topbar-actions">
+            <div id="healthBadge" class="health-badge is-idle"><span></span><span>等待选择</span></div>
+            <button id="metadataButton" class="text-button" type="button" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8h.01M11 12h1v4h1m8-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+              元信息
+            </button>
+            <button id="deleteButton" class="danger-button" type="button" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16m-10 4v6m4-6v6M9 7V4h6v3m3 0-1 14H7L6 7"/></svg>
+              删除
+            </button>
+          </div>
+        </header>
+
+        <section id="emptyState" class="empty-state">
+          <div class="empty-orbit" aria-hidden="true"><span></span></div>
+          <p class="eyebrow">READY TO REVIEW</p>
+          <h2>选择左侧任一条数据开始回放</h2>
+          <p>三路相机将使用同一个时间轴同步播放，触觉面板按评估脚本的 10 Hz 节奏更新。</p>
+        </section>
+
+        <section id="reviewWorkspace" class="review-workspace" hidden>
+          <div id="cameraGrid" class="camera-grid" aria-label="同步相机画面"></div>
+
+          <section class="transport" aria-label="播放控制">
+            <button id="playButton" class="play-button" type="button" aria-label="播放">
+              <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg>
+              <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14m8-14v14"/></svg>
+            </button>
+            <span id="currentTime" class="timecode">00:00.0</span>
+            <label class="timeline-wrap" for="timeline">
+              <span id="timelineBuffered" class="timeline-buffered"></span>
+              <input id="timeline" type="range" min="0" max="1" step="0.001" value="0" aria-label="播放进度">
+            </label>
+            <span id="durationTime" class="timecode is-muted">00:00.0</span>
+            <label class="speed-control">
+              <span>速度</span>
+              <select id="speedSelect" aria-label="播放速度">
+                <option value="0.5">0.5×</option>
+                <option value="0.75">0.75×</option>
+                <option value="1" selected>1×</option>
+                <option value="1.5">1.5×</option>
+                <option value="2">2×</option>
+              </select>
+            </label>
+            <button id="loopButton" class="toggle-button" type="button" aria-pressed="false" title="循环播放">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m17 2 4 4-4 4M3 11V9a3 3 0 0 1 3-3h15m-14 16-4-4 4-4m14-1v2a3 3 0 0 1-3 3H3"/></svg>
+              循环
+            </button>
+          </section>
+
+          <section class="data-strip">
+            <div class="strip-copy">
+              <div>
+                <p class="eyebrow">REVO2 RAW · 10 HZ REVIEW</p>
+                <h3>双手五指触觉</h3>
+              </div>
+              <p id="tactileStatus">选择数据后载入触觉时间轴</p>
+            </div>
+            <div id="tactileDashboard" class="tactile-dashboard"></div>
+            <div class="tactile-legend">
+              <span><i class="normal"></i>Normal</span>
+              <span><i class="tangent"></i>Tangent</span>
+              <span><i class="proximity"></i>Proximity</span>
+              <em>数值为采集 SDK raw；每通道按当前 episode 的 P99 显示</em>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="metadataDialog" class="modal metadata-modal">
+      <form method="dialog" class="modal-card">
+        <header>
+          <div>
+            <p class="eyebrow">HDF5 INSPECTOR</p>
+            <h2 id="metadataTitle">Episode 元信息</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="关闭">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          </button>
+        </header>
+        <div id="metadataHighlights" class="metadata-highlights"></div>
+        <pre id="metadataJson" tabindex="0"></pre>
+      </form>
+    </dialog>
+
+    <dialog id="deleteDialog" class="modal delete-modal">
+      <form id="deleteForm" class="modal-card">
+        <div class="warning-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 8v5m0 3h.01M10.3 3.7 2.5 17.2A2 2 0 0 0 4.2 20h15.6a2 2 0 0 0 1.7-2.8L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg>
+        </div>
+        <p class="eyebrow">MOVE TO TRASH</p>
+        <h2>删除 <span id="deleteEpisodeName"></span>？</h2>
+        <p>对应 HDF5 与三路视频会作为一个整体移到 <code>.episode_browser_trash</code>，删除后可立即撤销。</p>
+        <label for="deleteConfirmation">请输入 <strong id="deleteConfirmationHint"></strong> 确认：</label>
+        <input id="deleteConfirmation" type="text" autocomplete="off" spellcheck="false">
+        <div class="modal-actions">
+          <button id="cancelDeleteButton" class="text-button" type="button">取消</button>
+          <button id="confirmDeleteButton" class="danger-button" type="submit" disabled>移到回收站</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+      <span id="toastMessage"></span>
+      <button id="toastAction" type="button" hidden>撤销</button>
+      <button id="toastClose" class="toast-close" type="button" aria-label="关闭">×</button>
+    </div>
+
+    <script src="static/app.js" defer></script>
+  </body>
+</html>

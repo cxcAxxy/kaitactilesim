@@ -40,10 +40,23 @@ def parse_args(argv=None):
   parser.add_argument("--output-dir", type=Path, required=True)
   parser.add_argument("--seed", type=int, required=True)
   parser.add_argument("--execute-steps", type=int, default=5)
+  parser.add_argument(
+    "--pre-roll-steps",
+    type=int,
+    default=0,
+    help="execute dataset absolute actions before the first policy request",
+  )
+  parser.add_argument(
+    "--pre-roll-actions",
+    type=Path,
+    help="parquet file containing absolute actions for the pre-roll",
+  )
   parser.add_argument("--max-requests", type=int, default=0)
   parser.add_argument("--max-sim-seconds", type=float, default=90.0)
   parser.add_argument("--record", action=argparse.BooleanOptionalAction, default=True)
   parser.add_argument("--record-fps", type=int, choices=(5, 10), default=10)
+  parser.add_argument("--reference-dataset", type=Path)
+  parser.add_argument("--reference-episode-index", type=int, default=0)
   parser.add_argument("--review-width", type=int, default=1920)
   parser.add_argument("--review-height", type=int, default=1080)
   parser.add_argument("--review-render-width", type=int, default=640)
@@ -57,8 +70,17 @@ def parse_args(argv=None):
     "--save-first-request", action=argparse.BooleanOptionalAction, default=True
   )
   args = parser.parse_args(argv)
-  if args.seed < 0 or args.max_requests < 0 or args.execute_steps <= 0:
-    parser.error("seed/requests must be nonnegative; execute-steps must be positive")
+  if (
+    args.seed < 0
+    or args.max_requests < 0
+    or args.execute_steps <= 0
+    or args.pre_roll_steps < 0
+  ):
+    parser.error(
+      "seed/requests/pre-roll-steps must be nonnegative; execute-steps must be positive"
+    )
+  if args.pre_roll_steps and args.pre_roll_actions is None:
+    parser.error("--pre-roll-actions is required when --pre-roll-steps is nonzero")
   if not np.isfinite(args.max_sim_seconds) or args.max_sim_seconds <= 0:
     parser.error("max-sim-seconds must be finite and positive")
   if min(
@@ -71,6 +93,29 @@ def parse_args(argv=None):
   if args.review_width % 2 or args.review_height % 2:
     parser.error("review output dimensions must be even")
   return args
+
+
+def load_pre_roll_actions(path: Path | None, steps: int) -> np.ndarray:
+  if steps == 0:
+    return np.empty((0, 27), dtype=np.float32)
+  if path is None:
+    raise RuntimeError("pre-roll action path is required")
+  import pyarrow.parquet as parquet
+
+  resolved = path.expanduser().resolve(strict=True)
+  table = parquet.read_table(resolved, columns=["action"])
+  if table.num_rows < steps:
+    raise RuntimeError(
+      f"pre-roll action file has {table.num_rows} rows, need {steps}: {resolved}"
+    )
+  actions = np.asarray(
+    [table["action"][index].as_py() for index in range(steps)], dtype=np.float32
+  )
+  if actions.shape != (steps, 27) or not np.isfinite(actions).all():
+    raise RuntimeError(
+      f"pre-roll actions must be finite with shape ({steps}, 27), got {actions.shape}"
+    )
+  return actions
 
 
 def load_deployment(path: Path, task: str) -> tuple[Path, dict]:
@@ -156,6 +201,12 @@ def run(args) -> dict:
     "instruction": instruction,
     "seed": args.seed,
     "execute_steps": args.execute_steps,
+    "pre_roll_steps": args.pre_roll_steps,
+    "pre_roll_actions": (
+      str(args.pre_roll_actions.expanduser().resolve())
+      if args.pre_roll_actions is not None
+      else None
+    ),
     "control_hz": CONTROL_HZ,
     "replan_period_s": args.execute_steps / CONTROL_HZ,
     "max_sim_seconds": args.max_sim_seconds,
@@ -164,6 +215,7 @@ def run(args) -> dict:
   started = time.monotonic()
   client = adapter = recorder = None
   requests = action_steps = clipped_values = control_tick = 0
+  pre_roll_action_steps = 0
   run_error = None
   try:
     client = websocket_client_policy.WebsocketClientPolicy(args.server)
@@ -172,6 +224,9 @@ def run(args) -> dict:
     report["server_metadata"] = metadata
     report["prediction_horizon"] = horizon
     adapter = create_task_policy_adapter(args.task, args.seed)
+    pre_roll_actions = load_pre_roll_actions(
+      args.pre_roll_actions, args.pre_roll_steps
+    )
     simulation = adapter.simulation
     joint_names = list(deployment["joint_names"])
     lower, upper = joint_limits(simulation, joint_names)
@@ -207,6 +262,13 @@ def run(args) -> dict:
             "right_wrist" in camera_names
             and args.review_second_camera != "right_wrist"
           ),
+          include_review_wrist=(
+            "right_wrist" not in camera_names
+            and args.review_second_camera != "right_wrist"
+          ),
+          comparison=True,
+          reference_dataset=args.reference_dataset,
+          reference_episode_index=args.reference_episode_index,
           metrics=adapter,
           heading=f"{args.task.upper()} pi0.5 MODEL EVALUATION",
           metadata={
@@ -220,6 +282,23 @@ def run(args) -> dict:
           },
         )
         recorder.capture(0, adapter.stage())
+
+      for action in pre_roll_actions:
+        if simulation.data.time >= args.max_sim_seconds or adapter.success:
+          break
+        clipped_values += apply_action(
+          simulation, joint_names, action, lower, upper
+        )
+        control_tick += 1
+        target_time = control_tick / CONTROL_HZ
+        while simulation.data.time < target_time - 1.0e-12:
+          adapter.step()
+          if adapter.success:
+            break
+        action_steps += 1
+        pre_roll_action_steps += 1
+        if recorder is not None:
+          recorder.capture(control_tick, adapter.stage())
 
       while simulation.data.time < args.max_sim_seconds and not adapter.success:
         if args.max_requests and requests >= args.max_requests:
@@ -295,6 +374,7 @@ def run(args) -> dict:
     report["stats"] = {
       "requests": requests,
       "action_steps": action_steps,
+      "pre_roll_action_steps": pre_roll_action_steps,
       "clipped_action_values": clipped_values,
     }
     report["wall_seconds"] = time.monotonic() - started

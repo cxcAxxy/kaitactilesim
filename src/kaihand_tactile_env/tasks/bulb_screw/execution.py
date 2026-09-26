@@ -148,6 +148,9 @@ class BulbScrewExecutor:
     if speed == "fast" and self.finger_count == 5:
       self.timing = _FIVE_FINGER_FAST_TIMING
     self.sim = simulation
+    self._home_wrist_position, self._home_wrist_rotation = (
+      simulation.current_pose_matrix("right")
+    )
     self.observer, self.should_stop = observer, should_stop
     self.max_strokes = max_strokes
     self.monitor = BulbScrewMonitor(simulation)
@@ -710,14 +713,40 @@ class BulbScrewExecutor:
       self._preload(1.0 * pickup, "preload")
     self._advance(0.3 * pickup, "grasp", require_grip=True)
     lifted = self._initial_position.copy()
-    lifted[2] = 0.80
+    lifted[2] = 0.82
     self._move_object(lifted, np.eye(3), 4 * pickup, "lift", require_grip=True)
     if self.sim.object_pose("bulb")[2] < self._initial_position[2] + 0.06:
       raise _TaskFailure("bulb did not lift at least 60 mm")
     mouth = config.THREAD_ENTRY_POSITION_M
-    self._move_object(
-      mouth + [0, 0, 0.05], np.eye(3), 3 * pickup, "transfer", require_grip=True
-    )
+    socket = config.SOCKET_MOUTH_POSITION_M
+    transfer_height = socket[2] + config.SOCKET_TRANSFER_CLEARANCE_M
+    hover = socket + [0, 0, config.SOCKET_APPROACH_CLEARANCE_M]
+    # Do not translate toward the socket until the actual bulb tip, rather
+    # than just its commanded pose, has cleared the rim by at least 50 mm.
+    for _ in range(150):
+      if self._object_pose()[0][2] >= transfer_height - 0.002:
+        break
+      self._servo_object(lifted, np.eye(3), "lift", require_grip=True)
+    else:
+      raise _TaskFailure("bulb did not reach safe transfer height")
+    across = socket.copy()
+    across[2] = transfer_height
+    self._move_object(across, np.eye(3), 3 * pickup, "transfer", require_grip=True)
+    # Servo lag can leave the bulb centimetres short after a timed move. Hold
+    # the high path until its real XY is above the bore, then descend to the
+    # measured 50 mm waypoint before starting the insertion stroke.
+    for _ in range(250):
+      actual, rotation = self._object_pose()
+      if (
+        np.linalg.norm(actual[:2] - socket[:2]) < 0.0005
+        and abs(actual[2] - hover[2]) < 0.001
+        and np.linalg.norm(_rotation_vector_world(np.eye(3), rotation)) < 0.01
+      ):
+        break
+      target = across if np.linalg.norm(actual[:2] - socket[:2]) >= 0.0005 else hover
+      self._servo_object(target, np.eye(3), "transfer", require_grip=True)
+    else:
+      raise _TaskFailure("bulb did not align 50 mm above socket")
     self._move_object(mouth, np.eye(3), 4 * pickup, "align_thread", require_grip=True)
     for _ in range(100):
       if self.sim.thread_engaged:
@@ -743,8 +772,26 @@ class BulbScrewExecutor:
         require_thread=True,
       )
     self.sim.set_hand_home("right")
-    # Ramp the arm goals as well: a direct home target can sweep the fingertips
-    # back through the seated bulb during the servo's initial acceleration.
+    if self.finger_count == 5:
+      # Keep the wrist on the right side while rotating into its home pose.
+      # Direct joint interpolation from the socket-side pose sweeps the open
+      # fingertips across the stationary left hand.
+      self._move_ee(
+        self._home_wrist_position + [0, 0, 0.18],
+        self._home_wrist_rotation,
+        2.0 * retreat,
+        "return_home",
+        require_thread=True,
+      )
+      self._move_ee(
+        self._home_wrist_position,
+        self._home_wrist_rotation,
+        2.0 * retreat,
+        "return_home",
+        require_thread=True,
+      )
+    # Finish at the exact joint home configuration. The Cartesian approach
+    # makes the remaining redundant-joint motion clear of the other hand.
     start = self.sim.data.qpos[self.sim._arm_qpos["right"]].copy()
     for i in range(1, 151):
       u = i / 150

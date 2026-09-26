@@ -38,6 +38,7 @@ import numpy as np
 FPS = 30
 RAW_SCHEMA = "kaihand_tactile_episode_v1"
 COLLECTION_SCHEMA = "task_collection_v2"
+MERGE_MANIFEST_SCHEMA = "vase_wipe_pi05_clean_merge_v1"
 OUTPUT_SCHEMA = "kaihand_right_lerobot_v3_v2"
 CHECKPOINT_SCHEMA = "kaihand_multitask_lerobot_v3_checkpoint_v1"
 
@@ -117,10 +118,33 @@ TASK_SPECS = {
     control_hz=100,
     diagnostic_group="whiteboard_wipe",
   ),
+  "vase-wipe": TaskSpec(
+    name="vase-wipe",
+    key="vase_wipe",
+    object_name="sponge",
+    instruction=(
+      "Pick up the sponge with the right hand, wipe all stains from the far inner "
+      "wall of the vase with loaded sliding contact, then lift the sponge clear."
+    ),
+    control_hz=500,
+    diagnostic_group="vase_wipe",
+  ),
+  "sponge-grasp": TaskSpec(
+    name="sponge-grasp",
+    key="sponge_grasp",
+    object_name="sponge",
+    instruction=(
+      "Pick up the upright sponge with the right hand, carry it to the plate "
+      "on the robot's right, place it inside the plate, and release it."
+    ),
+    control_hz=100,
+    diagnostic_group="sponge_grasp",
+  ),
 }
 
 # Legacy names retained for callers/tests that imported the original USB-only
-# module. Runtime conversion uses the task detected from collection.json.
+# module. Runtime conversion uses the task detected from collection.json or a
+# supported merge_manifest.json.
 TASK = "usb-insert"
 TASK_INSTRUCTION = TASK_SPECS[TASK].instruction
 
@@ -223,14 +247,14 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
   parser.add_argument(
     "--input-dir", type=Path, required=True,
     help=(
-      "Unified collection directory (for example raw/0920_200), or its "
-      "parent when that parent contains exactly one collection."
+      "Unified collection directory (for example raw/0920_200), a supported "
+      "merge-manifest directory, or a parent containing exactly one of them."
     ),
   )
   parser.add_argument("--output-dir", type=Path, required=True)
   parser.add_argument(
     "--task", choices=tuple(TASK_SPECS),
-    help="Expected task. By default it is detected from collection.json.",
+    help="Task to select from the collection; required for a multi-task batch.",
   )
   parser.add_argument(
     "--repo-id",
@@ -329,14 +353,22 @@ def _resolve_collection_root(input_dir: Path) -> Path:
   root = input_dir.expanduser().resolve(strict=True)
   if (root / "summary.json").is_file() and (root / "collection.json").is_file():
     return root
+  if (root / "merge_manifest.json").is_file():
+    return root
   candidates = sorted(
     path.parent
     for path in root.glob("*/summary.json")
     if (path.parent / "collection.json").is_file()
   )
+  candidates.extend(
+    path.parent
+    for path in root.glob("*/merge_manifest.json")
+  )
+  candidates = sorted(set(candidates))
   if len(candidates) != 1:
     raise ValueError(
-      f"{root} must be a collection or contain exactly one collection; "
+      f"{root} must be a collection, merge manifest, or contain exactly one "
+      f"supported source; "
       f"found {len(candidates)}: {[str(path) for path in candidates]}"
     )
   return candidates[0].resolve(strict=True)
@@ -397,18 +429,43 @@ def _columns(names: Sequence[str], selected: Sequence[str], *, context: str) -> 
 
 
 def _detect_task(collection_root: Path, requested: str | None) -> str:
-  collection = _load_object(collection_root / "collection.json")
-  tasks = collection.get("tasks")
-  if not isinstance(tasks, list) or len(tasks) != 1 or tasks[0] not in TASK_SPECS:
+  if (collection_root / "merge_manifest.json").is_file():
+    manifest = _load_object(collection_root / "merge_manifest.json")
+    if manifest.get("schema") != MERGE_MANIFEST_SCHEMA:
+      raise ValueError(
+        f"{collection_root}: unsupported merge manifest schema "
+        f"{manifest.get('schema')!r}"
+      )
+    rows = manifest.get("episodes")
+    if not isinstance(rows, list) or not rows:
+      raise ValueError(f"{collection_root / 'merge_manifest.json'}: episodes must be a non-empty list")
+    tasks = sorted({
+      row.get("task")
+      for row in rows
+      if isinstance(row, dict) and isinstance(row.get("task"), str)
+    })
+  else:
+    collection = _load_object(collection_root / "collection.json")
+    tasks = collection.get("tasks")
+  if (
+    not isinstance(tasks, list) or not tasks
+    or any(task not in TASK_SPECS for task in tasks)
+    or len(set(tasks)) != len(tasks)
+  ):
     raise ValueError(
-      f"{collection_root}: expected exactly one supported task, got {tasks!r}"
+      f"{collection_root}: invalid supported task list {tasks!r}"
     )
-  detected = str(tasks[0])
-  if requested is not None and requested != detected:
+  if requested is None:
+    if len(tasks) != 1:
+      raise ValueError(
+        f"{collection_root}: multi-task batch requires --task; found {tasks!r}"
+      )
+    return str(tasks[0])
+  if requested not in tasks:
     raise ValueError(
-      f"--task={requested!r} disagrees with collection task {detected!r}"
+      f"--task={requested!r} is not in collection tasks {tasks!r}"
     )
-  return detected
+  return requested
 
 
 def _validate_success_gate(
@@ -474,6 +531,209 @@ def _validate_success_gate(
       )
     ):
       raise ValueError(f"{path}: whiteboard cleaning/release gate failed")
+  elif spec.name == "vase-wipe":
+    pickup = outcome.get("pickup")
+    cleaning = outcome.get("cleaning")
+    cleaned = outcome.get("cleaned_patch_count")
+    patch_count = outcome.get("patch_count")
+    remaining = outcome.get("remaining_dirt")
+    try:
+      remaining_array = np.asarray(remaining, dtype=np.float64)
+    except (TypeError, ValueError):
+      remaining_array = np.asarray([], dtype=np.float64)
+    mean_remaining = cleaning.get("mean_remaining") if isinstance(cleaning, dict) else None
+    worst_remaining = cleaning.get("worst_remaining") if isinstance(cleaning, dict) else None
+    if (
+      outcome.get("motion_completed") is not True
+      or not isinstance(pickup, dict)
+      or pickup.get("success") is not True
+      or not isinstance(cleaning, dict)
+      or isinstance(mean_remaining, bool)
+      or not isinstance(mean_remaining, (int, float))
+      or not np.isfinite(mean_remaining)
+      or float(mean_remaining) > 0.05
+      or isinstance(worst_remaining, bool)
+      or not isinstance(worst_remaining, (int, float))
+      or not np.isfinite(worst_remaining)
+      or float(worst_remaining) > 0.1
+      or isinstance(cleaned, bool)
+      or not isinstance(cleaned, int)
+      or isinstance(patch_count, bool)
+      or not isinstance(patch_count, int)
+      or cleaned <= 0
+      or cleaned != patch_count
+      or remaining_array.size == 0
+      or not np.all(np.isfinite(remaining_array))
+      or float(np.max(remaining_array)) > 0.1
+    ):
+      raise ValueError(f"{path}: vase cleaning/pickup gate failed")
+  elif spec.name == "sponge-grasp":
+    integrity = outcome.get("contact_integrity")
+    if (
+      not isinstance(integrity, dict)
+      or integrity.get("checked_every_physics_step") is not True
+      or integrity.get("penetration_count") != 0
+    ):
+      raise ValueError(f"{path}: sponge contact-integrity gate failed")
+
+
+def _source_from_files(
+  collection_root: Path,
+  *,
+  index: int,
+  hdf5_path: Path,
+  sidecar_path: Path,
+  task: str,
+  spec: TaskSpec,
+  verify_source_hash: bool,
+) -> SourceEpisode:
+  """Validate one raw HDF5/sidecar pair and build its source record."""
+  hdf5_path = hdf5_path.resolve(strict=True)
+  sidecar_path = sidecar_path.resolve(strict=True)
+  if not hdf5_path.is_relative_to(collection_root):
+    raise ValueError(f"episode {index} HDF5 escapes collection root")
+  if not sidecar_path.is_relative_to(collection_root):
+    raise ValueError(f"episode {index} sidecar escapes collection root")
+  sidecar = _load_object(sidecar_path)
+  declared_hash = sidecar.get("sha256")
+  if (
+    not isinstance(declared_hash, str)
+    or len(declared_hash) != 64
+    or any(character not in "0123456789abcdef" for character in declared_hash)
+  ):
+    raise ValueError(f"{sidecar_path}: invalid acquisition SHA-256")
+  if sidecar.get("episode") != hdf5_path.name:
+    raise ValueError(f"{sidecar_path}: episode does not name {hdf5_path.name}")
+  if verify_source_hash and _sha256_file(hdf5_path) != declared_hash:
+    raise ValueError(f"{hdf5_path}: SHA-256 differs from acquisition sidecar")
+  camera_samples = sidecar.get("camera_samples", {})
+  state_samples = sidecar.get("state_samples")
+  if (
+    isinstance(state_samples, bool)
+    or not isinstance(state_samples, int)
+    or state_samples <= 1
+    or not isinstance(camera_samples, dict)
+    or camera_samples.get("head") != camera_samples.get("right_wrist")
+    or isinstance(camera_samples.get("head"), bool)
+    or not isinstance(camera_samples.get("head"), int)
+    or camera_samples["head"] <= 2
+  ):
+    raise ValueError(f"{sidecar_path}: invalid state/camera sample counts")
+  if sidecar.get("schema_version") != RAW_SCHEMA:
+    raise ValueError(f"{sidecar_path}: unsupported raw schema")
+  if task == "sponge-grasp" and (
+    sidecar.get("task_audit_passed") is not True
+    or not isinstance(sidecar.get("validation"), dict)
+    or sidecar["validation"].get("valid") is not True
+  ):
+    raise ValueError(f"{sidecar_path}: sponge recorded-task audit is missing or failed")
+  outcome = sidecar.get("outcome")
+  if not isinstance(outcome, dict):
+    raise ValueError(f"{sidecar_path}: outcome must be an object")
+  _validate_success_gate(hdf5_path, spec, outcome)
+  return SourceEpisode(
+    episode_index=index,
+    hdf5_path=hdf5_path,
+    sidecar_path=sidecar_path,
+    relative_hdf5_path=hdf5_path.relative_to(collection_root).as_posix(),
+    hdf5_sha256=declared_hash,
+    hdf5_size_bytes=hdf5_path.stat().st_size,
+    state_samples=state_samples,
+    camera_samples=camera_samples["head"],
+    metadata={},
+    outcome=outcome,
+    task=task,
+  )
+
+
+def _manifest_path(collection_root: Path, value: Any, *, field: str) -> Path:
+  if not isinstance(value, str) or not value:
+    raise ValueError(f"{collection_root / 'merge_manifest.json'}: {field} must be a path")
+  path = Path(value).expanduser()
+  if not path.is_absolute():
+    path = collection_root / path
+  return path.resolve()
+
+
+def _discover_merged_sources(
+  collection_root: Path,
+  *,
+  task: str,
+  expected_episodes: int,
+  verify_source_hash: bool,
+) -> tuple[SourceEpisode, ...]:
+  manifest_path = collection_root / "merge_manifest.json"
+  manifest = _load_object(manifest_path)
+  if manifest.get("schema") != MERGE_MANIFEST_SCHEMA:
+    raise ValueError(
+      f"{manifest_path}: unsupported merge manifest schema {manifest.get('schema')!r}"
+    )
+  rows = manifest.get("episodes")
+  if not isinstance(rows, list) or not rows:
+    raise ValueError(f"{manifest_path}: episodes must be a non-empty list")
+  declared_count = manifest.get("target_episode_count")
+  if (
+    isinstance(declared_count, bool)
+    or not isinstance(declared_count, int)
+    or declared_count != len(rows)
+  ):
+    raise ValueError(
+      f"{manifest_path}: target_episode_count disagrees with episode records"
+    )
+  if expected_episodes and len(rows) != expected_episodes:
+    raise ValueError(f"expected {expected_episodes} episodes, found {len(rows)}")
+
+  spec = TASK_SPECS[task]
+  sources: list[SourceEpisode] = []
+  seen: set[int] = set()
+  for row_number, row in enumerate(rows):
+    if not isinstance(row, dict) or row.get("task") != task:
+      raise ValueError(f"{manifest_path}: row {row_number} is not a {task} episode")
+    index = row.get("output_episode_index")
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+      raise ValueError(f"{manifest_path}: row {row_number} has invalid output_episode_index")
+    if index in seen:
+      raise ValueError(f"{manifest_path}: duplicate output_episode_index {index}")
+    seen.add(index)
+
+    source_dir = _manifest_path(
+      collection_root, row.get("source_episode_dir"),
+      field=f"row {row_number} source_episode_dir",
+    )
+    source_hdf5 = _manifest_path(
+      collection_root, row.get("source_hdf5"),
+      field=f"row {row_number} source_hdf5",
+    )
+    source_sidecar = _manifest_path(
+      collection_root, row.get("source_sidecar"),
+      field=f"row {row_number} source_sidecar",
+    )
+    try:
+      hdf5_relative = source_hdf5.relative_to(source_dir)
+      sidecar_relative = source_sidecar.relative_to(source_dir)
+    except ValueError as error:
+      raise ValueError(
+        f"{manifest_path}: row {row_number} source files are outside source_episode_dir"
+      ) from error
+    output_dir = _manifest_path(
+      collection_root, row.get("output_episode_dir"),
+      field=f"row {row_number} output_episode_dir",
+    ).resolve(strict=True)
+    if not output_dir.is_relative_to(collection_root):
+      raise ValueError(f"{manifest_path}: row {row_number} output directory escapes collection root")
+    hdf5_path = (output_dir / hdf5_relative).resolve(strict=True)
+    sidecar_path = (output_dir / sidecar_relative).resolve(strict=True)
+    sources.append(_source_from_files(
+      collection_root,
+      index=index,
+      hdf5_path=hdf5_path,
+      sidecar_path=sidecar_path,
+      task=task,
+      spec=spec,
+      verify_source_hash=verify_source_hash,
+    ))
+  sources.sort(key=lambda source: source.episode_index)
+  return tuple(sources)
 
 
 def _discover_sources(
@@ -483,11 +743,20 @@ def _discover_sources(
   expected_episodes: int,
   verify_source_hash: bool,
 ) -> tuple[SourceEpisode, ...]:
+  if (collection_root / "merge_manifest.json").is_file():
+    return _discover_merged_sources(
+      collection_root,
+      task=task,
+      expected_episodes=expected_episodes,
+      verify_source_hash=verify_source_hash,
+    )
+
   spec = TASK_SPECS[task]
   collection = _load_object(collection_root / "collection.json")
   if (
     collection.get("schema") != COLLECTION_SCHEMA
-    or collection.get("tasks") != [task]
+    or not isinstance(collection.get("tasks"), list)
+    or task not in collection["tasks"]
     or collection.get("collection_mode") != "target-successes"
   ):
     raise ValueError(f"{collection_root}: unsupported collection contract")
@@ -496,15 +765,16 @@ def _discover_sources(
   rows = summary.get("episodes")
   if not isinstance(rows, list):
     raise ValueError(f"{collection_root / 'summary.json'}: episodes must be a list")
-  successes = [
+  all_successes = [
     row for row in rows
     if isinstance(row, dict) and row.get("status") == "success"
   ]
+  successes = [row for row in all_successes if row.get("task") == task]
   declared = summary.get("success_count")
   by_task = summary.get("by_task", {})
-  if declared != len(successes):
+  if declared != len(all_successes):
     raise ValueError(
-      f"summary success_count={declared!r}, but {len(successes)} success rows exist"
+      f"summary success_count={declared!r}, but {len(all_successes)} success rows exist"
     )
   if not isinstance(by_task, dict) or by_task.get(task, {}).get("success") != len(successes):
     raise ValueError("summary per-task success count disagrees with success rows")
@@ -531,54 +801,15 @@ def _discover_sources(
       collection_root, listed[0], context=f"episode {index} HDF5",
     )
     sidecar_path = hdf5_path.with_suffix(".json").resolve(strict=True)
-    if not sidecar_path.is_relative_to(collection_root):
-      raise ValueError(f"episode {index} sidecar escapes collection root")
-    sidecar = _load_object(sidecar_path)
-    declared_hash = sidecar.get("sha256")
-    if (
-      not isinstance(declared_hash, str)
-      or len(declared_hash) != 64
-      or any(character not in "0123456789abcdef" for character in declared_hash)
-    ):
-      raise ValueError(f"{sidecar_path}: invalid acquisition SHA-256")
-    if sidecar.get("episode") != hdf5_path.name:
-      raise ValueError(f"{sidecar_path}: episode does not name {hdf5_path.name}")
-    if verify_source_hash and _sha256_file(hdf5_path) != declared_hash:
-      raise ValueError(f"{hdf5_path}: SHA-256 differs from acquisition sidecar")
-    camera_samples = sidecar.get("camera_samples", {})
-    state_samples = sidecar.get("state_samples")
-    if (
-      isinstance(state_samples, bool)
-      or not isinstance(state_samples, int)
-      or state_samples <= 1
-      or not isinstance(camera_samples, dict)
-      or camera_samples.get("head") != camera_samples.get("right_wrist")
-      or isinstance(camera_samples.get("head"), bool)
-      or not isinstance(camera_samples.get("head"), int)
-      or camera_samples["head"] <= 2
-    ):
-      raise ValueError(f"{sidecar_path}: invalid state/camera sample counts")
-    if sidecar.get("schema_version") != RAW_SCHEMA:
-      raise ValueError(f"{sidecar_path}: unsupported raw schema")
-    outcome = sidecar.get("outcome")
-    if not isinstance(outcome, dict):
-      raise ValueError(f"{sidecar_path}: outcome must be an object")
-    _validate_success_gate(hdf5_path, spec, outcome)
-    sources.append(
-      SourceEpisode(
-        episode_index=index,
-        hdf5_path=hdf5_path,
-        sidecar_path=sidecar_path,
-        relative_hdf5_path=hdf5_path.relative_to(collection_root).as_posix(),
-        hdf5_sha256=declared_hash,
-        hdf5_size_bytes=hdf5_path.stat().st_size,
-        state_samples=state_samples,
-        camera_samples=camera_samples["head"],
-        metadata={},
-        outcome=outcome,
-        task=task,
-      )
-    )
+    sources.append(_source_from_files(
+      collection_root,
+      index=index,
+      hdf5_path=hdf5_path,
+      sidecar_path=sidecar_path,
+      task=task,
+      spec=spec,
+      verify_source_hash=verify_source_hash,
+    ))
   sources.sort(key=lambda source: source.episode_index)
   return tuple(sources)
 
@@ -597,6 +828,33 @@ def _strict_30hz_prefix(timestamps: np.ndarray, physics_hz: int) -> tuple[int, f
   prefix = int(mismatches[0]) if mismatches.size else int(timestamps.size)
   if prefix < 2:
     raise ValueError("camera has no two-frame strict 30 Hz prefix")
+  if prefix < timestamps.size - 1:
+    raise ValueError(
+      "only one optional off-grid terminal camera frame is supported; "
+      f"first mismatch is {prefix}/{timestamps.size}"
+    )
+  return prefix, float(np.max(error[:prefix]))
+
+
+def _control_tick_30hz_prefix(
+  timestamps: np.ndarray, physics_hz: int, control_hz: int,
+) -> tuple[int, float]:
+  """Validate 30 Hz camera deadlines rounded up to control ticks."""
+  if timestamps.ndim != 1 or timestamps.size < 2:
+    raise ValueError("camera needs at least two timestamps")
+  if not np.all(np.isfinite(timestamps)) or not np.all(np.diff(timestamps) > 0):
+    raise ValueError("camera timestamps must be finite and strictly increasing")
+  if physics_hz <= 0 or control_hz <= 0:
+    raise ValueError("physics_hz and control_hz must be positive")
+  frame = np.arange(timestamps.size, dtype=np.int64)
+  control_ticks = (frame * control_hz + FPS - 1) // FPS
+  expected = timestamps[0] + control_ticks / control_hz
+  error = np.abs(timestamps - expected)
+  tolerance = 0.51 / physics_hz + 1.0e-12
+  mismatches = np.flatnonzero(error > tolerance)
+  prefix = int(mismatches[0]) if mismatches.size else int(timestamps.size)
+  if prefix < 2:
+    raise ValueError("camera has no two-frame control-tick/30 Hz deadline prefix")
   if prefix < timestamps.size - 1:
     raise ValueError(
       "only one optional off-grid terminal camera frame is supported; "
@@ -731,7 +989,12 @@ def _preflight_episode(source: SourceEpisode) -> EpisodePlan:
       )
     if np.any(head_indices < 0) or not np.all(np.diff(head_indices) > 0):
       raise ValueError(f"{source.hdf5_path}: invalid camera state indices")
-    prefix, grid_error = _strict_30hz_prefix(head_timestamps, physics_hz)
+    if spec.name == "sponge-grasp":
+      prefix, grid_error = _control_tick_30hz_prefix(
+        head_timestamps, physics_hz, spec.control_hz,
+      )
+    else:
+      prefix, grid_error = _strict_30hz_prefix(head_timestamps, physics_hz)
 
     head_rgb = _require_dataset(file, "cameras/head/rgb")
     wrist_rgb = _require_dataset(file, "cameras/right_wrist/rgb")
@@ -1760,7 +2023,12 @@ def _schema_metadata(
         "fps": FPS,
         "source_state_hz": spec.control_hz,
         "observation": "camera frame with latest-nonfuture source state sample",
-        "action": "next retained camera waypoint (1/30 s horizon)",
+        "action": (
+          "next retained camera waypoint (30 Hz deadlines rounded up to "
+          "100 Hz control ticks; 30/40 ms source intervals)"
+          if spec.name == "sponge-grasp"
+          else "next retained camera waypoint (1/30 s horizon)"
+        ),
         "terminal_rule": "last retained camera frame is excluded because it has no next-frame action",
       },
       "scope": {
@@ -1882,10 +2150,12 @@ def _plan_record(plan: EpisodePlan, collection_root: Path) -> dict[str, Any]:
     "relative_hdf5_path": source.relative_hdf5_path,
     "relative_sidecar_path": source.sidecar_path.relative_to(collection_root).as_posix(),
     "hdf5_sha256": source.hdf5_sha256,
+    "hdf5_content_sha256": _sha256_file(source.hdf5_path),
     "hdf5_size_bytes": source.hdf5_size_bytes,
     "hdf5_mtime_ns": hdf5_stat.st_mtime_ns,
     "sidecar_size_bytes": sidecar_stat.st_size,
     "sidecar_mtime_ns": sidecar_stat.st_mtime_ns,
+    "sidecar_content_sha256": _sha256_file(source.sidecar_path),
     "state_samples": source.state_samples,
     "camera_samples": plan.camera_samples,
     "strict_prefix_frames": plan.strict_prefix_frames,
@@ -1926,11 +2196,9 @@ def _checkpoint_configuration(
   args: argparse.Namespace,
   collection_root: Path,
 ) -> dict[str, Any]:
-  return {
+  configuration = {
     "output_schema": OUTPUT_SCHEMA,
     "collection_root": str(collection_root),
-    "collection_json_sha256": _sha256_file(collection_root / "collection.json"),
-    "summary_json_sha256": _sha256_file(collection_root / "summary.json"),
     "repo_id": args.repo_id,
     "task": getattr(args, "task", None) or TASK,
     "expected_episodes": args.expected_episodes,
@@ -1947,6 +2215,18 @@ def _checkpoint_configuration(
     },
     "video_files_size_in_mb": args.video_files_size_in_mb,
   }
+  if (collection_root / "merge_manifest.json").is_file():
+    configuration["merge_manifest_json_sha256"] = _sha256_file(
+      collection_root / "merge_manifest.json"
+    )
+  else:
+    configuration["collection_json_sha256"] = _sha256_file(
+      collection_root / "collection.json"
+    )
+    configuration["summary_json_sha256"] = _sha256_file(
+      collection_root / "summary.json"
+    )
+  return configuration
 
 
 def _save_preflight_checkpoint(
@@ -2004,6 +2284,11 @@ def _load_preflight_checkpoint(
     raise ValueError(f"{path}: checkpoint has no episode plans")
   plans: list[EpisodePlan] = []
   for record in records:
+    if "hdf5_content_sha256" not in record or "sidecar_content_sha256" not in record:
+      raise ValueError(
+        f"{path}: preflight checkpoint predates source content verification; "
+        "start with a new --work-dir"
+      )
     hdf5_path = _inside(
       collection_root, record["relative_hdf5_path"], context="checkpoint HDF5",
     )
@@ -2017,6 +2302,8 @@ def _load_preflight_checkpoint(
       or hdf5_stat.st_mtime_ns != record["hdf5_mtime_ns"]
       or sidecar_stat.st_size != record["sidecar_size_bytes"]
       or sidecar_stat.st_mtime_ns != record["sidecar_mtime_ns"]
+      or _sha256_file(hdf5_path) != record.get("hdf5_content_sha256")
+      or _sha256_file(sidecar_path) != record.get("sidecar_content_sha256")
     ):
       raise ValueError(
         f"raw source changed since preflight: {record['relative_hdf5_path']}"
@@ -2106,6 +2393,7 @@ def _completed_episode(
       not artifact.is_file()
       or artifact.stat().st_size <= 0
       or artifact.stat().st_size != metadata.get("size_bytes")
+      or _sha256_file(artifact) != metadata.get("sha256")
     ):
       raise ValueError(f"{done_path}: checkpoint artifact is invalid: {name}")
   return done
@@ -2558,7 +2846,7 @@ def run(args: argparse.Namespace) -> Path | None:
       collection_root=collection_root,
     )
     print(
-      "resume: raw control files and source size/mtime match; "
+      "resume: raw control files and source content hashes match; "
       "skipping HDF5 structural preflight",
       flush=True,
     )

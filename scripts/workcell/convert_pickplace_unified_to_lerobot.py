@@ -128,7 +128,9 @@ def main(argv=None):
     )
   )
   args = module._parse_args(remaining)
-  install_fast_conversion(module, workers=args.fingerprint_workers)
+  install_fast_conversion(
+    module, workers=args.fingerprint_workers, adapter_path=Path(__file__)
+  )
   module.run(args)
   return 0
 

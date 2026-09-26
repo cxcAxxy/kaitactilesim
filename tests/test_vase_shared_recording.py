@@ -1,5 +1,7 @@
+import json
+
 import h5py
-from kaihand_tactile_env.shared.config import WorkcellConfig
+from kaihand_tactile_env.shared.config import OBJECT_NAMES, WorkcellConfig
 from kaihand_tactile_env.shared.recording import validate_episode
 from kaihand_tactile_env.shared.tactile import SolverContactTactileProvider
 from kaihand_tactile_env.tasks.vase_wipe.review import VaseEpisodeRecorder
@@ -8,6 +10,8 @@ from kaihand_tactile_env.tasks.vase_wipe.task import VaseWipeSimulation
 
 def test_vase_uses_shared_raw_schema_without_changing_task_step(tmp_path):
   sim = VaseWipeSimulation()
+  assert len(OBJECT_NAMES) == len(set(OBJECT_NAMES))
+  assert sim.model_object_names == sim.object_names == ("sponge",)
   capture = WorkcellConfig(
     model_path=sim.model_path,
     physics_hz=4000,
@@ -28,6 +32,8 @@ def test_vase_uses_shared_raw_schema_without_changing_task_step(tmp_path):
   assert report.valid, report.errors
   with h5py.File(output, "r") as file:
     assert file.attrs["schema_version"] == "kaihand_tactile_episode_v1"
+    metadata = json.loads(file.attrs["metadata_json"])
+    assert metadata["model_layout"] == "task-isolated-v1"
     assert file.attrs["hdf5_buffer_rows"] == 128
     assert "taskspace_capture_source_sha256" in file.attrs
     assert "commands/actuator_control" in file

@@ -27,7 +27,7 @@ import tempfile
 import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -70,6 +70,7 @@ from kaihand_tactile_env.shared.egosteer_archive import (
   text,
   validate_poker_outcome,
 )
+from unified_lerobot_collection import discover_unified_artifacts
 from validate_egosteer_dataset import DatasetValidator
 
 DEFAULT_INPUT = Path(
@@ -315,7 +316,10 @@ def _validate_outcome_shape(outcome: object, label: str) -> dict[str, Any]:
   return outcome
 
 
-def _validate_flat_pair(input_dir: Path, index: int) -> RawEpisode:
+def _validate_flat_pair(
+  input_dir: Path, index: int,
+  camera_views: tuple[str, ...] = ("head", "right_wrist"),
+) -> RawEpisode:
   expected_name = f"episode_{index:06d}_card_right.h5"
   source = input_dir / expected_name
   capture_path = source.with_suffix(".json")
@@ -346,12 +350,14 @@ def _validate_flat_pair(input_dir: Path, index: int) -> RawEpisode:
     f"episode {index} capture head frames",
     minimum=2,
   )
-  right_wrist_samples = _require_int(
-    camera_samples.get("right_wrist"),
-    f"episode {index} capture right_wrist frames",
-    minimum=2,
-  )
-  if head_samples != right_wrist_samples:
+  counts = {
+    name: _require_int(
+      camera_samples.get(name), f"episode {index} capture {name} frames",
+      minimum=2,
+    )
+    for name in camera_views
+  }
+  if any(count != head_samples for count in counts.values()):
     raise ValueError(f"episode {index} camera sidecar counts differ")
 
   stat = source.stat()
@@ -365,13 +371,14 @@ def _validate_flat_pair(input_dir: Path, index: int) -> RawEpisode:
     mtime_ns=stat.st_mtime_ns,
     state_samples=state_samples,
     head_samples=head_samples,
-    right_wrist_samples=right_wrist_samples,
+    right_wrist_samples=counts.get("right_wrist", head_samples),
   )
 
 
 def _discover_flat_card_batch(
   input_dir: Path,
   expected_episodes: int,
+  camera_views: tuple[str, ...] = ("head", "right_wrist"),
 ) -> tuple[RawEpisode, ...]:
   """Validate the complete flat HDF5/JSON pairing before selection."""
 
@@ -413,7 +420,9 @@ def _discover_flat_card_batch(
       f"expected exactly {expected_episodes} paired card episodes, found {len(hdf5)}"
     )
 
-  return tuple(_validate_flat_pair(input_dir, index) for index in sorted(hdf5))
+  return tuple(
+    _validate_flat_pair(input_dir, index, camera_views) for index in sorted(hdf5)
+  )
 
 
 def _episode_index(path: Path, metadata: dict[str, Any]) -> int:
@@ -431,7 +440,10 @@ def _episode_index(path: Path, metadata: dict[str, Any]) -> int:
   return int(matches[-1])
 
 
-def _validate_shared_pair(path: Path, index: int, task: str) -> RawEpisode:
+def _validate_shared_pair(
+  path: Path, index: int, task: str,
+  camera_views: tuple[str, ...] = ("head", "right_wrist"),
+) -> RawEpisode:
   capture_path = path.with_suffix(".json")
   for label, candidate in (("HDF5", path), ("capture sidecar", capture_path)):
     if not candidate.is_file() or candidate.is_symlink():
@@ -459,7 +471,7 @@ def _validate_shared_pair(path: Path, index: int, task: str) -> RawEpisode:
       f"episode {index} capture {name} frames",
       minimum=2,
     )
-    for name in ("head", "left_wrist", "right_wrist")
+    for name in camera_views
   }
   if len(set(counts.values())) != 1:
     raise ValueError(f"episode {index} camera sidecar counts differ: {counts}")
@@ -474,7 +486,7 @@ def _validate_shared_pair(path: Path, index: int, task: str) -> RawEpisode:
     mtime_ns=stat.st_mtime_ns,
     state_samples=state_samples,
     head_samples=counts["head"],
-    right_wrist_samples=counts["right_wrist"],
+    right_wrist_samples=counts.get("right_wrist", counts["head"]),
     task=task,
   )
 
@@ -483,9 +495,31 @@ def _discover_batch(
   input_dir: Path,
   expected_episodes: int,
   task: str = "poker-draw",
+  camera_views: tuple[str, ...] = ("head", "right_wrist"),
 ) -> tuple[RawEpisode, ...]:
+  discovered = discover_unified_artifacts(
+    input_dir, task=task, expected_episodes=expected_episodes, limit=None
+  )
+  if discovered is not None:
+    artifacts, _ = discovered
+    if task == "poker-draw":
+      episodes = []
+      for item in artifacts:
+        match = CAPTURE_NAME.fullmatch(item.hdf5_path.name)
+        if match is None:
+          raise ValueError(f"unsupported card filename: {item.hdf5_path.name}")
+        internal_index = int(match.group("episode"))
+        episode = _validate_flat_pair(
+          item.hdf5_path.parent, internal_index, camera_views
+        )
+        episodes.append(replace(episode, episode_index=item.episode_index))
+      return tuple(episodes)
+    return tuple(
+      _validate_shared_pair(item.hdf5_path, item.episode_index, task, camera_views)
+      for item in artifacts
+    )
   if task == "poker-draw":
-    return _discover_flat_card_batch(input_dir, expected_episodes)
+    return _discover_flat_card_batch(input_dir, expected_episodes, camera_views)
   if not input_dir.is_dir():
     raise FileNotFoundError(f"--input-dir is not a directory: {input_dir}")
   selected: dict[int, Path] = {}
@@ -508,7 +542,8 @@ def _discover_batch(
       f"found {len(selected)}"
     )
   return tuple(
-    _validate_shared_pair(selected[index], index, task) for index in sorted(selected)
+    _validate_shared_pair(selected[index], index, task, camera_views)
+    for index in sorted(selected)
   )
 def _json_attr(file: h5py.File, name: str) -> dict[str, Any]:
   raw = file.attrs.get(name)
@@ -559,7 +594,9 @@ def _load_open_episode(
     source.task == "poker-draw"
     and
     metadata.get("episode_index") is not None
-    and metadata.get("episode_index") != source.episode_index
+    and metadata.get("episode_index") != int(
+      CAPTURE_NAME.fullmatch(source.hdf5_path.name).group("episode")
+    )
   ):
     raise ValueError(f"episode {source.episode_index}: HDF5 episode index mismatch")
 
@@ -806,7 +843,7 @@ def _export_episode(
           camera_name: group["rgb"][start:stop]
           for camera_name, group in camera_groups.items()
         }
-        for offset, rgb in enumerate(rgb_blocks["head"]):
+        for offset, _rgb in enumerate(rgb_blocks["head"]):
           frame = start + offset
           calibration = []
           for camera_name in camera_views:
@@ -1102,7 +1139,9 @@ def _run(args: argparse.Namespace) -> None:
   if os.path.lexists(output_dir):
     raise FileExistsError(f"output already exists: {output_dir}")
 
-  episodes = _discover_batch(input_dir, args.expected_episodes, args.task)
+  episodes = _discover_batch(
+    input_dir, args.expected_episodes, args.task, args.cameras
+  )
   if args.limit is not None and args.limit > len(episodes):
     raise ValueError(
       f"--limit {args.limit} exceeds complete batch size {len(episodes)}"

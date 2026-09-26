@@ -24,6 +24,7 @@ TASKS = (
   "vase-wipe",
   "install-ram",
   "whiteboard-wipe",
+  "sponge-grasp",
 )
 TERMINAL = {"success", "failed", "timeout"}
 COLLECTION_CAMERAS = ("head", "left_wrist", "right_wrist")
@@ -229,6 +230,21 @@ def command(task, output, seed, fixed_stains=False):
       "--raw-only",
     ]
     return cmd if fixed_stains else cmd + ["--stain-seed", str(seed)]
+  if task == "sponge-grasp":
+    return base + [
+      str(scripts / "record_sponge_grasp.py"),
+      "--output-dir",
+      str(output),
+      "--seed",
+      str(seed),
+      "--camera-hz",
+      str(COLLECTION_CAMERA_HZ),
+      "--buffer-rows",
+      "128",
+      "--raw-only",
+      "--cameras",
+      *COLLECTION_CAMERAS,
+    ]
   raise ValueError(task)
 
 
@@ -239,6 +255,16 @@ def outcome(task, output):
   if task in ("pick-place", "poker-draw"):
     manifests = [p.with_suffix(".json") for p in output.glob("*.h5")]
     return len(manifests) == 1 and read(manifests[0])["outcome"].get("success") is True
+  if task == "sponge-grasp":
+    raw = output / "raw/sponge_grasp_000000.h5"
+    result = read(raw.with_suffix(".result.json"))
+    manifest = read(raw.with_suffix(".json"))
+    return (
+      raw.is_file()
+      and result.get("success") is True
+      and manifest.get("validation", {}).get("valid") is True
+      and manifest.get("task_audit_passed") is True
+    )
   if task == "vase-wipe":
     result = read(output / "result.json")
     validation = read(output / "raw/episode.json").get("validation", {})
@@ -273,25 +299,18 @@ def source_hashes():
 
 
 def artifact_hashes(directory):
-  """Reuse the recorder's HDF5 digest; hash only its small sidecars again."""
-  result = {}
-  for path in sorted(directory.rglob("*")):
-    if not path.is_file():
+  """Hash actual artifact bytes and cross-check each recorder HDF5 digest."""
+  result = actual_artifact_hashes(directory)
+  for relative, digest in result.items():
+    path = directory / relative
+    if path.suffix != ".h5":
       continue
-    relative = str(path.relative_to(directory))
     recorder_sidecar = path.with_suffix(".json")
-    if path.suffix == ".h5" and recorder_sidecar.is_file():
-      manifest = read(recorder_sidecar)
-      digest = manifest.get("sha256")
-      if manifest.get("episode") != path.name or not isinstance(digest, str):
-        raise ValueError(f"invalid recorder sidecar for {path}")
-      result[relative] = digest
+    if not recorder_sidecar.is_file():
       continue
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-      for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b""):
-        digest.update(chunk)
-    result[relative] = digest.hexdigest()
+    manifest = read(recorder_sidecar)
+    if manifest.get("episode") != path.name or manifest.get("sha256") != digest:
+      raise ValueError(f"recorder sidecar SHA-256 differs from HDF5: {path}")
   return result
 
 
@@ -350,11 +369,14 @@ def staging_episode_directory(staging_root, output, task, index):
 
 
 def artifacts_match(directory, record):
-  """Fast resume check: paths/sizes plus signed recorder and sidecar digests."""
+  """Check actual bytes against the published artifact inventory."""
   expected_sizes = record.get("artifact_bytes")
   if expected_sizes is not None and artifact_sizes(directory) != expected_sizes:
     return False
-  return artifact_hashes(directory) == record.get("artifact_sha256")
+  try:
+    return artifact_hashes(directory) == record.get("artifact_sha256")
+  except (OSError, ValueError):
+    return False
 
 
 def check(tasks, backend):

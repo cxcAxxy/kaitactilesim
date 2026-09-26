@@ -1,8 +1,8 @@
 # 原始数据可视化
 
-## 七任务统一轨迹回放
+## 八任务统一轨迹回放
 
-`replay` 是 PickPlace、Card、USB、Bulb、RAM、Vase、Whiteboard 共用的回放入口。下面的命令直接读取一条已完成的 Raw HDF5，生成相机画面、双手触觉热力图和十指触觉值时间曲线，不重新运行仿真，也不修改源文件：
+`replay` 是 PickPlace、Card、USB、Bulb、RAM、Vase、Whiteboard、Sponge 共用的回放入口。下面的命令直接读取一条已完成的 Raw HDF5，生成相机画面、双手触觉热力图和十指触觉值时间曲线，不重新运行仿真，也不修改源文件：
 
 ```bash
 pixi run replay -- /绝对路径/episode.h5 \
@@ -48,9 +48,9 @@ PickPlace、Card、USB 的旧导出脚本仍可用于其历史固定布局。Bul
 | --- | --- | --- |
 | PickPlace | `scripts/workcell/export_pickplace_tactile_review.py` | 相机、Genesis probe 图和曲线 |
 | Card | `scripts/workcell/export_card_tactile_review.py` | `head`、`right_wrist`、十指力图和曲线；源 episode 须成功 |
-| Card 四类示例 | `pixi run export-poker-example -- ...` | `head`＋右腕＋右手触觉视频、独立全局回放、五指原始力曲线；见[说明](poker_example.md) |
+| Card 四类示例 | `pixi run export-poker-example -- ...` | `head`＋右腕＋右手触觉视频、独立全局回放、五指原始力曲线；见[说明](../tasks/poker_example.md) |
 | USB | `scripts/workcell/export_usb_review.py` | `head`、`right_wrist`、十指力图和曲线 |
-| Bulb | `scripts/workcell/refresh_light_bulb_example.py` | 三路机器人相机、灯座近景、十指力图和五指力/拧紧曲线 |
+| Bulb | `scripts/workcell/refresh_light_bulb_example.py` | 三路机器人相机 Raw、头部与右腕及触觉组合视频、五指力曲线 |
 | RAM | `scripts/workcell/record_install_ram_example.py` | 三路机器人相机、RAM 近景、十指力图和分阶段插入力曲线 |
 | Vase | `scripts/workcell/view_vase_wipe.py --run-task --output-dir ...` | 三路机器人相机、花瓶内外视角、柔性接触力图和清洁/力曲线 |
 | Whiteboard | `scripts/workcell/record_whiteboard_example.py --output-dir ...` | 机器人相机、板面载荷、十指力图和清洁/力曲线 |
@@ -81,6 +81,6 @@ python scripts/workcell/record_whiteboard_example.py \
   --output-dir /new/path/whiteboard_wipe_example
 ```
 
-这些入口生成的 review 尺寸和附加产物由任务文档定义；Raw 中的相机与触觉仍遵守共享采集合同。若需要与模型评估完全一致的 1920×1080 十指热力图和三轴时间曲线，使用[模型评估视频](policy_evaluation_video.md)中的 `--evaluation-review-dir`。
+这些入口生成的 review 尺寸和附加产物由任务文档定义；Raw 中的相机与触觉仍遵守共享采集合同。若需要与模型评估一致的 1920×1080 十指热力图，使用[模型评估视频](policy_evaluation_video.md)中的 `--evaluation-review-dir`。评估视频不绘制三轴时间曲线，逐帧数值保存在 `frames.jsonl`。
 
-USB 的**接触开始与结束静态对照图**另用 [Cleaning 文档中的 `review-usb-tactile`](usb_cleaning.md#触觉起止与视觉对应)。模型闭环评估的视频参数和输出见[模型评估视频](policy_evaluation_video.md)，运行入口见[统一模型推理与评估](model_evaluation.md)。
+USB 的**接触开始与结束静态对照图**另用 [Cleaning 文档中的 `review-usb-tactile`](../tasks/usb_cleaning.md#触觉起止与视觉对应)。模型闭环评估的视频参数和输出见[模型评估视频](policy_evaluation_video.md)，运行入口见[统一模型推理与评估](model_evaluation.md)。

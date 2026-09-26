@@ -46,6 +46,11 @@ def parse_args(argv=None):
   parser.add_argument("--execute-steps", type=int, default=8)
   parser.add_argument("--max-requests", type=int, default=0)
   parser.add_argument("--max-sim-seconds", type=float, default=50.0)
+  parser.add_argument("--success-hold-seconds", type=float, default=0.10)
+  parser.add_argument(
+    "--full-duration-evaluation", action="store_true",
+    help="Diagnostic rollout: continue after card/table penetration or a dropped card; only nonfinite states abort",
+  )
   parser.add_argument(
     "--disable-penetration-guard",
     action="store_true",
@@ -56,7 +61,13 @@ def parse_args(argv=None):
   )
   parser.add_argument("--output-dir", type=Path, required=True)
   parser.add_argument("--record", action=argparse.BooleanOptionalAction, default=True)
+  parser.add_argument(
+    "--save-raw", action=argparse.BooleanOptionalAction, default=False,
+    help="Save a synchronized Raw HDF5 episode and five-finger force plot",
+  )
   parser.add_argument("--record-fps", type=int, choices=(5, 10), default=10)
+  parser.add_argument("--reference-dataset", type=Path)
+  parser.add_argument("--reference-episode-index", type=int, default=0)
   parser.add_argument("--review-width", type=int, default=1920)
   parser.add_argument("--review-height", type=int, default=1080)
   parser.add_argument("--review-render-width", type=int, default=640)
@@ -75,6 +86,10 @@ def parse_args(argv=None):
     "--save-first-request", action=argparse.BooleanOptionalAction, default=True
   )
   args = parser.parse_args(argv)
+  if args.full_duration_evaluation:
+    args.disable_penetration_guard = True
+  if not np.isfinite(args.success_hold_seconds) or args.success_hold_seconds <= 0:
+    parser.error("success-hold-seconds must be positive and finite")
   if args.seed < 0 or args.max_requests < 0 or args.execute_steps <= 0:
     parser.error("seed/requests must be nonnegative; execute-steps must be positive")
   for key in ("xy_jitter_mm", "yaw_jitter_deg", "max_sim_seconds"):
@@ -180,14 +195,15 @@ def outcome_stage(monitor: PokerOutcomeMonitor) -> str:
 
 
 def guard_poker_state(
-  observer: PokerPolicyController, *, penetration_guard_enabled: bool = True
+  observer: PokerPolicyController, *, penetration_guard_enabled: bool = True,
+  fallen_card_guard_enabled: bool = True,
 ) -> float:
   simulation = observer.sim
   if not np.isfinite(simulation.data.qpos).all() or not np.isfinite(
     simulation.data.qvel
   ).all():
     raise RuntimeError("nonfinite simulation state")
-  if float(simulation.object_pose("card")[2]) < 0.5:
+  if fallen_card_guard_enabled and float(simulation.object_pose("card")[2]) < 0.5:
     raise RuntimeError("card fell below work surface")
   supported_penetration_m = (
     max(0.0, -float(observer._card_table_clearance()))
@@ -226,6 +242,8 @@ def run(args) -> dict:
     "action_representation": deployment["action_representation"],
     "execute_steps": args.execute_steps,
     "max_sim_seconds": args.max_sim_seconds,
+    "success_hold_seconds": args.success_hold_seconds,
+    "full_duration_evaluation": args.full_duration_evaluation,
     "control_hz": CONTROL_HZ,
     "replan_period_s": args.execute_steps / CONTROL_HZ,
     "diagnostic_only": bool(args.disable_penetration_guard),
@@ -238,7 +256,7 @@ def run(args) -> dict:
     "render_shadows": False,
   }
   started = time.monotonic()
-  client = simulation = recorder = observer = monitor = review_metrics = None
+  client = simulation = recorder = observer = monitor = review_metrics = raw_capture = None
   requests = action_steps = clipped_values = control_tick = 0
   maximum_supported_table_penetration_m = 0.0
   first_penetration_limit_exceeded_s = None
@@ -268,7 +286,10 @@ def run(args) -> dict:
         yaw_jitter_rad=float(np.deg2rad(args.yaw_jitter_deg)),
       )
       report["initial_card_pose"] = simulation.object_pose("card").tolist()
-      monitor = PokerOutcomeMonitor()
+      monitor = PokerOutcomeMonitor(
+        required_hold_seconds=args.success_hold_seconds,
+        require_clearance_during_hold=args.success_hold_seconds > 0.10,
+      )
       # This object is used only for read-only contact/geometry extraction. Its
       # contact-conditioned command hooks are intentionally never called.
       observer = PokerPolicyController(
@@ -295,6 +316,22 @@ def run(args) -> dict:
         )
         for name in camera_names
       }
+      if args.save_raw:
+        from poker_pi05_rollout_artifacts import PokerPi05RawCapture
+
+        raw_capture = PokerPi05RawCapture(
+          simulation, output, cameras,
+          metadata={
+            "model_family": "pi0.5",
+            "deployment_id": deployment["deployment_id"],
+            "checkpoint_path": deployment["checkpoint_path"],
+            "checkpoint_sha256": deployment["checkpoint_sha256"],
+            "seed": args.seed,
+            "execute_steps": args.execute_steps,
+            "policy_control_hz": CONTROL_HZ,
+            "initial_card_randomization": report["initial_card_randomization"],
+          },
+        )
       with WorkcellRenderer(
         simulation.model, tuple(cameras.values()), shadows=False
       ) as renderer, (output / "requests.jsonl").open("x", encoding="utf-8") as log:
@@ -314,6 +351,13 @@ def run(args) -> dict:
             include_model_wrist=(
               args.show_model_wrist_in_review and "right_wrist" in camera_names
             ),
+            include_review_wrist=(
+              "right_wrist" not in camera_names
+              and args.review_second_camera != "right_wrist"
+            ),
+            comparison=True,
+            reference_dataset=args.reference_dataset,
+            reference_episode_index=args.reference_episode_index,
             metrics=review_metrics,
             metadata={
               "server": args.server,
@@ -369,6 +413,7 @@ def run(args) -> dict:
             "state": state.tolist(),
             "predicted_action_min": np.min(actions, axis=0).tolist(),
             "predicted_action_max": np.max(actions, axis=0).tolist(),
+            "predicted_actions": actions.tolist() if args.save_raw else None,
           }
           log.write(json.dumps(row, ensure_ascii=False) + "\n")
           log.flush()
@@ -393,15 +438,21 @@ def run(args) -> dict:
             )
             control_tick += 1
             target_time = control_tick / CONTROL_HZ
-            while simulation.data.time < target_time - 1.0e-12:
+            while (
+              simulation.data.time < target_time - 1.0e-12
+              and simulation.data.time < args.max_sim_seconds - 1.0e-12
+            ):
               simulation.step()
               review_metrics.update(simulation)
               observe_simulation(
                 monitor, observer, report["initial_card_pose"][0]
               )
+              if raw_capture is not None:
+                raw_capture.observe(simulation, outcome_stage(monitor))
               supported_penetration_m = guard_poker_state(
                 observer,
                 penetration_guard_enabled=not args.disable_penetration_guard,
+                fallen_card_guard_enabled=not args.full_duration_evaluation,
               )
               maximum_supported_table_penetration_m = max(
                 maximum_supported_table_penetration_m, supported_penetration_m
@@ -450,6 +501,13 @@ def run(args) -> dict:
       "first_limit_exceeded_sim_time_s": first_penetration_limit_exceeded_s,
     }
     report["wall_seconds"] = time.monotonic() - started
+    if raw_capture is not None:
+      try:
+        report["raw"] = raw_capture.finish(report, outcome_stage(monitor))
+      except Exception as raw_error:
+        report["raw_record_error"] = f"{type(raw_error).__name__}: {raw_error}"
+      finally:
+        raw_capture.close_incomplete()
     if recorder is not None:
       try:
         recorder.capture(control_tick, outcome_stage(monitor), force=True)

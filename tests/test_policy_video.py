@@ -83,12 +83,19 @@ def test_schedule_sync_signed_forces_and_failure_status(setup):
   assert state.frames[0].shape == (1080, 1920, 3)
   assert state.cameras == ["head", "global"] * 3
   assert state.closed and metadata["completed"]
+  assert metadata["schema"] == "kaihand-policy-evaluation-review-v3"
+  assert metadata["time_series_displayed"] is False
+  assert "curves" not in metadata["layout"]
   assert metadata["task_status"] == "task_not_completed"
   assert metadata["evaluation"]["success"] is False
   rows = [json.loads(line) for line in (path / "frames.jsonl").read_text().splitlines()]
   assert [row["control_tick"] for row in rows] == [0, 3, 6]
   assert all(row["camera_pose_time_s"] == row["tactile_time_s"] for row in rows)
+  normal = np.asarray(rows[-1]["normal_taxel_force_n"])
+  assert normal.shape == (10, 7, 5)
+  np.testing.assert_allclose(normal, 0.001)
   tangent = np.asarray(rows[-1]["tangent_taxel_force_n"])
+  assert tangent.shape == (10, 7, 5, 2)
   np.testing.assert_allclose(np.linalg.norm(tangent, axis=-1), 0.0005)
   assert np.all(tangent[..., 0] < 0)
   means = np.asarray(rows[-1]["force_mean_n_per_taxel"])

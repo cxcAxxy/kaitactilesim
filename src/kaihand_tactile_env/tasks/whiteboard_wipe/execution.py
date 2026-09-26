@@ -12,6 +12,12 @@ from ...shared.simulation import HAND_JOINT_NAMES, _rotation_vector_world
 from . import cleaning, grasp
 from . import config as C
 
+PICKUP_APPROACH_PHASES = (
+  "open_hand",
+  "move_above_eraser",
+  "descend_to_eraser",
+)
+
 
 def turn(vector):
   angle = np.linalg.norm(vector)
@@ -40,6 +46,19 @@ class WhiteboardWipeExecutor:
     self.peak_board_eraser_position_board_m = None
     self.approach_times = []
     self.approach_joints = []
+    self.phase_peak_tactile = {}
+    self.phase_final_tactile = {}
+    self.phase_peak_board_force = {}
+    self.open_hand_target_error_rad = None
+    self.above_wrist_position_error_m = None
+    self.commanded_descent_world_m = None
+    self.actual_descent_world_m = None
+    self.actual_descent_lateral_m = None
+    self.maximum_descent_lateral_deviation_m = 0.0
+    self.descent_reference_xy = None
+    self.pregrasp_eraser_displacement_m = None
+    self.pregrasp_peak_tactile = np.zeros(5)
+    self.grasp_tactile = np.zeros(5)
 
   def record_approach_state(self):
     """Retain the actual arm motion used to reject winding or IK branch flips."""
@@ -69,6 +88,49 @@ class WhiteboardWipeExecutor:
         np.max(np.abs(acceleration), axis=0)
       ).tolist(),
     }
+
+  def record_completed_step(self, phase, *, approach=False):
+    """Audit one completed control step, including tactile phase boundaries."""
+    s = self.sim
+    if approach:
+      self.record_approach_state()
+    if phase == "descend_to_eraser" and self.descent_reference_xy is not None:
+      wrist = s.current_pose_matrix("right")[0]
+      self.maximum_descent_lateral_deviation_m = max(
+        self.maximum_descent_lateral_deviation_m,
+        float(np.linalg.norm(wrist[:2] - self.descent_reference_xy)),
+      )
+    self.max_lift = max(
+      self.max_lift, float(s.object_pose("eraser")[2] - s.pickup_center[2])
+    )
+    tactile = s.forces.read(s.data).normal_force_n[5:].copy()
+    self.peak_tactile = np.maximum(self.peak_tactile, tactile)
+    self.phase_peak_tactile[phase] = np.maximum(
+      self.phase_peak_tactile.get(phase, np.zeros(5)), tactile
+    )
+    self.phase_final_tactile[phase] = tactile
+    self.phase_peak_board_force[phase] = max(
+      self.phase_peak_board_force.get(phase, 0.0), float(s.board_force)
+    )
+    if s.board_force > self.observed_peak_board_force:
+      self.observed_peak_board_force = float(s.board_force)
+      self.peak_board_phase = phase
+      self.peak_board_time_s = float(s.data.time)
+      self.peak_board_eraser_position_board_m = (
+        C.BOARD_ROTATION.T
+        @ (s.object_pose("eraser")[:3] - s.ink_surface_center)
+      ).tolist()
+    if not self.phases or self.phases[-1] != phase:
+      self.phases.append(phase)
+    if not np.isfinite(s.data.qpos).all() or any(w.number for w in s.data.warning):
+      raise RuntimeError(f"{phase}: unstable physics")
+    if self.holding:
+      wrist, rot = s.current_pose_matrix("right")
+      expected = wrist + rot @ self.tool_offset
+      if np.linalg.norm(expected - s.object_pose("eraser")[:3]) > 0.045:
+        raise RuntimeError(f"{phase}: eraser slipped from fingers")
+    if self.observer:
+      self.observer(s, phase)
 
   def tick(
     self, phase, *, period_s=C.CONTROL_PERIOD_S, arm_joint_goal=None
@@ -115,33 +177,7 @@ class WhiteboardWipeExecutor:
     s.set_arm_joint_goal("right", arm_joint_goal)
     s.phase = phase
     s.step(round(period_s / s.timestep))
-    if phase == "approach":
-      self.record_approach_state()
-    self.max_lift = max(
-      self.max_lift, float(s.object_pose("eraser")[2] - s.pickup_center[2])
-    )
-    self.peak_tactile = np.maximum(
-      self.peak_tactile, s.forces.read(s.data).normal_force_n[5:]
-    )
-    if s.board_force > self.observed_peak_board_force:
-      self.observed_peak_board_force = float(s.board_force)
-      self.peak_board_phase = phase
-      self.peak_board_time_s = float(s.data.time)
-      self.peak_board_eraser_position_board_m = (
-        C.BOARD_ROTATION.T
-        @ (s.object_pose("eraser")[:3] - s.ink_surface_center)
-      ).tolist()
-    if not self.phases or self.phases[-1] != phase:
-      self.phases.append(phase)
-    if not np.isfinite(s.data.qpos).all() or any(w.number for w in s.data.warning):
-      raise RuntimeError(f"{phase}: unstable physics")
-    if self.holding:
-      wrist, rot = s.current_pose_matrix("right")
-      expected = wrist + rot @ self.tool_offset
-      if np.linalg.norm(expected - s.object_pose("eraser")[:3]) > 0.045:
-        raise RuntimeError(f"{phase}: eraser slipped from fingers")
-    if self.observer:
-      self.observer(s, phase)
+    self.record_completed_step(phase, approach=phase in PICKUP_APPROACH_PHASES)
 
   def move_wrist(self, target, seconds, phase, rotation=None):
     start, rot = self.position.copy(), self.rotation.copy()
@@ -153,6 +189,18 @@ class WhiteboardWipeExecutor:
       u = u * u * (3 - 2 * u)
       self.position = start + u * (np.asarray(target) - start)
       self.rotation = turn(u * vector) @ rot
+      self.tick(phase)
+
+  def move_hand(self, target, seconds, phase):
+    """Shape the hand smoothly while holding the wrist at its descended pose."""
+    s = self.sim
+    names = HAND_JOINT_NAMES["right"]
+    start = np.array([s._hand_targets["right"][name] for name in names])
+    count = round(seconds / C.CONTROL_PERIOD_S)
+    for i in range(count):
+      u = (i + 1) / count
+      blend = 10 * u**3 - 15 * u**4 + 6 * u**5
+      s.set_hand_joint_targets(names, start + blend * (target - start))
       self.tick(phase)
 
   def move_arm_joints(self, target, seconds, phase):
@@ -277,12 +325,64 @@ class WhiteboardWipeExecutor:
           "Eraser must initially rest on the table with no finger contact"
         )
       self.record_approach_state()
-      for _ in approach_waypoint(s, s.approach_arm, s.open_grip, phase="approach"):
-        self.record_approach_state()
-        if self.observer:
-          self.observer(s, "approach")
+      for _ in approach_waypoint(
+        s,
+        s.arm_goal["right"],
+        s.spread_grip,
+        phase="open_hand",
+        seconds=C.OPEN_HAND_SETTLE_S,
+      ):
+        self.record_completed_step("open_hand", approach=True)
+      hand = np.array(
+        [s.data.qpos[s._qpos_address[name]] for name in HAND_JOINT_NAMES["right"]]
+      )
+      self.open_hand_target_error_rad = float(np.max(np.abs(hand - s.spread_grip)))
+      if self.open_hand_target_error_rad > C.OPEN_HAND_MAX_ERROR_RAD:
+        raise RuntimeError("open_hand: spread pose did not settle")
+      for _ in approach_waypoint(
+        s,
+        s.approach_arm,
+        s.spread_grip,
+        phase="move_above_eraser",
+        seconds=C.MOVE_ABOVE_ERASER_S,
+      ):
+        self.record_completed_step("move_above_eraser", approach=True)
       self.position, self.rotation = s.current_pose_matrix("right")
-      self.move_wrist(s.pickup_center + s.wrist_offset, 2.0, "approach")
+      above_target = (
+        s.pickup_center
+        + s.wrist_offset
+        + np.array([0.0, 0.0, C.PICKUP_CLEARANCE_M])
+      )
+      self.above_wrist_position_error_m = float(
+        np.linalg.norm(self.position - above_target)
+      )
+      if self.above_wrist_position_error_m > 0.008:
+        raise RuntimeError("move_above_eraser: wrist did not reach the overhead pose")
+      above_actual = self.position.copy()
+      self.descent_reference_xy = above_actual[:2].copy()
+      eraser_before_descent = s.object_pose("eraser")[:3].copy()
+      grasp_target = s.pickup_center + s.wrist_offset
+      self.commanded_descent_world_m = (grasp_target - above_target).copy()
+      self.move_wrist(
+        grasp_target,
+        C.DESCEND_TO_ERASER_S,
+        "descend_to_eraser",
+      )
+      descended_actual = s.current_pose_matrix("right")[0]
+      self.actual_descent_world_m = descended_actual - above_actual
+      self.actual_descent_lateral_m = float(
+        np.linalg.norm((descended_actual - above_actual)[:2])
+      )
+      self.pregrasp_eraser_displacement_m = float(
+        np.linalg.norm(s.object_pose("eraser")[:3] - eraser_before_descent)
+      )
+      self.pregrasp_peak_tactile = np.maximum.reduce(
+        [self.phase_peak_tactile[phase] for phase in PICKUP_APPROACH_PHASES]
+      )
+      if np.max(self.pregrasp_peak_tactile) > 0.05:
+        raise RuntimeError("descend_to_eraser: finger contact occurred before grasp")
+      if self.pregrasp_eraser_displacement_m > 0.002:
+        raise RuntimeError("descend_to_eraser: open hand disturbed the eraser")
       approach_motion = self.approach_motion()
       if not -45.0 < approach_motion["wrist_turn_joint5_deg"] < 0.0:
         raise RuntimeError("approach: wrist did not use the short counterclockwise branch")
@@ -290,9 +390,13 @@ class WhiteboardWipeExecutor:
         raise RuntimeError("approach: arm joint speed is not smooth")
       if max(approach_motion["maximum_joint_acceleration_deg_s2"]) >= 100.0:
         raise RuntimeError("approach: arm joint acceleration is not smooth")
+      # Only now, with the spread hand stationary at the grasp pose, bend it
+      # into the collision-free pre-grasp shape and enable tactile closure.
+      self.move_hand(s.open_grip, C.SHAPE_GRASP_S, "grasp")
       self.closing = True
-      self.move_wrist(self.position, 4.0, "grasp")
+      self.move_wrist(self.position, C.TACTILE_GRASP_S, "grasp")
       loads = s.forces.read(s.data).normal_force_n[5:]
+      self.grasp_tactile = loads.copy()
       if loads[0] < 0.05 or loads[1:].sum() < 0.15:
         raise RuntimeError(f"No opposed tactile grasp: {loads}")
       self.closing = False
@@ -517,11 +621,79 @@ class WhiteboardWipeExecutor:
         reason = "Ink remains after bounded wiping"
     except RuntimeError as exc:
       reason = str(exc)
+    grasp_peak = self.phase_peak_tactile.get("grasp", np.zeros(5))
+    wipe_peak = self.phase_peak_tactile.get("wipe", np.zeros(5))
+    release_final = self.phase_final_tactile.get("release", np.full(5, np.inf))
+    tactile_criteria = {
+      "pregrasp_finger_peak_below_0_05_n": bool(
+        np.max(self.pregrasp_peak_tactile) < 0.05
+      ),
+      "opposed_grasp_detected": bool(
+        self.grasp_tactile[0] >= 0.05 and self.grasp_tactile[1:].sum() >= 0.15
+      ),
+      "grasp_fingertip_peak_below_6_n": bool(np.max(grasp_peak) < 6.0),
+      "wipe_fingertip_peak_below_6_n": bool(np.max(wipe_peak) < 6.0),
+      "wipe_board_peak_below_3_n": bool(
+        self.phase_peak_board_force.get("wipe", np.inf) < 3.0
+      ),
+      "no_direct_hand_board_contact": bool(s.peak_direct_hand_board_force < 1e-9),
+      "released_fingertip_sum_below_0_05_n": bool(release_final.sum() < 0.05),
+    }
+    tactile_reasonable = all(tactile_criteria.values())
+    required_pickup_phases = [*PICKUP_APPROACH_PHASES, "grasp", "lift"]
+    actual_pickup_phases = self.phases[1:6]
+    descent = self.commanded_descent_world_m
+    pickup_sequence_valid = bool(
+      actual_pickup_phases == required_pickup_phases
+      and self.open_hand_target_error_rad is not None
+      and self.open_hand_target_error_rad < C.OPEN_HAND_MAX_ERROR_RAD
+      and self.above_wrist_position_error_m is not None
+      and self.above_wrist_position_error_m < 0.008
+      and descent is not None
+      and np.linalg.norm(descent[:2]) < 1e-12
+      and abs(descent[2] + C.PICKUP_CLEARANCE_M) < 1e-12
+      and self.actual_descent_lateral_m is not None
+      and self.actual_descent_lateral_m < 0.01
+      and self.maximum_descent_lateral_deviation_m < 0.01
+      and self.actual_descent_world_m is not None
+      and abs(self.actual_descent_world_m[2] + C.PICKUP_CLEARANCE_M) < 0.01
+      and self.pregrasp_eraser_displacement_m is not None
+      and self.pregrasp_eraser_displacement_m < 0.002
+    )
+    if reason == "completed" and not pickup_sequence_valid:
+      reason = "Pickup sequence validation failed"
+    elif reason == "completed" and not tactile_reasonable:
+      reason = "Tactile validation failed"
+    pickup_sequence = {
+      "required_phase_order": required_pickup_phases,
+      "actual_phase_order": actual_pickup_phases,
+      "valid": pickup_sequence_valid,
+      "clearance_m": C.PICKUP_CLEARANCE_M,
+      "open_hand_target_error_rad": self.open_hand_target_error_rad,
+      "above_wrist_position_error_m": self.above_wrist_position_error_m,
+      "commanded_descent_world_m": (
+        None
+        if self.commanded_descent_world_m is None
+        else self.commanded_descent_world_m.tolist()
+      ),
+      "actual_descent_lateral_m": self.actual_descent_lateral_m,
+      "actual_descent_world_m": (
+        None
+        if self.actual_descent_world_m is None
+        else self.actual_descent_world_m.tolist()
+      ),
+      "maximum_descent_lateral_deviation_m": self.maximum_descent_lateral_deviation_m,
+      "pregrasp_eraser_displacement_m": self.pregrasp_eraser_displacement_m,
+      "pregrasp_peak_fingertip_force_n": self.pregrasp_peak_tactile.tolist(),
+      "grasp_final_fingertip_force_n": self.grasp_tactile.tolist(),
+    }
     return dict(
       success=bool(
         self.pickup_verified
         and released
         and np.max(s.remaining) <= 1e-9
+        and pickup_sequence_valid
+        and tactile_reasonable
         and reason == "completed"
       ),
       reason=reason,
@@ -585,6 +757,16 @@ class WhiteboardWipeExecutor:
         ),
       },
       peak_fingertip_force_n=self.peak_tactile.tolist(),
+      pickup_sequence=pickup_sequence,
+      tactile_validation={
+        "source": "unfiltered MuJoCo solver contacts on the five right fingertip taxel pads",
+        "criteria": tactile_criteria,
+        "reasonable": tactile_reasonable,
+        "phase_peak_fingertip_force_n": {
+          phase: value.tolist() for phase, value in self.phase_peak_tactile.items()
+        },
+        "phase_peak_board_force_n": self.phase_peak_board_force,
+      },
       initial_approach_motion=approach_motion,
       orient_transfer_motion=transfer_motion,
       phases=self.phases,

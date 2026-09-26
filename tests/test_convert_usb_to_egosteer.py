@@ -237,6 +237,37 @@ def test_optional_full_source_hash_is_verified(tmp_path: Path) -> None:
   assert facts.source_hash_verified is True
 
 
+def test_unified_collection_converts_nested_usb_with_outer_index(tmp_path: Path) -> None:
+  root = tmp_path / "collection"
+  data = root / "usb-insert/000042/attempt_001/data/raw"
+  data.mkdir(parents=True)
+  _write_episode(data, 0)
+  source = data / "usb_000000.h5"
+  (root / "collection.json").write_text(json.dumps({
+    "schema": "task_collection_v2",
+    "tasks": ["usb-insert"],
+    "collection_mode": "attempts",
+  }))
+  (root / "summary.json").write_text(json.dumps({
+    "episodes": [{
+      "task": "usb-insert", "episode_index": 42,
+      "status": "success", "hdf5": [source.relative_to(root).as_posix()],
+    }],
+    "by_task": {"usb-insert": {"success": 1}},
+  }))
+  output = tmp_path / "egosteer"
+  converter.main([
+    "--input-dir", str(root), "--output-dir", str(output),
+    "--expected-episodes", "1", "--workers", "1",
+    "--cameras", "head", "right_wrist",
+  ])
+  report = json.loads((output / "conversion_report.json").read_text())
+  assert report["converted_episodes"] == 1
+  source_manifest = json.loads((output / "source_snapshot_manifest.json").read_text())
+  assert source_manifest["episodes"][0]["episode_index"] == 42
+  assert source_manifest["episodes"][0]["hdf5"] == source.relative_to(root).as_posix()
+
+
 def test_parallel_export_writes_one_valid_standard_shard_per_episode(
   tmp_path: Path,
 ) -> None:

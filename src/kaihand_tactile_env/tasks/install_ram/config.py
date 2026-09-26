@@ -2,7 +2,7 @@
 
 The module and socket use X along the long edge, Y through the PCB, and
 Z up. Insertion is along -Z. Tolerances/contact mechanics are simulation
-approximations documented in docs/install_ram_dimensions.md.
+approximations documented in docs/tasks/install_ram_dimensions.md.
 """
 
 from __future__ import annotations

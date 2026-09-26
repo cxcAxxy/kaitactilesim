@@ -13,6 +13,7 @@ from kaihand_tactile_env.shared.config import (
   legacy_model_path,
 )
 from kaihand_tactile_env.shared.recording import (
+  LEGACY_COMBINED_MODEL_LAYOUT,
   TASK_ISOLATED_MODEL_LAYOUT,
   _qpos_names,
   _qvel_names,
@@ -197,6 +198,25 @@ def test_unversioned_recording_prefers_frozen_combined_model(tmp_path: Path) -> 
 
   assert scene == "poker-draw"
   assert selected == legacy_model_path()
+
+
+@pytest.mark.parametrize("scene", ("vase-wipe", "sponge-grasp"))
+def test_mislabeled_sponge_layout_uses_isolated_model(
+  tmp_path: Path, scene: str
+) -> None:
+  episode = tmp_path / f"{scene}.h5"
+  _write_state(
+    episode,
+    np.zeros((1, 1)), np.zeros((1, 1)),
+    ("sponge_freejoint/x",), ("sponge_freejoint/x",),
+    metadata={
+      "scene": scene, "model_layout": LEGACY_COMBINED_MODEL_LAYOUT,
+      "active_objects": ["sponge"],
+    },
+  )
+  with h5py.File(episode, "r") as file:
+    _, selected = _replay_model_selection(file)
+  assert selected == default_model_path(scene)
 
 
 def test_unknown_layout_is_rejected_instead_of_opening_recorded_path(

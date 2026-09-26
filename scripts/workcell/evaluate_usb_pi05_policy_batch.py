@@ -93,6 +93,8 @@ def main() -> None:
   parser.add_argument("--max-sim-seconds", type=float, default=50.0)
   parser.add_argument("--video-count", type=int, default=3)
   parser.add_argument("--record-fps", type=int, choices=(5, 10), default=10)
+  parser.add_argument("--reference-dataset", type=Path)
+  parser.add_argument("--reference-episode-index", type=int, default=0)
   parser.add_argument("--execute-steps", type=int, default=8)
   parser.add_argument(
     "--disable-penetration-guard",
@@ -102,6 +104,8 @@ def main() -> None:
   parser.add_argument("--xy-jitter-mm", type=float, default=10.0)
   parser.add_argument("--yaw-jitter-deg", type=float, default=5.0)
   args = parser.parse_args()
+  if args.reference_dataset is not None:
+    args.reference_dataset = args.reference_dataset.expanduser().resolve()
   if len(set(args.seeds)) != len(args.seeds) or any(seed < 0 for seed in args.seeds):
     parser.error("distinct nonnegative seeds required")
   if not 0 <= args.video_count <= len(args.seeds):
@@ -126,6 +130,10 @@ def main() -> None:
     "deployment_id": deployment["deployment_id"],
     "checkpoint": deployment["checkpoint_path"],
     "checkpoint_sha256": deployment["checkpoint_sha256"],
+    "reference_dataset": (
+      None if args.reference_dataset is None else str(args.reference_dataset)
+    ),
+    "reference_episode_index": args.reference_episode_index,
     "model_family": deployment["model_family"],
     "server": args.server,
     "seeds": args.seeds,
@@ -234,6 +242,11 @@ def main() -> None:
       "global",
       "--record" if trial_index < args.video_count else "--no-record",
     ]
+    if args.reference_dataset is not None:
+      command.extend((
+        "--reference-dataset", str(args.reference_dataset),
+        "--reference-episode-index", str(args.reference_episode_index),
+      ))
     if args.disable_penetration_guard:
       command.append("--disable-penetration-guard")
     print(f"START {trial_index + 1}/{len(args.seeds)} seed={seed}", flush=True)

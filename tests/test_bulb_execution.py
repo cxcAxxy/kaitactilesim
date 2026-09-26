@@ -59,12 +59,23 @@ def test_full_robot_episode_without_object_teleports_or_external_wrenches(
   capture_seen = False
   maximum_pitch_error = 0.0
   data = sim.data
+  left_robot_bodies = {
+    i
+    for i in range(sim.model.nbody)
+    if sim.model.body(i).name.startswith(("left_arm", "left_hand", "hand_l"))
+  }
+  right_robot_bodies = {
+    i
+    for i in range(sim.model.nbody)
+    if sim.model.body(i).name.startswith(("right_arm", "right_hand", "hand_r"))
+  }
   executor = None
   entry_contact_load = 0.0
   reset_started_unloaded = False
   lit_tighten_times = []
   turn_samples = []
   transport_samples = []
+  aligned_above_socket = False
   phase_started = 0.0
   reset_group = None
   read_thread_contact = sim.thread_contact_load
@@ -82,6 +93,7 @@ def test_full_robot_episode_without_object_teleports_or_external_wrenches(
     nonlocal grip_seen, released_strokes, previous_phase, previous_position
     nonlocal capture_seen, maximum_pitch_error
     nonlocal phase_started
+    nonlocal aligned_above_socket
     if phase != previous_phase:
       phase_started = float(data.time)
     assert not np.any(data.xfrc_applied)
@@ -92,9 +104,42 @@ def test_full_robot_episode_without_object_teleports_or_external_wrenches(
     previous_position = position
     state = executor._state
     if grasp_mode == "five-finger":
-      if 9.0 <= data.time < 11.8:
-        assert phase in {"transfer", "align_thread"}
+      if phase in {"clear_for_home", "return_home", "verify_seated"}:
+        for contact in data.contact:
+          a = int(sim.model.geom_bodyid[contact.geom1])
+          b = int(sim.model.geom_bodyid[contact.geom2])
+          assert not (
+            (a in left_robot_bodies and b in right_robot_bodies)
+            or (a in right_robot_bodies and b in left_robot_bodies)
+          ), "right hand or arm contacted the left side during return home"
+      if phase == "transfer" or (
+        phase == "align_thread"
+        and position[2] > config.SOCKET_MOUTH_POSITION_M[2] + 0.003
+      ):
+        bulb_body = sim.model.body("bulb").id
+        socket_body = sim.model.body("bulb_socket").id
+        for contact in data.contact:
+          bodies = {
+            int(sim.model.geom_bodyid[contact.geom1]),
+            int(sim.model.geom_bodyid[contact.geom2]),
+          }
+          assert not {bulb_body, socket_body} <= bodies
+      if phase == "transfer":
         transport_samples.append((executor._grip.copy(), executor._grip_tangent.copy()))
+        if np.linalg.norm(position[:2] - config.SOCKET_MOUTH_POSITION_M[:2]) < 0.03:
+          assert (
+            position[2]
+            >= config.SOCKET_MOUTH_POSITION_M[2]
+            + config.SOCKET_APPROACH_CLEARANCE_M
+            - 0.002
+          )
+      if phase == "align_thread" and previous_phase != phase:
+        assert np.linalg.norm(position[:2] - config.SOCKET_MOUTH_POSITION_M[:2]) < 0.001
+        assert position[2] == pytest.approx(
+          config.SOCKET_MOUTH_POSITION_M[2] + config.SOCKET_APPROACH_CLEARANCE_M,
+          abs=0.002,
+        )
+        aligned_above_socket = True
       if phase == "turn":
         turn_samples.append(
           (
@@ -175,6 +220,8 @@ def test_full_robot_episode_without_object_teleports_or_external_wrenches(
   monkeypatch.setattr(executor, "_hand_motion", observe_reset)
   result = executor.execute()
   assert result.success, result.reason
+  if grasp_mode == "five-finger":
+    assert aligned_above_socket
   assert result.tightening_verified
   assert sim.bulb_lit and result.state.bulb_lit
   assert (
@@ -297,7 +344,9 @@ def test_example_requires_a_full_loaded_stall_in_actual_bulb_pose():
 
   t = np.arange(121) / 100
   tight = (t >= 0.7) & (t <= 1.0)
-  phase = np.where(tight, "tighten", np.where(t < 0.7, "turn", "release"))
+  phase = np.where(
+    tight, "tighten", np.where(t < 0.1, "align_thread", np.where(t < 0.7, "turn", "release"))
+  )
   fn = np.where(tight, 6.0, np.where(t < 0.7, 3.0, 0.0))
   ft = np.where(tight, 2.0, np.where(t < 0.7, 1.0, 0.0))
   result = SimpleNamespace(success=True, tightening_verified=True, elapsed_s=1.2)
@@ -319,15 +368,24 @@ def test_example_requires_a_full_loaded_stall_in_actual_bulb_pose():
     state["qvel"] = np.zeros((len(t), 1))
     task = f.create_group("bulb_screw")
     task["clockwise_turns"] = np.where(t < 0.7, 0.5, 1.0) * config.TARGET_TURNS
+    task["engaged"] = t >= 0.1
     task["hand_clockwise_torque_nm"] = np.where(tight, 0.3, 0)
     task["xfrc_applied"] = np.zeros((len(t), 1, 6))
     task["seated"] = tight
     pose = np.zeros((len(t), 7))
+    pose[:, :2] = config.SOCKET_MOUTH_POSITION_M[:2]
+    pose[:, 2] = config.SOCKET_FUNNEL_TOP_Z_M - 0.002
     pose[:, 3] = 1
     bulb = f.create_group("objects").create_group("bulb")
     bulb["pose_wxyz"] = pose
     metrics = _audit(f, result)
     np.testing.assert_allclose(metrics["loaded_stall_window_s"], [0.7, 1.0])
+    pose[phase == "align_thread", 0] += 0.001
+    bulb["pose_wxyz"][:] = pose
+    with pytest.raises(ValueError, match="laterally misaligned"):
+      _audit(f, result)
+    pose[phase == "align_thread", 0] -= 0.001
+    bulb["pose_wxyz"][:] = pose
     # A stationary guide alone cannot pass if the actual bulb is still turning.
     angle = np.linspace(0, np.deg2rad(1), tight.sum())
     pose[tight, 3], pose[tight, 6] = np.cos(angle / 2), np.sin(angle / 2)
@@ -339,6 +397,25 @@ def test_example_requires_a_full_loaded_stall_in_actual_bulb_pose():
     task["hand_clockwise_torque_nm"][:] = 0
     with pytest.raises(ValueError, match="loaded angular stall"):
       _audit(f, result)
+
+
+def test_example_rejects_contact_between_robot_sides():
+  import h5py
+  from kaihand_tactile_env.tasks.bulb_screw.example import _verify_no_interarm_contact
+
+  with h5py.File("bulb-contact-memory", "w", driver="core", backing_store=False) as f:
+    f.create_group("model").create_dataset(
+      "body_names",
+      data=["world", "hand_l_index_link4", "hand_r_index_link4"],
+      dtype=h5py.string_dtype(),
+    )
+    events = f.create_group("contacts").create_group("events")
+    events["body1_id"] = [1]
+    events["body2_id"] = [2]
+    with pytest.raises(ValueError, match="inter-arm contact"):
+      _verify_no_interarm_contact(f)
+    events["body2_id"][:] = 0
+    _verify_no_interarm_contact(f)
 
 
 @pytest.mark.parametrize("fault", [None, "arm", "wrist", "finger"])

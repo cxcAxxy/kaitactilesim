@@ -16,7 +16,14 @@ class PokerOutcomeMonitor:
   card remains flat and near tabletop height; aerial motion cannot satisfy it.
   """
 
-  def __init__(self):
+  def __init__(
+    self, *, required_hold_seconds: float = 0.10,
+    require_clearance_during_hold: bool = False,
+  ):
+    if not np.isfinite(required_hold_seconds) or required_hold_seconds <= 0:
+      raise ValueError("required_hold_seconds must be positive and finite")
+    self.required_hold_seconds = float(required_hold_seconds)
+    self.require_clearance_during_hold = bool(require_clearance_during_hold)
     self.contacted = self.edge_reached = self.lifted = self.success = False
     self.hold_seconds = 0.0
     self.max_overhang = self.max_displacement = 0.0
@@ -75,6 +82,7 @@ class PokerOutcomeMonitor:
     held = (
       self.lifted
       and opposed
+      and (not self.require_clearance_during_hold or clearance >= 0.02)
       and face_head >= 0.8
       and face_robot >= 0.8
       and position_error <= 0.03
@@ -82,7 +90,7 @@ class PokerOutcomeMonitor:
       and angular_speed < 0.2
     )
     self.hold_seconds = self.hold_seconds + dt if held else 0.0
-    if self.hold_seconds >= 0.10 - 1e-10 and not self.success:
+    if self.hold_seconds >= self.required_hold_seconds - 1e-10 and not self.success:
       self.success = True
       self.first_times["success"] = float(time_s)
 
@@ -103,6 +111,8 @@ class PokerOutcomeMonitor:
       "edge_reached": self.edge_reached,
       "lifted": self.lifted,
       "hold_seconds": self.hold_seconds,
+      "required_hold_seconds": self.required_hold_seconds,
+      "require_clearance_during_hold": self.require_clearance_during_hold,
       "maximum_supported_overhang_fraction": self.max_overhang,
       "maximum_robotward_card_displacement_m": self.max_displacement,
       "first_times": self.first_times,

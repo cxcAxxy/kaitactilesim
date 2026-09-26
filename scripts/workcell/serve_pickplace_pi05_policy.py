@@ -8,6 +8,8 @@ import json
 import logging
 from pathlib import Path
 
+from kaihand_tactile_env.shared.pi05_deployment_integrity import verify_pi05_deployment
+
 
 def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__)
@@ -26,10 +28,7 @@ def main() -> None:
   if manifest.get("schema") != "pickplace_pi05_deployment_v1":
     raise RuntimeError("not a PickPlace pi0.5 deployment")
   checkpoint = Path(manifest["checkpoint_path"])
-  for row in manifest["checkpoint_files"]:
-    path = checkpoint / row["path"]
-    if not path.is_file() or path.stat().st_size != row["size"]:
-      raise RuntimeError(f"checkpoint payload changed: {path}")
+  verify_pi05_deployment(manifest)
   config = openpi_config.get_config(manifest["model_config_name"])
   metadata = dict(config.policy_metadata or {})
   expected = {

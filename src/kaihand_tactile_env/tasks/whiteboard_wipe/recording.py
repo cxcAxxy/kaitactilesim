@@ -435,11 +435,61 @@ def _compact_force_analysis(file):
     }
   wipe = phases == "wipe"
   load = phases == "load_board"
+  pregrasp = np.isin(
+    phases, ("open_hand", "move_above_eraser", "descend_to_eraser")
+  )
+  grasp = np.flatnonzero(phases == "grasp")
+  release = np.flatnonzero(phases == "release")
+  expected_pickup = (
+    "open_hand", "move_above_eraser", "descend_to_eraser", "grasp", "lift"
+  )
+  phase_transitions = tuple(dict.fromkeys(phases))
+  pickup_start = (
+    phase_transitions.index("open_hand")
+    if "open_hand" in phase_transitions else -1
+  )
+  taxel_normal = force["normal_taxel_force_n"][:]
+  taxel_totals_match = np.allclose(
+    taxel_normal.sum(axis=(-2, -1)), force["normal_force_n"][:],
+    rtol=0, atol=1e-9,
+  )
+  direct_hand_board = file["whiteboard_wipe/direct_hand_board_force_n"][:]
+  wipe_loaded = board[wipe]
+  loaded_start = np.flatnonzero(wipe_loaded > 0.5)
+  loaded_fraction = (
+    float(np.mean(wipe_loaded[loaded_start[0]:] > 0.01))
+    if len(loaded_start) else 0.0
+  )
   wipe_fn_step = phase_changes(normal, "wipe")
   wipe_ft_step = phase_changes(tangent, "wipe")
   load_fn_step = phase_changes(normal, "load_board")
   load_ft_step = phase_changes(tangent, "load_board")
   criteria = {
+    "pickup_phase_order": bool(
+      pickup_start >= 0
+      and phase_transitions[pickup_start:pickup_start + 5] == expected_pickup
+    ),
+    "pregrasp_has_no_fingertip_contact": bool(
+      np.any(pregrasp) and np.max(normal[pregrasp]) < 0.05
+    ),
+    "grasp_has_opposed_fingertip_contact": bool(
+      len(grasp)
+      and normal[grasp[-1], 0] >= 0.05
+      and normal[grasp[-1], 1:].sum() >= 0.15
+    ),
+    "wipe_retains_opposed_fingertip_contact": bool(
+      np.any(wipe)
+      and np.mean(
+        (normal[wipe, 0] >= 0.05)
+        & (normal[wipe, 1:].sum(axis=1) >= 0.15)
+      ) > 0.99
+    ),
+    "wipe_board_contact_continuity": bool(loaded_fraction > 0.99),
+    "no_direct_hand_board_contact": bool(np.max(direct_hand_board) < 1e-9),
+    "release_unloads_fingertips": bool(
+      len(release) and normal[release[-1]].sum() < 0.05
+    ),
+    "taxel_normal_force_conservation": bool(taxel_totals_match),
     "episode_fingertip_peak_below_6_n": bool(normal.max() < 6.0),
     "wipe_board_peak_below_3_n": bool(board[wipe].max() < 3.0),
     "load_board_peak_below_5_n": bool(board[load].max() < 5.0),
@@ -469,13 +519,17 @@ def _compact_force_analysis(file):
       "60s_plus_minus_1s": window(60.0),
     },
     "peak_board_normal_n": float(board.max()),
+    "pregrasp_peak_fingertip_force_n": normal[pregrasp].max(axis=0).tolist(),
+    "grasp_final_fingertip_force_n": normal[grasp[-1]].tolist(),
+    "wipe_loaded_fraction_after_first_contact": loaded_fraction,
+    "release_final_fingertip_force_n": normal[release[-1]].tolist(),
     "criteria": criteria,
     "reasonable": all(criteria.values()),
     "assessment": (
-      "Force changes align with named contact/load phases; wiping remains below "
-      "the 3 N board-load bound and has no unexplained large 10 ms fingertip jump."
+      "Pickup, grasp, wiping and release follow the measured contact sequence; "
+      "taxel forces conserve the solver totals and board/fingertip loads pass bounds."
       if all(criteria.values())
-      else "One or more measured force-stability criteria failed; do not publish."
+      else "One or more measured action or contact criteria failed; do not publish."
     ),
   }
 
@@ -489,7 +543,7 @@ def record_compact_example(
   buffer_rows=128,
   ink_seed=None,
 ):
-  """Record and atomically publish the install-RAM-style six-file example."""
+  """Record and atomically publish the light-bulb-style five-file example."""
   from .execution import WhiteboardWipeExecutor
   from .task import WhiteboardWipeSimulation
 
@@ -526,19 +580,20 @@ def record_compact_example(
     with h5py.File(raw_path, "r") as file:
       _compact_curves(file, work / "curves")
       review = _compact_review(file, work / "review")
-      global_review = _compact_global_review(file, work / "review")
       force_analysis = _compact_force_analysis(file)
     if not force_analysis["reasonable"]:
-      raise ValueError(force_analysis["assessment"])
+      failed = [
+        name for name, passed in force_analysis["criteria"].items() if not passed
+      ]
+      raise ValueError(f"{force_analysis['assessment']} Failed: {failed}")
     result_path = work / "raw/erase_whiteboard_000000.result.json"
     saved_result = json.loads(result_path.read_text(encoding="utf-8"))
     saved_result["example_validation"] = {
       "raw": validation,
       "force_analysis": force_analysis,
       "review": review,
-      "global_review": global_review,
       "raw_sha256": _sha256(raw_path),
-      "layout": "install_ram_example_raw_review_curves",
+      "layout": "light_bulb_example_raw_review_curves",
     }
     _json(result_path, saved_result)
     expected = {
@@ -547,7 +602,6 @@ def record_compact_example(
       "raw/erase_whiteboard_000000.json",
       "raw/erase_whiteboard_000000.result.json",
       "review/review.mp4",
-      "review/robot_global_short_path.mp4",
     }
     actual = {
       str(path.relative_to(work)) for path in work.rglob("*") if path.is_file()
@@ -1221,7 +1275,7 @@ class WhiteboardRecorder:
   def _documents(self, result):
     documentation_link = Path(
       os.path.relpath(
-        Path(__file__).resolve().parents[4] / "docs/whiteboard_wipe.md",
+        Path(__file__).resolve().parents[4] / "docs/tasks/whiteboard_wipe.md",
         self.directory,
       )
     ).as_posix()
