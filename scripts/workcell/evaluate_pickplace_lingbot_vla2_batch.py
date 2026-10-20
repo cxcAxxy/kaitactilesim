@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 from kaihand_tactile_env.shared.config import default_model_path, model_fingerprint
 from kaihand_tactile_env.shared.evaluation_resume import require_valid_resume_trials
+from kaihand_tactile_env.shared.evaluation_video import evaluation_artifact_directory
 from lingbot_pickplace_contract import (
   ACTION_DIM,
   ACTION_REPRESENTATION,
@@ -85,6 +86,7 @@ def fingerprints() -> dict[str, str]:
     ROOT / "scripts/workcell/lingbot_pickplace_reference.py",
     ROOT / "scripts/workcell/run_usb_pi05_policy.py",
     ROOT / "src/kaihand_tactile_env/shared/simulation.py",
+    ROOT / "src/kaihand_tactile_env/shared/evaluation_guards.py",
     ROOT / "src/kaihand_tactile_env/shared/evaluation_video.py",
     ROOT / "src/kaihand_tactile_env/shared/evaluation_comparison.py",
     ROOT / "src/kaihand_tactile_env/shared/openwam_evaluation_plots.py",
@@ -171,6 +173,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     help="Action steps per prediction; defaults to the frozen 50-step horizon",
   )
   parser.add_argument("--max-sim-seconds", type=float, default=90.0)
+  parser.add_argument(
+    "--guard-mode", choices=("observe", "strict"), default="observe"
+  )
   parser.add_argument("--trial-wall-limit", type=float, default=1800.0)
   parser.add_argument("--video-count", type=int)
   parser.add_argument("--record-fps", choices=(5, 10), type=int, default=10)
@@ -213,6 +218,7 @@ def _trial_command(
     "--output-dir", str(output / f"seed_{seed:03d}"),
     "--seed", str(seed), "--execute-steps", str(execute_steps),
     "--max-sim-seconds", str(args.max_sim_seconds),
+    "--guard-mode", args.guard_mode,
     "--record-fps", str(args.record_fps),
     "--record" if index < args.video_count else "--no-record",
   ]
@@ -323,18 +329,28 @@ def _aggregate(
 ) -> dict[str, Any]:
   valid_count = sum(bool(row["valid_trial"]) for row in rows)
   successes = sum(bool(row["success"]) for row in rows)
+  task_successes = sum(
+    bool(row.get("task_success", row["success"])) for row in rows
+  )
   return {
     **{key: protocol[key] for key in (
       "task", "deployment_id", "checkpoint_path", "checkpoint_sha256",
       "model_family", "prediction_horizon", "model_action_dim", "action_dim",
       "execute_steps", "control_hz", "replan_period_s", "max_sim_seconds",
-      "diagnostic_only", "formal_metrics_valid",
+      "guard_mode", "diagnostic_only", "formal_metrics_valid",
     )},
     "planned": len(protocol["seeds"]), "attempted": len(rows),
     "valid_trials": valid_count, "successes": successes,
+    "task_successes": task_successes,
     "success_rate": successes / valid_count if valid_count else None,
     "complete": len(rows) == len(protocol["seeds"]) and valid_count == len(rows),
     "status_counts": dict(Counter(row["status"] for row in rows)),
+    "stop_reason_counts": dict(Counter(row.get("stop_reason") for row in rows)),
+    "guard_event_counts": dict(Counter(
+      event.get("kind")
+      for row in rows for event in row.get("guard_events", [])
+      if event.get("kind")
+    )),
     "wall_seconds": elapsed,
     "source_hash_consistent": not bool(protocol.get("source_transitions")),
     "source_transitions": protocol.get("source_transitions", []),
@@ -376,10 +392,12 @@ def main(argv: list[str] | None = None) -> int:
       else "hardware_egl"
     ),
     "max_sim_seconds": args.max_sim_seconds, "trial_wall_limit": args.trial_wall_limit,
+    "guard_mode": args.guard_mode,
     "randomization": {"xy_jitter_m": 0.01, "yaw_jitter_rad": 0.05},
     "success_rule": "cylinder in box, released and stable for dataset terminal duration",
     "grasp_aids": {"auto_grasp_stabilizer": True, "adaptive_free_close_force": True},
-    "diagnostic_only": False, "formal_metrics_valid": True,
+    "diagnostic_only": args.guard_mode == "observe",
+    "formal_metrics_valid": args.guard_mode == "strict",
     "review": {
       "count": args.video_count, "fps": args.record_fps,
       "comparison_count": len(args.seeds),
@@ -450,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
       if not (output / f"seed_{seed:03d}" / "summary.json").is_file():
         raise RuntimeError(f"resume trial seed={seed} summary missing")
       assert reference_dataset is not None
-      review = output / f"seed_{seed:03d}" / "review"
+      review = evaluation_artifact_directory(output / f"seed_{seed:03d}")
       _validate_comparison(review, reference_dataset)
       if index < args.video_count:
         _validate_video(review)
@@ -486,7 +504,12 @@ def main(argv: list[str] | None = None) -> int:
         returncode = -999
     summary_path = trial / "summary.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else {}
-    if returncode != 0 or summary.get("status") == "error":
+    has_record_error = any(
+      value for key, value in summary.items() if key.endswith("record_error")
+    )
+    if (
+      returncode != 0 or summary.get("status") == "error"
+    ) and not has_record_error:
       cause = summary.get("error") or (
         "trial exceeded its wall-time limit" if returncode == -999
         else f"trial process exited with code {returncode}"
@@ -506,7 +529,8 @@ def main(argv: list[str] | None = None) -> int:
       "action_representation": manifest["action_representation"],
       "reference_dataset": str(reference_dataset),
       "reference_episode_index": args.reference_episode_index,
-      "diagnostic_only": False, "formal_metrics_valid": True,
+      "guard_mode": args.guard_mode,
+      "diagnostic_only": args.guard_mode == "observe",
     }
     mismatches = {
       key: (value, summary.get(key))
@@ -515,20 +539,32 @@ def main(argv: list[str] | None = None) -> int:
     if mismatches:
       raise RuntimeError(f"seed={seed}: summary identity mismatch: {mismatches}")
     assert reference_dataset is not None
-    _validate_comparison(trial / "review", reference_dataset)
-    if index < args.video_count:
-      _validate_video(trial / "review")
+    if not has_record_error:
+      _validate_comparison(evaluation_artifact_directory(trial), reference_dataset)
+    if index < args.video_count and not has_record_error:
+      _validate_video(evaluation_artifact_directory(trial))
     status = summary.get("status")
     success = status == "success" and summary.get("evaluation", {}).get("success") is True
-    valid = status in ("success", "task_not_completed")
+    valid = (
+      returncode == 0
+      and not has_record_error
+      and status in ("success", "task_not_completed")
+    )
     rows.append({
       "seed": seed, "status": status, "success": success,
+      "task_success": bool(summary.get("task_success", False)),
       "valid_trial": valid, "returncode": returncode,
       "sim_seconds": summary.get("sim_seconds"),
       "wall_seconds": time.monotonic() - trial_started,
       "inference_requests": summary.get("stats", {}).get("requests", 0),
       "action_steps": summary.get("stats", {}).get("action_steps", 0),
       "error": summary.get("error"),
+      "record_error": summary.get("record_error"),
+      "guard_mode": summary.get("guard_mode"),
+      "guard_events": summary.get("guard_events", []),
+      "stop_reason": summary.get("stop_reason"),
+      "physics_valid": summary.get("physics_valid"),
+      "formal_metrics_valid": summary.get("formal_metrics_valid"),
       "summary": str(summary_path.relative_to(output)),
     })
     aggregate = _aggregate(

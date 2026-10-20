@@ -126,7 +126,7 @@ def test_loaded_sliding_requires_actual_friction_work(friction):
   sim = WhiteboardWipeSimulation(add_genesis_probes=False)
   center = C.BOARD_SURFACE - C.BOARD_ROTATION @ C.PAD_BOTTOM
   quat = np.zeros(4)
-  mujoco.mju_mat2Quat(quat, C.BOARD_ROTATION.ravel())
+  mujoco.mju_mat2Quat(quat, C.WIPE_ROTATION.ravel())
   sim.set_object_pose("eraser", center - 0.0005 * C.BOARD_NORMAL, quat)
   pair = sim.model.pair("eraser_board_contact").id
   sim.model.pair_friction[pair, :2] = friction
@@ -162,11 +162,32 @@ def test_large_writing_stays_inside_board_at_randomization_limits():
   )
   centers = sim.model.geom_pos[sim.ink_ids]
   lower, upper = (centers - extent).min(axis=0), (centers + extent).max(axis=0)
-  assert upper[0] - lower[0] > 0.16
-  assert upper[1] - lower[1] > 0.20
-  row_centers = [centers[:8, 0], centers[8:17, 0], centers[17:, 0]]
-  np.testing.assert_allclose([np.mean(row) for row in row_centers], [-0.08, 0, 0.08], atol=0.003)
-  assert all(np.ptp(row) < 0.005 for row in row_centers)
+  np.testing.assert_allclose(upper[:2] - lower[:2], [0.1432, 0.1632], atol=1e-8)
+  np.testing.assert_allclose(centers[:8, 0], 0.07)
+  np.testing.assert_allclose(centers[17:, 0], -0.07)
+  assert np.all(np.diff(centers[8:17, 0]) < 0)
+  # Check every actual capsule against the connected, front-facing Z, not
+  # just its bounding box (which would also accept a mirrored Z or two bars).
+  index = 0
+  for start, end, count in zip(
+    C.INK_Z_VERTICES[:-1], C.INK_Z_VERTICES[1:], C.INK_Z_SEGMENTS, strict=True
+  ):
+    for a, b in zip(
+      np.linspace(start, end, count + 1)[:-1],
+      np.linspace(start, end, count + 1)[1:],
+      strict=True,
+    ):
+      np.testing.assert_allclose(centers[index, :2], (a + b) / 2, atol=1e-9)
+      axis = rotations[index].reshape(3, 3)[:, 2]
+      endpoint_delta = axis[:2] * sim.model.geom_size[sim.ink_ids[index], 1]
+      assert (
+        min(
+          np.linalg.norm(endpoint_delta - (b - a) / 2),
+          np.linalg.norm(endpoint_delta + (b - a) / 2),
+        )
+        < 1e-9
+      )
+      index += 1
   for sign in (-1, 1):
     shifted = centers[:, :2] + sign * C.INK_CENTER_RANGE_M
     assert np.all(abs(shifted) + extent[:, :2] < [0.18, 0.20])
@@ -184,11 +205,11 @@ def test_partially_covered_long_stroke_does_not_erase():
   mujoco.mj_forward(sim.model, sim.data)
   sim._update_cleaning()
   assert sim.board_force > 1.5 and sim.board_tangent_force > 0.1
-  # The two segments two positions away have centers inside the 10.6 cm pad,
-  # but their outer ends extend beyond it. Fully covered center segments fade.
+  # Adjacent diagonal segment centers lie inside the felt, but their ends
+  # extend beyond its narrow side. Only the fully covered center may fade.
   assert sim.remaining[12] < 1
-  np.testing.assert_array_equal(sim.remaining[[10, 14]], 1)
-  np.testing.assert_array_equal(sim.cleaning.work_j[[10, 14]], 0)
+  np.testing.assert_array_equal(sim.remaining[[11, 13]], 1)
+  np.testing.assert_array_equal(sim.cleaning.work_j[[11, 13]], 0)
 
 
 def test_full_actuator_episode_cleans_and_releases_eraser():
@@ -197,14 +218,14 @@ def test_full_actuator_episode_cleans_and_releases_eraser():
   wipe_center = []
   wipe_torque = []
   wipe_contact_count = []
+  wipe_height = []
   phase_forces = {
     phase: []
     for phase in (
       "grasp",
       "lift",
       "orient_and_transfer",
-      "unload_board",
-      "reposition",
+      "position_above_z",
       "load_board",
       "wipe",
       "lower",
@@ -267,6 +288,12 @@ def test_full_actuator_episode_cleans_and_releases_eraser():
       wipe_center.append(current.board_contact_center.copy())
       wipe_torque.append(current.board_contact_torque.copy())
       wipe_contact_count.append(current.board_contact_count)
+      wipe_height.append(
+        float(
+          (current.object_pose("eraser")[:3] - current.ink_surface_center)
+          @ C.BOARD_ROTATION[:, 0]
+        )
+      )
     if current.phase in ("return", "lower", "support"):
       held_angular_speed = max(
         held_angular_speed, np.linalg.norm(current.object_twist("eraser")[3:])
@@ -298,6 +325,9 @@ def test_full_actuator_episode_cleans_and_releases_eraser():
   assert max(outcome["ink_remaining"]) < 0.01
   assert not any(outcome["solver_warnings"])
   assert checked_solver_totals
+  assert wipe_height[0] > 0.06 and wipe_height[-1] < -0.06
+  # Allow submillimetre contact compliance, but no bottom-to-top wiping.
+  assert np.max(np.asarray(wipe_height) - np.minimum.accumulate(wipe_height)) < 0.002
   # Check raw 1 ms changes separately for each action: low episode peaks alone
   # miss sustained chatter, and a low |Ft| can hide a changing force direction.
   for phase, samples in phase_forces.items():
@@ -360,6 +390,7 @@ def test_ink_randomization_is_reproducible_local_and_resettable():
   for seed in range(50):
     sim.reset(ink_seed=seed)
     layout = sim.ink_randomization
+    assert layout["pattern"] == "z_top_down_v1"
     offset = np.asarray(layout["center_offset_board_m"])
     assert np.all(abs(offset) <= C.INK_CENTER_RANGE_M)
     np.testing.assert_allclose(

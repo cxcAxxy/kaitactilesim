@@ -1,11 +1,18 @@
 # 原始数据可视化
 
-## 八任务统一轨迹回放
+## 十三任务统一轨迹回放
 
-`replay` 是 PickPlace、Card、USB、Bulb、RAM、Vase、Whiteboard、Sponge 共用的回放入口。下面的命令直接读取一条已完成的 Raw HDF5，生成相机画面、双手触觉热力图和十指触觉值时间曲线，不重新运行仿真，也不修改源文件：
+`replay` 是 PickPlace、Card、USB、Bulb、RAM、Vase、Whiteboard、Sponge 与五个独立变体
+共十三任务的回放入口；变体包含 `usb-unplug`、`bulb-unscrew`、
+`whiteboard-wipe-horizontal`、`whiteboard-wipe-horizontal-line`、`bulb-screw-inplace`。
+下面的命令直接读取一条已完成的 Raw HDF5，生成相机画面、双手触觉热力图和十指触觉值时间曲线，
+不重新运行仿真，也不修改源文件。命令从 unified 根目录执行，使用 `--as-is` 复用已安装环境；
+本节点缺 pyarrow 的环境限制见[环境说明](pipeline_quickstart.md#环境与工作目录)。
+这里“不重新运行”指不执行策略、专家控制或物理步；入口仍会加载对应场景并恢复记录的状态以验证回放。
 
 ```bash
-pixi run replay -- /绝对路径/episode.h5 \
+cd /cpfs_infra/user/chenxianchi/code/kaitactilesim_unified
+pixi run --as-is replay -- /绝对路径/episode.h5 \
   --viewer none \
   --review-dir /绝对路径/episode_replay
 ```
@@ -13,7 +20,7 @@ pixi run replay -- /绝对路径/episode.h5 \
 默认显示 HDF5 中存在的 `head + left_wrist + right_wrist`。也可以按顺序选择一至四路已保存相机，例如：
 
 ```bash
-pixi run replay -- /绝对路径/episode.h5 \
+pixi run --as-is replay -- /绝对路径/episode.h5 \
   --viewer none \
   --review-dir /绝对路径/episode_replay_head_right \
   --cameras head right_wrist \
@@ -32,11 +39,27 @@ Card、USB、Whiteboard 使用十指 solver taxel 的 `Fn`、`|Ft|` 和每指合
 需要同时观察 MuJoCo 三维运动时使用：
 
 ```bash
-pixi run replay -- /绝对路径/episode.h5 \
+pixi run --as-is replay -- /绝对路径/episode.h5 \
   --viewer native --speed 1.0
 ```
 
 native viewer 按保存的 `qpos/qvel` 和状态时间戳恢复运动；多模态 MP4 使用保存的 RGB/触觉时钟。二者可以在一次命令中同时请求，但服务器批处理通常使用 `--viewer none`。
+
+### 灯泡原位旋入样例
+
+下面读取已经完成的专家样例，写入一个新的复核目录；不是重跑模型评估，也不会覆盖原有 H50 报告：
+
+```bash
+/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is replay -- \
+  runs/bulb_screw_inplace_example_20261015/raw/episode.h5 \
+  --viewer none --review-dir /new/path/bulb_screw_inplace_review \
+  --cameras head right_wrist --fps 10 --width 1920 --height 1080
+```
+
+原始 Raw 保留三路相机，上例仅选择头部与右腕显示。专家按自己的真实采样时间线播放，
+不与模型强行逐时刻对齐；回放中亮灯、回位或“四段旋拧”不是成功证据。判定应核对
+[成功判据总表](../tasks/success_criteria.md)、[原位旋入物理门槛](../tasks/bulb_screw_inplace.md#判定与记录)
+和真实记录标志；[分阶段诊断](staged_evaluation.md)与原生成功不同，缺失历史信号不补成零。
 
 ## 任务专属复核产物
 
@@ -48,7 +71,7 @@ PickPlace、Card、USB 的旧导出脚本仍可用于其历史固定布局。Bul
 | --- | --- | --- |
 | PickPlace | `scripts/workcell/export_pickplace_tactile_review.py` | 相机、Genesis probe 图和曲线 |
 | Card | `scripts/workcell/export_card_tactile_review.py` | `head`、`right_wrist`、十指力图和曲线；源 episode 须成功 |
-| Card 四类示例 | `pixi run export-poker-example -- ...` | `head`＋右腕＋右手触觉视频、独立全局回放、五指原始力曲线；见[说明](../tasks/poker_example.md) |
+| Card 四类示例 | `pixi run --as-is export-poker-example -- ...` | `head`＋右腕＋右手触觉视频、独立全局回放、五指原始力曲线；见[说明](../tasks/poker_example.md) |
 | USB | `scripts/workcell/export_usb_review.py` | `head`、`right_wrist`、十指力图和曲线 |
 | Bulb | `scripts/workcell/refresh_light_bulb_example.py` | 三路机器人相机 Raw、头部与右腕及触觉组合视频、五指力曲线 |
 | RAM | `scripts/workcell/record_install_ram_example.py` | 三路机器人相机、RAM 近景、十指力图和分阶段插入力曲线 |
@@ -58,7 +81,7 @@ PickPlace、Card、USB 的旧导出脚本仍可用于其历史固定布局。Bul
 例如，复核一条 USB 原始数据：
 
 ```bash
-.venv/bin/python scripts/workcell/export_usb_review.py \
+PYTHONPATH=src .pixi/envs/default/bin/python -B scripts/workcell/export_usb_review.py \
   /绝对路径/usb_000000.h5 \
   --output-dir /绝对路径/usb_000000_review
 ```
@@ -68,16 +91,16 @@ PickPlace 或 Card 换成表中的脚本即可。三个入口都接受 `--fps 5`
 后四类任务的完整示例采集与导出：
 
 ```bash
-python scripts/workcell/refresh_light_bulb_example.py \
+PYTHONPATH=src .pixi/envs/default/bin/python -B scripts/workcell/refresh_light_bulb_example.py \
   --output /new/path/light_bulb_example
 
-python scripts/workcell/record_install_ram_example.py \
+PYTHONPATH=src .pixi/envs/default/bin/python -B scripts/workcell/record_install_ram_example.py \
   --output-dir /new/path/install_ram_example
 
-python scripts/workcell/view_vase_wipe.py --headless --run-task \
+PYTHONPATH=src .pixi/envs/default/bin/python -B scripts/workcell/view_vase_wipe.py --headless --run-task \
   --output-dir /new/path/vase_wipe_example
 
-python scripts/workcell/record_whiteboard_example.py \
+PYTHONPATH=src .pixi/envs/default/bin/python -B scripts/workcell/record_whiteboard_example.py \
   --output-dir /new/path/whiteboard_wipe_example
 ```
 

@@ -10,6 +10,11 @@ from pathlib import Path
 
 import numpy as np
 from fast_pi05_conversion import install_fast_conversion
+from kaihand_tactile_env.shared.policy_tasks import TASK_INSTRUCTIONS
+from kaihand_tactile_env.shared.task_variants import (
+  VARIANT_TASKS,
+  validate_variant_outcome,
+)
 
 WHITEBOARD_INSTRUCTION = (
   "Pick up the eraser with the right hand, wipe all ink from the tilted "
@@ -73,7 +78,17 @@ def main(argv=None):
     "vase-wipe": VASE_INSTRUCTION,
     "whiteboard-wipe": WHITEBOARD_INSTRUCTION,
     "sponge-grasp": SPONGE_GRASP_INSTRUCTION,
+    **{task: TASK_INSTRUCTIONS[task] for task in VARIANT_TASKS},
   }
+  validate_source_identity = module._validate_source_identity
+
+  def validate_additional_task(*args, **kwargs):
+    source = validate_source_identity(*args, **kwargs)
+    if source.task in VARIANT_TASKS:
+      validate_variant_outcome(source.task, source.outcome, require_current_usb_protocol=True)
+    return source
+
+  module._validate_source_identity = validate_additional_task
   args = module._parse_args(remaining)
   # Vase intentionally records state/tactile at 500 Hz while the other shared
   # tasks use 100 Hz.  Camera frames and policy actions remain aligned at the

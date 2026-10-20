@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -14,6 +15,20 @@ from collections import Counter
 from pathlib import Path
 
 from kaihand_tactile_env.shared.config import default_model_path, model_fingerprint
+from kaihand_tactile_env.shared.evaluation_guards import (
+  DEFAULT_MAX_SIM_SECONDS,
+  GUARD_MODES,
+)
+from kaihand_tactile_env.shared.evaluation_video import evaluation_artifact_directory
+
+try:
+  from prepare_usb_pi05_deployment import validate_deployment_identity
+  from run_usb_pi05_policy import action_execution, evaluation_validity
+except ModuleNotFoundError as error:
+  if error.name != "prepare_usb_pi05_deployment":
+    raise
+  from scripts.workcell.prepare_usb_pi05_deployment import validate_deployment_identity
+  from scripts.workcell.run_usb_pi05_policy import action_execution, evaluation_validity
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts/workcell/run_usb_pi05_policy.py"
@@ -33,8 +48,12 @@ REVIEW_FILES = (
 def load_manifest(path: Path) -> tuple[Path, dict]:
   resolved = path.expanduser().resolve()
   payload = json.loads(resolved.read_text(encoding="utf-8"))
-  if payload.get("schema") != "usb_pi05_deployment_v1":
-    raise RuntimeError("expected usb_pi05_deployment_v1 manifest")
+  if payload.get("schema") not in {"usb_pi05_deployment_v1", "usb_pi05_deployment_v2"}:
+    raise RuntimeError(
+      "expected usb_pi05_deployment_v1 or usb_pi05_deployment_v2 manifest"
+    )
+  if payload["schema"] == "usb_pi05_deployment_v2":
+    validate_deployment_identity(payload)
   return resolved, payload
 
 
@@ -49,6 +68,7 @@ def fingerprints() -> dict:
     ROOT / "src/kaihand_tactile_env/shared/simulation.py",
     ROOT / "src/kaihand_tactile_env/shared/rendering.py",
     ROOT / "src/kaihand_tactile_env/shared/evaluation_video.py",
+    ROOT / "src/kaihand_tactile_env/shared/evaluation_guards.py",
   ]
   result = {
     str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -61,9 +81,13 @@ def fingerprints() -> dict:
 
 
 def classify(report: dict) -> tuple[str, bool]:
-  if (
-    report.get("status") == "success"
-    and report.get("evaluation", {}).get("success") is True
+  if "record_error" in report:
+    return "recording_error", False
+  if report.get("physics_valid") is False:
+    return "fatal_physics", False
+  if report.get("status") == "success" and (
+    report.get("task_success") is True
+    or report.get("evaluation", {}).get("success") is True
   ):
     return "success", True
   if report.get("status") == "task_not_completed":
@@ -83,6 +107,14 @@ def classify(report: dict) -> tuple[str, bool]:
   return "infrastructure_or_contract_error", False
 
 
+def guard_event_counts(results: list[dict]) -> dict[str, int]:
+  counts = Counter()
+  for result in results:
+    for event in result.get("guard_events", []):
+      counts[event.get("kind", "unknown")] += int(event.get("count", 1))
+  return dict(counts)
+
+
 def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--output-dir", type=Path, required=True)
@@ -90,16 +122,26 @@ def main() -> None:
   parser.add_argument("--deployment-manifest", type=Path, required=True)
   parser.add_argument("--seeds", nargs="+", type=int, default=list(range(20)))
   parser.add_argument("--trial-wall-limit", type=float, default=1800.0)
-  parser.add_argument("--max-sim-seconds", type=float, default=50.0)
+  parser.add_argument("--max-sim-seconds", type=float, default=DEFAULT_MAX_SIM_SECONDS)
+  parser.add_argument(
+    "--guard-mode",
+    choices=GUARD_MODES,
+    default="observe",
+    help=(
+      "observe records task/action violations and continues; strict terminates "
+      "on the first violation"
+    ),
+  )
   parser.add_argument("--video-count", type=int, default=3)
   parser.add_argument("--record-fps", type=int, choices=(5, 10), default=10)
   parser.add_argument("--reference-dataset", type=Path)
   parser.add_argument("--reference-episode-index", type=int, default=0)
   parser.add_argument("--execute-steps", type=int, default=8)
+  parser.add_argument("--staged-evaluation-version", choices=("staged_v1",), default=None)
   parser.add_argument(
     "--disable-penetration-guard",
     action="store_true",
-    help="Diagnostic-only: do not stop on USB socket penetration >0.3 mm",
+    help="Deprecated observe-mode alias: omit penetration-limit events",
   )
   parser.add_argument("--xy-jitter-mm", type=float, default=10.0)
   parser.add_argument("--yaw-jitter-deg", type=float, default=5.0)
@@ -112,12 +154,25 @@ def main() -> None:
     parser.error("video-count must be between zero and number of seeds")
   if args.execute_steps <= 0:
     parser.error("execute-steps must be positive")
-  if args.max_sim_seconds <= 0 or args.trial_wall_limit <= 0:
+  if not all(
+    math.isfinite(value) and value > 0
+    for value in (args.max_sim_seconds, args.trial_wall_limit)
+  ):
     parser.error("time limits must be positive")
+  if not all(
+    math.isfinite(value) and value >= 0
+    for value in (args.xy_jitter_mm, args.yaw_jitter_deg)
+  ):
+    parser.error("randomization ranges must be nonnegative")
+  if args.disable_penetration_guard and args.guard_mode == "strict":
+    parser.error("--disable-penetration-guard is incompatible with --guard-mode strict")
   if not EGL_VENDOR.is_file():
     raise FileNotFoundError(f"NVIDIA EGL vendor configuration is missing: {EGL_VENDOR}")
 
   deployment_path, deployment = load_manifest(args.deployment_manifest)
+  manifest_sha256 = hashlib.sha256(deployment_path.read_bytes()).hexdigest()
+  interpolation = action_execution(deployment)
+  validity = evaluation_validity(deployment, args.guard_mode)
   horizon = int(deployment["prediction_horizon"])
   if not 1 <= args.execute_steps <= horizon:
     parser.error(f"execute-steps must be in [1, {horizon}]")
@@ -144,8 +199,10 @@ def main() -> None:
     "execute_steps": args.execute_steps,
     "control_hz": 30,
     "replan_period_s": args.execute_steps / 30,
-    "diagnostic_only": bool(args.disable_penetration_guard),
-    "formal_metrics_valid": not args.disable_penetration_guard,
+    "guard_mode": args.guard_mode,
+    **validity,
+    "action_interpolation": interpolation,
+    "deployment_manifest_sha256": manifest_sha256,
     "penetration_guard": {
       "enabled": not args.disable_penetration_guard,
       "threshold_m": 0.0003,
@@ -169,11 +226,19 @@ def main() -> None:
       "yaw_uniform_deg": [-args.yaw_jitter_deg, args.yaw_jitter_deg],
       "online_control_noise": False,
     },
-    "controller": "direct-30hz-pi05-absolute-joint-v1",
+    "controller": (
+      "pi05-absolute-joint-physics-interpolation-v2"
+      if interpolation == "linear"
+      else "direct-30hz-pi05-absolute-joint-v1"
+    ),
     "success_rule": (
       "canonical UsbInsertionMonitor stable mechanical fit: aligned near-bottom, "
       "measured bottom-out evidence, stationary, seated continuously for 0.1s"
     ),
+    "task_guard_policy": (
+      "record_and_continue" if args.guard_mode == "observe" else "stop"
+    ),
+    "guard_failures_counted_as_failures": args.guard_mode == "strict",
     "source_hashes": frozen,
   }
   (output / "protocol.json").write_text(
@@ -191,7 +256,11 @@ def main() -> None:
     "NO_PROXY": "127.0.0.1,localhost",
     "no_proxy": "127.0.0.1,localhost",
   }
-  pythonpath = [str(ROOT / "src"), str(OPENPI_CLIENT)]
+  client_source = (
+    Path(deployment.get("model_project_path", OPENPI_CLIENT.parents[2]))
+    / "packages/openpi-client/src"
+  )
+  pythonpath = [str(ROOT / "src"), str(client_source)]
   if environment.get("PYTHONPATH"):
     pythonpath.append(environment["PYTHONPATH"])
   environment["PYTHONPATH"] = os.pathsep.join(pythonpath)
@@ -211,6 +280,8 @@ def main() -> None:
   for trial_index, seed in enumerate(args.seeds):
     if fingerprints() != frozen:
       raise RuntimeError("code/config changed during batch; refusing mixed protocol")
+    if hashlib.sha256(deployment_path.read_bytes()).hexdigest() != manifest_sha256:
+      raise RuntimeError("deployment manifest changed during batch")
     trial = output / f"seed_{seed:03d}"
     command = [
       sys.executable,
@@ -219,6 +290,8 @@ def main() -> None:
       args.server,
       "--deployment-manifest",
       str(deployment_path),
+      "--expected-deployment-manifest-sha256",
+      manifest_sha256,
       "--seed",
       str(seed),
       "--xy-jitter-mm",
@@ -229,6 +302,8 @@ def main() -> None:
       str(args.execute_steps),
       "--max-sim-seconds",
       str(args.max_sim_seconds),
+      "--guard-mode",
+      args.guard_mode,
       "--no-save-first-request",
       "--output-dir",
       str(trial),
@@ -243,12 +318,18 @@ def main() -> None:
       "--record" if trial_index < args.video_count else "--no-record",
     ]
     if args.reference_dataset is not None:
-      command.extend((
-        "--reference-dataset", str(args.reference_dataset),
-        "--reference-episode-index", str(args.reference_episode_index),
-      ))
+      command.extend(
+        (
+          "--reference-dataset",
+          str(args.reference_dataset),
+          "--reference-episode-index",
+          str(args.reference_episode_index),
+        )
+      )
     if args.disable_penetration_guard:
       command.append("--disable-penetration-guard")
+    if args.staged_evaluation_version:
+      command.extend(("--staged-evaluation-version", args.staged_evaluation_version))
     print(f"START {trial_index + 1}/{len(args.seeds)} seed={seed}", flush=True)
     trial_started = time.monotonic()
     with (output / f"seed_{seed:03d}.log").open("x") as log:
@@ -277,8 +358,9 @@ def main() -> None:
       "action_dim": deployment["action_dim"],
       "execute_steps": args.execute_steps,
       "control_hz": 30,
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_metrics_valid": not args.disable_penetration_guard,
+      "guard_mode": args.guard_mode,
+      "diagnostic_only": validity["diagnostic_only"],
+      "action_interpolation": interpolation,
       "penetration_guard_enabled": not args.disable_penetration_guard,
     }
     identity_errors = {
@@ -288,9 +370,14 @@ def main() -> None:
     }
     if identity_errors:
       raise RuntimeError(f"seed {seed}: trial identity mismatch: {identity_errors}")
+    if deployment.get("schema") == "usb_pi05_deployment_v2" and any(
+      summary.get(key, {}).get("status") != "verified"
+      for key in ("deployment_integrity", "deployment_integrity_after")
+    ):
+      raise RuntimeError(f"seed {seed}: trial deployment integrity mismatch")
     reason, valid = classify(summary)
     if trial_index < args.video_count:
-      review = trial / "review"
+      review = evaluation_artifact_directory(trial)
       missing = [name for name in REVIEW_FILES if not (review / name).is_file()]
       if missing:
         if not valid:
@@ -307,31 +394,48 @@ def main() -> None:
         "right_wrist",
       ]:
         raise RuntimeError(f"seed {seed}: review omitted a model camera")
-      if review_metadata.get("diagnostic_only") is not bool(
-        args.disable_penetration_guard
-      ):
+      if review_metadata.get("diagnostic_only") is not validity["diagnostic_only"]:
         raise RuntimeError(f"seed {seed}: review diagnostic-mode mismatch")
 
+    task_success = bool(summary.get("task_success", reason == "success"))
     row = {
       "seed": seed,
-      "success": reason == "success",
+      "success": task_success,
+      "task_success": task_success,
       "valid_trial": valid,
       "termination": reason,
       "returncode": returncode,
       "wall_seconds": time.monotonic() - trial_started,
       "sim_seconds": summary.get("sim_seconds"),
       "error": summary.get("error"),
+      "record_error": summary.get("record_error"),
       "requests": summary.get("stats", {}).get("requests", 0),
       "action_steps": summary.get("stats", {}).get("action_steps", 0),
       "evaluation": summary.get("evaluation", {}),
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_result_valid": not args.disable_penetration_guard,
+      "guard_mode": summary.get("guard_mode"),
+      "guard_events": summary.get("guard_events", []),
+      "stop_reason": summary.get("stop_reason"),
+      "physics_valid": summary.get("physics_valid"),
+      "diagnostic_only": summary.get("diagnostic_only"),
+      "formal_metrics_valid": summary.get("formal_metrics_valid"),
+      "formal_result_valid": summary.get("formal_metrics_valid"),
+      "deployment_integrity": summary.get("deployment_integrity"),
+      "deployment_integrity_after": summary.get("deployment_integrity_after"),
+      "action_interpolation": interpolation,
       "penetration_diagnostics": summary.get("penetration_diagnostics", {}),
       "summary": str(summary_path.relative_to(output)),
     }
     results.append(row)
     valid_count = sum(result["valid_trial"] for result in results)
-    successes = sum(result["success"] for result in results)
+    task_successes = sum(result["task_success"] for result in results)
+    successes = sum(
+      result["task_success"] and result["valid_trial"] for result in results
+    )
+    physics_valid = all(result["physics_valid"] is True for result in results)
+    formal_metrics_valid = all(
+      result["formal_metrics_valid"] is True for result in results
+    )
+    observed_success_rate = successes / valid_count if valid_count else None
     aggregate = {
       "task": "usb-insert",
       "deployment_id": deployment["deployment_id"],
@@ -344,8 +448,12 @@ def main() -> None:
       "execute_steps": args.execute_steps,
       "control_hz": 30,
       "replan_period_s": args.execute_steps / 30,
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_metrics_valid": not args.disable_penetration_guard,
+      "guard_mode": args.guard_mode,
+      "diagnostic_only": validity["diagnostic_only"],
+      "diagnostic_reasons": validity["diagnostic_reasons"],
+      "action_interpolation": interpolation,
+      "physics_valid": physics_valid,
+      "formal_metrics_valid": formal_metrics_valid,
       "penetration_guard_enabled": not args.disable_penetration_guard,
       "penetration_guard_threshold_m": 0.0003,
       "max_sim_seconds": args.max_sim_seconds,
@@ -353,10 +461,16 @@ def main() -> None:
       "attempted": len(results),
       "valid_trials": valid_count,
       "successes": successes,
-      "success_rate": successes / valid_count if valid_count else None,
+      "task_successes": task_successes,
+      "success_rate": observed_success_rate,
+      "formal_success_rate": (observed_success_rate if formal_metrics_valid else None),
+      "diagnostic_success_rate": observed_success_rate,
       "infrastructure_errors": len(results) - valid_count,
+      "recording_errors": sum(result["record_error"] is not None for result in results),
       "complete": len(results) == len(args.seeds) and valid_count == len(args.seeds),
       "termination_counts": dict(Counter(row["termination"] for row in results)),
+      "stop_reason_counts": dict(Counter(row["stop_reason"] for row in results)),
+      "guard_event_counts": guard_event_counts(results),
       "failure_stage_counts": dict(
         Counter(
           row["evaluation"].get("failure_stage")
@@ -367,6 +481,9 @@ def main() -> None:
       "wall_seconds": time.monotonic() - started,
       "trials": results,
     }
+    from kaihand_tactile_env.shared.staged_recording import add_staged_batch_results
+
+    add_staged_batch_results(aggregate, output, results)
     (output / "summary.json").write_text(
       json.dumps(aggregate, ensure_ascii=False, indent=2), encoding="utf-8"
     )

@@ -21,6 +21,7 @@ artifacts/
 datasets/
 experiments/
 logs/
+/reports/
 /output/
 MUJOCO_LOG.TXT
 *.h5.partial
@@ -52,6 +53,8 @@ wandb/
 # Local credentials and workstation/agent configuration.
 .env
 .env.*
+configs/*.local.toml
+configs/*.local.json
 !.env.example
 !.env.template
 .ssh/

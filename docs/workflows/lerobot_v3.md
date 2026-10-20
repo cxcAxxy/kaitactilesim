@@ -2,17 +2,24 @@
 
 这是模型中立的 LeRobot v3 数据集，不是 `--format pi05` 生成的 π0.5 训练集。
 统一入口支持 PickPlace、Card、USB、Bulb、RAM、Vase、Whiteboard 和 Sponge；
-可用组合以 `pixi run convert-dataset -- --list-support` 为准。
+加上 `usb-unplug`、`bulb-unscrew`、`whiteboard-wipe-horizontal`、
+`whiteboard-wipe-horizontal-line`、`bulb-screw-inplace` 五个变体，共十三个独立任务。
+可用组合以 `pixi run --as-is convert-dataset -- --list-support` 为准。
 一般参数先看[统一数据转换](data_conversion.md)，三阶段命令见[速查](pipeline_quickstart.md)。
 
 ## 运行
+
+从 `/cpfs_infra/user/chenxianchi/code/kaitactilesim_unified` 执行。示例使用 `pixi run --as-is`
+避免触发本节点环境自动安装；本节点 offline 安装跳过了 pyarrow，不能据此直接做正式转换，
+需要补全实际后端依赖或配置完整 LeRobot 环境。详见[环境与工作目录](pipeline_quickstart.md#环境与工作目录)。
 
 使用安装 LeRobot 0.4.x 的 Python 环境。输入可以是统一采集批次或转换器支持的历史、
 合并批次；混合任务根目录必须显式传 `--task`，只转换该任务已发布的成功 episode。
 USB 示例，RAM 或 Sponge 只需修改任务名及路径：
 
 ```bash
-pixi run convert-dataset -- \
+cd /cpfs_infra/user/chenxianchi/code/kaitactilesim_unified
+pixi run --as-is convert-dataset -- \
   --input-dir /path/to/usb_raw \
   --output-dir /path/to/usb_lerobot_v3 \
   --task usb-insert --format lerobot-v3 \
@@ -27,6 +34,11 @@ pixi run convert-dataset -- \
 最好与最终输出处于同一文件系统。需要重新核对采集 sidecar 中的 HDF5 SHA-256
 时加 `--verify-source-hash`。首次处理大批次前可先用少量数据实转并用
 LeRobot reader 抽查。
+
+十三个任务的物理成功筛选见[成功判据总表](../tasks/success_criteria.md)，
+[分阶段诊断](staged_evaluation.md)不替代原生成功标签。`bulb-screw-inplace` 的初态固定，
+不同 seed 只是重复性身份；不可把旧 `bulb-screw` Raw 改任务名后混入新任务。
+模型中立 LeRobot v3 与 π0.5 的 recorded-controller-target 训练合同也不能互相冒充。
 
 后端逐 episode 编码 head/right-wrist MP4 与 Parquet，完成后原子提交断点；
 RGB 从 HDF5 直接送入 FFmpeg，不生成逐帧临时 PNG。续跑会核对已提交 episode

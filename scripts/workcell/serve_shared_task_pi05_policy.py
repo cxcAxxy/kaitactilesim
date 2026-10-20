@@ -7,13 +7,31 @@ import argparse
 import dataclasses
 import json
 import logging
+import time
 from pathlib import Path
+from typing import Any
 
-from kaihand_tactile_env.shared.pi05_deployment_integrity import verify_pi05_deployment
+import numpy as np
+from kaihand_tactile_env.shared.pi05_deployment_integrity import (
+  LEGACY_KAIHAND_CONFIG,
+  SHARED_DEPLOYMENT_SCHEMA_V1,
+  SHARED_DEPLOYMENT_SCHEMA_V2,
+  SHARED_KAIHAND_ACTION_HORIZONS,
+  USB_UNPLUG_LEGACY_INSTRUCTION,
+  deployment_diagnostic_reasons,
+  validate_shared_deployment_semantics,
+  verify_pi05_deployment,
+)
+from kaihand_tactile_env.shared.policy_tasks import (
+  TASK_INSTRUCTIONS as SHARED_INSTRUCTIONS,
+)
 
-CONFIG_NAME = "pi05_kaihand"
-SCHEMA = "shared_task_pi05_deployment_v1"
+SCHEMAS = {SHARED_DEPLOYMENT_SCHEMA_V1, SHARED_DEPLOYMENT_SCHEMA_V2}
 TASK_INSTRUCTIONS = {
+  **{name: SHARED_INSTRUCTIONS[name] for name in (
+    "usb-unplug", "whiteboard-wipe-horizontal", "whiteboard-wipe-horizontal-line",
+    "bulb-unscrew", "bulb-screw-inplace",
+  )},
   "bulb-screw": (
     "Pick up the light bulb with the right hand, align it with the socket, "
     "screw it clockwise until mechanically seated, then release it."
@@ -29,6 +47,10 @@ TASK_INSTRUCTIONS = {
   "whiteboard-wipe": (
     "Pick up the eraser with the right hand, wipe all ink from the tilted "
     "whiteboard with loaded sliding contact, then return and release the eraser."
+  ),
+  "sponge-grasp": (
+    "Pick up the upright sponge with the right hand, carry it to the plate on "
+    "the robot's right, place it inside the plate, and release it."
   ),
 }
 TASKS = tuple(TASK_INSTRUCTIONS)
@@ -55,6 +77,20 @@ def bind_checkpoint_assets(config, manifest: dict):
   assets = dataclasses.replace(config.data.assets, asset_id=asset_id)
   data = dataclasses.replace(config.data, assets=assets)
   return dataclasses.replace(config, data=data)
+
+
+def checkpoint_use_quantile_norm(manifest: dict) -> bool | None:
+  provenance = manifest.get("training_provenance")
+  if not isinstance(provenance, dict) or provenance.get("status") != "bound":
+    return None
+  record = provenance.get("record")
+  normalizer = record.get("normalizer") if isinstance(record, dict) else None
+  value = normalizer.get("use_quantile_norm") if isinstance(normalizer, dict) else None
+  if not isinstance(value, bool):
+    raise RuntimeError(
+      "bound checkpoint provenance must declare normalizer.use_quantile_norm"
+    )
+  return value
 
 
 def _checkpoint_file(checkpoint: Path, relative: object) -> Path:
@@ -93,14 +129,26 @@ def load_manifest(path: Path) -> tuple[Path, dict]:
   missing = [key for key in required if key not in manifest]
   if missing:
     raise RuntimeError(f"deployment manifest missing fields: {missing}")
-  if manifest["schema"] != SCHEMA:
-    raise RuntimeError(f"expected {SCHEMA} manifest")
+  if manifest["schema"] not in SCHEMAS:
+    raise RuntimeError(f"expected one of {sorted(SCHEMAS)}")
   if manifest["task"] not in TASKS or manifest["model_family"] != "pi0.5":
     raise RuntimeError("manifest is not a supported shared-task pi0.5 deployment")
-  if manifest["instruction"] != TASK_INSTRUCTIONS[manifest["task"]]:
+  provenance = manifest.get("training_provenance")
+  transfer = provenance.get("completion_protocol_transfer") if isinstance(provenance, dict) else None
+  expected_instruction = (
+    USB_UNPLUG_LEGACY_INSTRUCTION if transfer is not None
+    else TASK_INSTRUCTIONS[manifest["task"]]
+  )
+  if manifest["instruction"] != expected_instruction:
     raise RuntimeError("manifest instruction differs from the frozen task prompt")
-  if manifest["model_config_name"] != CONFIG_NAME:
-    raise RuntimeError(f"manifest must use OpenPI config {CONFIG_NAME!r}")
+  if manifest["model_config_name"] not in SHARED_KAIHAND_ACTION_HORIZONS:
+    raise RuntimeError("manifest uses an unsupported KaiHand OpenPI config")
+  if (
+    manifest["schema"] == SHARED_DEPLOYMENT_SCHEMA_V1
+    and manifest["model_config_name"] != LEGACY_KAIHAND_CONFIG
+  ):
+    raise RuntimeError("historical v1 deployment must use the legacy KaiHand config")
+  validate_shared_deployment_semantics(manifest)
   observation = manifest["observation_contract"]
   if (
     observation.get("cameras") != ["head", "right_wrist"]
@@ -185,6 +233,7 @@ def validate_runtime_config(config, manifest: dict) -> dict:
 
 
 def deployment_metadata(metadata: dict, manifest_path: Path, manifest: dict) -> dict:
+  diagnostic_reasons = deployment_diagnostic_reasons(manifest)
   return {
     **metadata,
     "evaluation_task": manifest["task"],
@@ -197,6 +246,63 @@ def deployment_metadata(metadata: dict, manifest_path: Path, manifest: dict) -> 
     "prediction_horizon": manifest["prediction_horizon"],
     "observation_contract": manifest["observation_contract"],
     "action_representation": manifest["action_representation"],
+    "training_provenance": manifest.get("training_provenance"),
+    "completion_protocol_transfer": (
+      manifest.get("training_provenance", {}).get("completion_protocol_transfer")
+    ),
+    "required_action_interpolation": manifest.get(
+      "required_action_interpolation", "linear"
+    ),
+    "diagnostic_only": bool(diagnostic_reasons),
+    "formal_metrics_valid": not diagnostic_reasons,
+    "diagnostic_reasons": diagnostic_reasons,
+  }
+
+
+def warmup_policy(
+  policy: Any,
+  manifest: dict,
+  *,
+  monotonic=time.monotonic,
+) -> dict:
+  """Compile the frozen inference shape before opening the WebSocket port."""
+  if not hasattr(policy, "_rng"):
+    raise RuntimeError("shared-task pi0.5 policy must expose its JAX RNG")
+  image_shape = tuple(manifest["observation_contract"]["image_shape_hwc"])
+  action_shape = (
+    int(manifest["prediction_horizon"]),
+    int(manifest["action_dim"]),
+  )
+  request = {
+    "head_image": np.zeros(image_shape, dtype=np.uint8),
+    "right_wrist_image": np.zeros(image_shape, dtype=np.uint8),
+    "state": np.zeros(action_shape[1], dtype=np.float32),
+    "prompt": manifest["instruction"],
+  }
+  original_rng = policy._rng
+  started = monotonic()
+  try:
+    response = policy.infer(request)
+  finally:
+    # Compiling the executable must not consume the first scored rollout's key.
+    policy._rng = original_rng
+  elapsed = monotonic() - started
+  if not isinstance(response, dict) or "actions" not in response:
+    raise RuntimeError("pi0.5 warmup response must contain actions")
+  actions = np.asarray(response["actions"])
+  if actions.shape != action_shape:
+    raise RuntimeError(
+      f"pi0.5 warmup actions must have shape {action_shape}, got {actions.shape}"
+    )
+  if not np.issubdtype(actions.dtype, np.number) or not np.isfinite(actions).all():
+    raise RuntimeError("pi0.5 warmup actions must be finite numeric values")
+  return {
+    "completed": True,
+    "duration_s": elapsed,
+    "request_image_shape_hwc": list(image_shape),
+    "state_dim": action_shape[1],
+    "action_shape": list(action_shape),
+    "rng_restored": True,
   }
 
 
@@ -208,12 +314,16 @@ def main(argv=None) -> None:
   if not 1 <= args.port <= 65535:
     parser.error("port must be in 1..65535")
 
+  manifest_path, manifest = load_manifest(args.deployment_manifest)
+  verify_pi05_deployment(manifest, evaluation_root=Path(__file__).resolve().parents[2])
+
+  # Import the model stack only after its manifest-bound source closure has
+  # been authenticated.  This avoids running changed OpenPI module top-level
+  # code before the server's integrity gate.
   from openpi.policies import policy_config
   from openpi.serving import websocket_policy_server
   from openpi.training import config as openpi_config
 
-  manifest_path, manifest = load_manifest(args.deployment_manifest)
-  verify_pi05_deployment(manifest, evaluation_root=Path(__file__).resolve().parents[2])
   config = bind_checkpoint_assets(
     openpi_config.get_config(manifest["model_config_name"]), manifest
   )
@@ -222,8 +332,25 @@ def main(argv=None) -> None:
     config,
     manifest["checkpoint_path"],
     default_prompt=manifest["instruction"],
+    expected_use_quantile_norm=checkpoint_use_quantile_norm(manifest),
   )
-  server_metadata = deployment_metadata(metadata, manifest_path, manifest)
+  logging.info(
+    "WARMUP_START task=%s deployment=%s H=%s",
+    manifest["task"],
+    manifest["deployment_id"],
+    manifest["prediction_horizon"],
+  )
+  warmup = warmup_policy(policy, manifest)
+  logging.info(
+    "WARMUP_OK duration_s=%.3f action_shape=%s rng_restored=%s",
+    warmup["duration_s"],
+    warmup["action_shape"],
+    warmup["rng_restored"],
+  )
+  server_metadata = {
+    **deployment_metadata(metadata, manifest_path, manifest),
+    "server_warmup": warmup,
+  }
   logging.info(
     "Serving task=%s deployment=%s step=%s H=%s on port %s",
     manifest["task"],

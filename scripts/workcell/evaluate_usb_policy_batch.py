@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -14,6 +15,11 @@ from collections import Counter
 from pathlib import Path
 
 from kaihand_tactile_env.shared.config import default_model_path, model_fingerprint
+from kaihand_tactile_env.shared.evaluation_guards import (
+  DEFAULT_MAX_SIM_SECONDS,
+  GUARD_MODES,
+)
+from kaihand_tactile_env.shared.evaluation_video import evaluation_artifact_directory
 
 ROOT = Path(__file__).resolve().parents[2]
 EGL_VENDOR = ROOT / "scripts/collect/nvidia_egl_vendor.json"
@@ -66,6 +72,7 @@ def fingerprints():
     source / "shared/egosteer_client.py",
     source / "shared/rendering.py",
     source / "shared/evaluation_video.py",
+    source / "shared/evaluation_guards.py",
   ]
   result = {
     str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -78,9 +85,16 @@ def fingerprints():
 
 
 def classify(report):
+  if "record_error" in report:
+    return "recording_error", False
+  if report.get("physics_valid") is False:
+    return "fatal_physics", False
   if (
     report.get("status") == "success"
-    and report.get("evaluation", {}).get("success") is True
+    and (
+      report.get("task_success") is True
+      or report.get("evaluation", {}).get("success") is True
+    )
   ):
     return "success", True
   if report.get("status") == "task_not_completed":
@@ -103,6 +117,14 @@ def classify(report):
   return "infrastructure_or_unclassified_error", False
 
 
+def guard_event_counts(results):
+  counts = Counter()
+  for result in results:
+    for event in result.get("guard_events", []):
+      counts[event.get("kind", "unknown")] += int(event.get("count", 1))
+  return dict(counts)
+
+
 def main():
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--output-dir", type=Path, required=True)
@@ -110,7 +132,18 @@ def main():
   parser.add_argument("--deployment-manifest", type=Path, required=True)
   parser.add_argument("--seeds", nargs="+", type=int, default=list(range(20)))
   parser.add_argument("--trial-wall-limit", type=float, default=1800.0)
-  parser.add_argument("--max-sim-seconds", type=float, default=50.0)
+  parser.add_argument(
+    "--max-sim-seconds", type=float, default=DEFAULT_MAX_SIM_SECONDS
+  )
+  parser.add_argument(
+    "--guard-mode",
+    choices=GUARD_MODES,
+    default="observe",
+    help=(
+      "observe records task/action violations and continues; strict terminates "
+      "on the first violation"
+    ),
+  )
   parser.add_argument(
     "--video-count",
     type=int,
@@ -124,7 +157,7 @@ def main():
   parser.add_argument(
     "--disable-penetration-guard",
     action="store_true",
-    help="Diagnostic-only: do not stop on USB socket penetration >0.3 mm",
+    help="Deprecated observe-mode alias: omit penetration-limit events",
   )
   parser.add_argument("--xy-jitter-mm", type=float, default=10.0)
   parser.add_argument("--yaw-jitter-deg", type=float, default=5.0)
@@ -137,10 +170,18 @@ def main():
     parser.error("video-count must be between zero and the number of seeds")
   if args.execute_steps <= 0:
     parser.error("execute-steps must be positive")
-  if args.max_sim_seconds <= 0 or args.trial_wall_limit <= 0:
+  if not all(
+    math.isfinite(value) and value > 0
+    for value in (args.max_sim_seconds, args.trial_wall_limit)
+  ):
     parser.error("time limits must be positive")
-  if args.xy_jitter_mm < 0 or args.yaw_jitter_deg < 0:
+  if not all(
+    math.isfinite(value) and value >= 0
+    for value in (args.xy_jitter_mm, args.yaw_jitter_deg)
+  ):
     parser.error("randomization ranges must be nonnegative")
+  if args.disable_penetration_guard and args.guard_mode == "strict":
+    parser.error("--disable-penetration-guard is incompatible with --guard-mode strict")
 
   deployment_path, deployment = load_deployment_manifest(args.deployment_manifest)
   if args.execute_steps > deployment["prediction_horizon"]:
@@ -172,8 +213,9 @@ def main():
     "execute_steps": args.execute_steps,
     "replan_period_s": args.execute_steps / 30,
     "control_hz": 30,
-    "diagnostic_only": bool(args.disable_penetration_guard),
-    "formal_metrics_valid": not args.disable_penetration_guard,
+    "guard_mode": args.guard_mode,
+    "diagnostic_only": args.guard_mode == "observe",
+    "formal_metrics_valid": args.guard_mode == "strict",
     "penetration_guard": {
       "enabled": not args.disable_penetration_guard,
       "threshold_m": 0.0003,
@@ -202,7 +244,10 @@ def main():
       "canonical UsbInsertionMonitor stable mechanical fit: aligned near-bottom, "
       "measured bottom-out evidence, stationary, seated continuously for 0.1s"
     ),
-    "guard_failures_counted_as_failures": True,
+    "task_guard_policy": (
+      "record_and_continue" if args.guard_mode == "observe" else "stop"
+    ),
+    "guard_failures_counted_as_failures": args.guard_mode == "strict",
     "infrastructure_failures_excluded": True,
     "retry": False,
     "source_hashes": frozen,
@@ -259,6 +304,8 @@ def main():
       str(args.execute_steps),
       "--max-sim-seconds",
       str(args.max_sim_seconds),
+      "--guard-mode",
+      args.guard_mode,
       "--no-save-first-request",
       "--output-dir",
       str(trial),
@@ -306,8 +353,8 @@ def main():
       "action_dim": deployment["action_dim"],
       "execute_steps": args.execute_steps,
       "control_hz": 30,
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_metrics_valid": not args.disable_penetration_guard,
+      "guard_mode": args.guard_mode,
+      "diagnostic_only": args.guard_mode == "observe",
       "penetration_guard_enabled": not args.disable_penetration_guard,
     }
     identity_errors = {
@@ -318,7 +365,7 @@ def main():
     if identity_errors:
       raise RuntimeError(f"seed {seed}: trial identity mismatch: {identity_errors}")
     if trial_index < args.video_count:
-      review = trial / "review"
+      review = evaluation_artifact_directory(trial)
       missing = [name for name in REVIEW_FILES if not (review / name).is_file()]
       if missing:
         raise RuntimeError(f"seed {seed}: incomplete review artifact: {missing}")
@@ -330,33 +377,49 @@ def main():
         expected_model_views.append("right_wrist")
       if review_metadata.get("model_input_cameras_displayed") != expected_model_views:
         raise RuntimeError(f"seed {seed}: review omitted a model camera")
-      if review_metadata.get("diagnostic_only") is not bool(
-        args.disable_penetration_guard
+      if review_metadata.get("diagnostic_only") is not (
+        args.guard_mode == "observe"
       ):
         raise RuntimeError(f"seed {seed}: review diagnostic-mode mismatch")
 
     reason, valid = classify(summary)
     evaluation = summary.get("evaluation", {})
+    task_success = bool(summary.get("task_success", reason == "success"))
     row = {
       "seed": seed,
-      "success": reason == "success",
+      "success": task_success,
+      "task_success": task_success,
       "valid_trial": valid,
       "termination": reason,
       "returncode": returncode,
       "wall_seconds": time.monotonic() - trial_started,
       "sim_seconds": summary.get("sim_seconds"),
       "error": summary.get("error"),
+      "record_error": summary.get("record_error"),
       "requests": summary.get("stats", {}).get("requests", 0),
       "action_steps": summary.get("stats", {}).get("action_steps", 0),
       "evaluation": evaluation,
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_result_valid": not args.disable_penetration_guard,
+      "guard_mode": summary.get("guard_mode"),
+      "guard_events": summary.get("guard_events", []),
+      "stop_reason": summary.get("stop_reason"),
+      "physics_valid": summary.get("physics_valid"),
+      "diagnostic_only": summary.get("diagnostic_only"),
+      "formal_metrics_valid": summary.get("formal_metrics_valid"),
+      "formal_result_valid": summary.get("formal_metrics_valid"),
       "penetration_diagnostics": summary.get("penetration_diagnostics", {}),
       "summary": str(summary_path.relative_to(output)),
     }
     results.append(row)
     valid_count = sum(result["valid_trial"] for result in results)
-    successes = sum(result["success"] for result in results)
+    task_successes = sum(result["task_success"] for result in results)
+    successes = sum(
+      result["task_success"] and result["valid_trial"] for result in results
+    )
+    physics_valid = all(result["physics_valid"] is True for result in results)
+    formal_metrics_valid = all(
+      result["formal_metrics_valid"] is True for result in results
+    )
+    observed_success_rate = successes / valid_count if valid_count else None
     aggregate = {
       "task": "usb-insert",
       "deployment_id": deployment["deployment_id"],
@@ -368,8 +431,10 @@ def main():
       "execute_steps": args.execute_steps,
       "control_hz": 30,
       "replan_period_s": args.execute_steps / 30,
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_metrics_valid": not args.disable_penetration_guard,
+      "guard_mode": args.guard_mode,
+      "diagnostic_only": args.guard_mode == "observe",
+      "physics_valid": physics_valid,
+      "formal_metrics_valid": formal_metrics_valid,
       "penetration_guard_enabled": not args.disable_penetration_guard,
       "penetration_guard_threshold_m": 0.0003,
       "max_sim_seconds": args.max_sim_seconds,
@@ -377,12 +442,24 @@ def main():
       "attempted": len(results),
       "valid_trials": valid_count,
       "successes": successes,
-      "success_rate": successes / valid_count if valid_count else None,
+      "task_successes": task_successes,
+      "success_rate": observed_success_rate,
+      "formal_success_rate": (
+        observed_success_rate if formal_metrics_valid else None
+      ),
+      "diagnostic_success_rate": observed_success_rate,
       "infrastructure_errors": len(results) - valid_count,
+      "recording_errors": sum(
+        result["record_error"] is not None for result in results
+      ),
       "complete": len(results) == len(args.seeds) and valid_count == len(args.seeds),
       "termination_counts": dict(
         Counter(result["termination"] for result in results)
       ),
+      "stop_reason_counts": dict(
+        Counter(result["stop_reason"] for result in results)
+      ),
+      "guard_event_counts": guard_event_counts(results),
       "failure_stage_counts": dict(
         Counter(
           result["evaluation"].get("failure_stage")

@@ -37,6 +37,11 @@ def parse_args(argv=None):
     action="store_true",
     help="Run the automatic robot pick-and-screw task",
   )
+  parser.add_argument(
+    "--position-seed",
+    type=int,
+    help="Randomize the pickup X/Y within +/-2 mm and move its cradle with it",
+  )
   parser.add_argument("--result-json", type=Path, help="New file for the task outcome")
   parser.add_argument(
     "--grasp",
@@ -88,6 +93,8 @@ def parse_args(argv=None):
     parser.error("--duration must be finite and nonnegative")
   if not math.isfinite(args.video_fps) or args.video_fps <= 0:
     parser.error("--video-fps must be finite and positive")
+  if args.position_seed is not None and args.position_seed < 0:
+    parser.error("--position-seed must be nonnegative")
   if args.run_task and (args.threaded or args.mechanics_demo):
     parser.error(
       "--run-task starts on the tabletop and cannot use --threaded or --mechanics-demo"
@@ -148,7 +155,7 @@ def snapshot(simulation, directory, report):
 
 
 def run(args):
-  simulation = BulbScrewSimulation()
+  simulation = BulbScrewSimulation(position_seed=args.position_seed)
   if args.threaded or args.mechanics_demo:
     simulation.initialize_threaded()
   monitor = BulbScrewMonitor(simulation)
@@ -240,6 +247,7 @@ def run(args):
           args.evaluation_review_dir,
           fps=args.evaluation_video_fps,
           second_camera="global",
+          include_review_wrist=True,
           heading="BULB SCREW EVALUATION",
           metadata={"controller": "known_state_task_executor"},
         )

@@ -14,7 +14,7 @@ class BulbGrasp:
 
 
 def calibrated_grasp(simulation, *, five_finger: bool = False) -> BulbGrasp:
-  """Place opposing pads around the 60 mm globe, with the wrist above it.
+  """Place opposing pads around the 58 mm globe, with the wrist above it.
 
   Five-finger targets keep middle/ring abduction neutral to avoid finger
   collisions; a contact-force controller completes their closure in execution.
@@ -98,7 +98,14 @@ def calibrated_grasp(simulation, *, five_finger: bool = False) -> BulbGrasp:
         ]
       ),
     )
-  tucked = [0, 1.45, 1.4, 0.7] * 3
+  # The old identical tuck put ``middle_link3`` on the globe throughout every
+  # wrist-turn tightening sample, making the nominal two-pad pinch depend on a
+  # hidden third support.  Keep ring and pinky curled away, but unfold and
+  # abduct only the middle finger far enough that the strict clean-contact
+  # tightening window is carried by the thumb and index pads.
+  middle_tucked = [-0.259, 0.626, 1.198, 1.570]
+  outer_tucked = [0, 1.45, 1.4, 0.7]
+  tucked = [*middle_tucked, *outer_tucked, *outer_tucked]
   return BulbGrasp(
     target_position,
     target_rotation,

@@ -15,6 +15,7 @@ import hashlib
 import json
 import multiprocessing
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -26,13 +27,25 @@ from typing import Any
 import h5py
 import numpy as np
 
-SCHEMA = "kaihand_fast_pi05_video_v1"
+# v2 makes the dataset-level action contract mandatory.  Historical v1
+# manifests predate that binding and must never be inferred to have the
+# controller-target contract merely because newer conversion code is present.
+SCHEMA = "kaihand_fast_pi05_video_v2"
+LEGACY_ACTION_CONTRACT = "legacy-measured-arm-hybrid-v1"
 FPS = 30
 ROBOT_TYPE = "kaihand_right"
 VIDEO_PRESET = "veryfast"
 VIDEO_CRF = 18
 FFMPEG_THREADS_PER_WORKER = 1
 FRAME_BATCH = 32
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+_PUBLISHED_METADATA_FILES = (
+  "meta/episodes.jsonl",
+  "meta/episodes_stats.jsonl",
+  "meta/info.json",
+  "meta/kaihand_source_episodes.jsonl",
+  "meta/tasks.jsonl",
+)
 
 _CONVERTER: Any | None = None
 _ADAPTER_PATH: Path | None = None
@@ -164,15 +177,12 @@ def _source_identity(source: Any) -> dict[str, Any]:
     "cameras": list(getattr(source, "camera_names", ("head",))),
     "instruction": getattr(source, "instruction", None),
     "repo_id": getattr(source, "repo_id", None),
+    "action_contract": getattr(source, "action_contract", LEGACY_ACTION_CONTRACT),
   }
 
 
 def _plan_identity(plan: Any) -> dict[str, Any]:
-  scalar_fields = {
-    key: value
-    for key, value in vars(plan).items()
-    if key != "source"
-  }
+  scalar_fields = {key: value for key, value in vars(plan).items() if key != "source"}
   return {
     "source": _source_identity(plan.source),
     "plan": _jsonable(scalar_fields),
@@ -185,19 +195,22 @@ def _source_manifest_rows(
   rows = []
   for output_index, plan in enumerate(plans):
     source = _source_identity(plan.source)
-    rows.append({
-      "output_episode_index": output_index,
-      "source_episode_index": source["episode_index"],
-      "source_hdf5": source["hdf5"]["path"],
-      "source_hdf5_sha256": source["hdf5"]["sha256"],
-      "source_hdf5_size_bytes": source["hdf5"]["size_bytes"],
-      "source_sidecar": source["sidecar"]["path"],
-      "source_hash_verification": (
-        "recomputed" if verify_source_hash else "trusted_acquisition_sidecar"
-      ),
-      "task": source["task"],
-      "exported_frames_30hz": int(plan.exported_frames),
-    })
+    rows.append(
+      {
+        "output_episode_index": output_index,
+        "source_episode_index": source["episode_index"],
+        "source_hdf5": source["hdf5"]["path"],
+        "source_hdf5_sha256": source["hdf5"]["sha256"],
+        "source_hdf5_size_bytes": source["hdf5"]["size_bytes"],
+        "source_sidecar": source["sidecar"]["path"],
+        "source_hash_verification": (
+          "recomputed" if verify_source_hash else "trusted_acquisition_sidecar"
+        ),
+        "task": source["task"],
+        "action_contract": source["action_contract"],
+        "exported_frames_30hz": int(plan.exported_frames),
+      }
+    )
   return rows
 
 
@@ -222,6 +235,110 @@ def _repo_id(plan: Any) -> str:
   return _CONVERTER.REPO_ID
 
 
+def _conversion_action_contract(plans: tuple[Any, ...]) -> dict[str, Any]:
+  contracts = {
+    getattr(plan.source, "action_contract", LEGACY_ACTION_CONTRACT) for plan in plans
+  }
+  if len(contracts) != 1:
+    raise ValueError(f"conversion mixes action contracts: {sorted(contracts)}")
+  action_contract = next(iter(contracts))
+  helper = getattr(_CONVERTER, "_action_contract_manifest", None)
+  if callable(helper):
+    record = helper(action_contract)
+    if not isinstance(record, dict) or record.get("id") != action_contract:
+      raise ValueError("OpenPI converter returned an invalid action contract manifest")
+    return record
+  if action_contract != LEGACY_ACTION_CONTRACT:
+    raise ValueError(
+      "non-legacy action contract requires an OpenPI manifest authority: "
+      f"{action_contract}"
+    )
+  return {
+    "id": LEGACY_ACTION_CONTRACT,
+    "legacy": True,
+    "arm_0_6": "measured joint position at the next camera frame",
+    "hand_7_26": "recorded hand command target at the next camera state index",
+    "evaluation_execution": {
+      "physical_substep_interpolation_required": "linear",
+      "zero_order_hold_equivalent": False,
+    },
+    "warning": (
+      "legacy measured-arm hybrid inferred because the source plan predates an "
+      "explicit action_contract field"
+    ),
+  }
+
+
+def _source_environment(plans: tuple[Any, ...]) -> dict[str, str] | None:
+  """Bind source mechanics and, for USB removal, the completion protocol."""
+  tasks = {getattr(plan.source, "task", None) for plan in plans}
+  if len(tasks) != 1 or None in tasks:
+    raise ValueError(
+      f"conversion plans must bind one source task: {sorted(tasks, key=repr)!r}"
+    )
+  task = next(iter(tasks))
+  if task not in {
+    "bulb-screw", "usb-unplug", "whiteboard-wipe-horizontal",
+    "whiteboard-wipe-horizontal-line", "bulb-unscrew", "bulb-screw-inplace",
+  }:
+    return None
+  identities: set[tuple[str, ...]] = set()
+  for plan in plans:
+    source = plan.source
+    metadata = getattr(source, "metadata", None)
+    mechanics_version = (
+      metadata.get("mechanics_version") if isinstance(metadata, dict) else None
+    )
+    with h5py.File(source.hdf5.path, "r") as file:
+      model_fingerprint = file.attrs.get("model_fingerprint")
+    if isinstance(model_fingerprint, bytes):
+      model_fingerprint = model_fingerprint.decode("utf-8")
+    if not isinstance(mechanics_version, str) or not mechanics_version:
+      raise ValueError(
+        f"{source.hdf5.path}: source metadata must bind mechanics_version"
+      )
+    if (
+      not isinstance(model_fingerprint, str)
+      or _SHA256_PATTERN.fullmatch(model_fingerprint) is None
+    ):
+      raise ValueError(
+        f"{source.hdf5.path}: source must bind a lowercase model_fingerprint"
+      )
+    identity = (mechanics_version, model_fingerprint)
+    if task == "usb-unplug":
+      from kaihand_tactile_env.tasks.usb_unplug import config as unplug
+
+      protocol = metadata.get("completion_protocol")
+      if protocol != unplug.COMPLETION_PROTOCOL:
+        raise ValueError(
+          f"{source.hdf5.path}: USB source metadata must bind the current "
+          f"completion_protocol {unplug.COMPLETION_PROTOCOL!r}; "
+          "legacy or mixed return/release demonstrations cannot be relabeled "
+          "with the hold-only instruction"
+        )
+      identity = (*identity, protocol)
+    identities.add(identity)
+  if len(identities) != 1:
+    raise ValueError(
+      f"conversion source episodes mix mechanics/model identities: {sorted(identities)}"
+    )
+  source_identity = next(iter(identities))
+  environment = {
+    "mechanics_version": source_identity[0],
+    "model_fingerprint": source_identity[1],
+  }
+  if task == "usb-unplug":
+    environment["completion_protocol"] = source_identity[2]
+  return environment
+
+
+def _artifact_identity(path: Path) -> dict[str, Any]:
+  return {
+    "sha256": _sha256_file(path),
+    "size_bytes": path.stat().st_size,
+  }
+
+
 def _base_features(plan: Any) -> dict[str, dict[str, Any]]:
   if _CONVERTER is None:
     raise RuntimeError("fast converter is not installed")
@@ -241,8 +358,7 @@ def _base_features(plan: Any) -> dict[str, dict[str, Any]]:
 def _camera_shape(plan: Any, name: str) -> tuple[int, int]:
   if hasattr(plan, "camera_shapes"):
     shapes = {
-      camera: (int(height), int(width))
-      for camera, height, width in plan.camera_shapes
+      camera: (int(height), int(width)) for camera, height, width in plan.camera_shapes
     }
     return shapes[name]
   if name != "head":
@@ -354,14 +470,44 @@ def _encode_hdf5_video(
   from lerobot.common.datasets.compute_stats import get_feature_stats, sample_indices
 
   command = [
-    "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-    "-f", "rawvideo", "-pixel_format", "rgb24",
-    "-video_size", f"{width}x{height}", "-framerate", str(FPS),
-    "-i", "pipe:0", "-an", "-frames:v", str(frames),
-    "-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", str(VIDEO_CRF),
-    "-threads", str(FFMPEG_THREADS_PER_WORKER), "-pix_fmt", "yuv420p",
-    "-g", "2", "-keyint_min", "2", "-sc_threshold", "0",
-    "-movflags", "+faststart", str(output),
+    "ffmpeg",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-nostdin",
+    "-y",
+    "-f",
+    "rawvideo",
+    "-pixel_format",
+    "rgb24",
+    "-video_size",
+    f"{width}x{height}",
+    "-framerate",
+    str(FPS),
+    "-i",
+    "pipe:0",
+    "-an",
+    "-frames:v",
+    str(frames),
+    "-c:v",
+    "libx264",
+    "-preset",
+    VIDEO_PRESET,
+    "-crf",
+    str(VIDEO_CRF),
+    "-threads",
+    str(FFMPEG_THREADS_PER_WORKER),
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    "2",
+    "-keyint_min",
+    "2",
+    "-sc_threshold",
+    "0",
+    "-movflags",
+    "+faststart",
+    str(output),
   ]
   process = subprocess.Popen(
     command,
@@ -375,8 +521,10 @@ def _encode_hdf5_video(
   sampled_images: list[np.ndarray] = []
   maximum_size = max(width, height)
   downsample = (
-    int(width / 150) if width > height else int(height / 150)
-  ) if maximum_size >= 300 else 1
+    (int(width / 150) if width > height else int(height / 150))
+    if maximum_size >= 300
+    else 1
+  )
   try:
     for start in range(0, frames, FRAME_BATCH):
       stop = min(start + FRAME_BATCH, frames)
@@ -388,9 +536,7 @@ def _encode_hdf5_video(
         (selected_indices >= start) & (selected_indices < stop)
       ]
       sampled_images.extend(
-        np.moveaxis(batch[index - start], -1, 0)[
-          :, ::downsample, ::downsample
-        ].copy()
+        np.moveaxis(batch[index - start], -1, 0)[:, ::downsample, ::downsample].copy()
         for index in selected
       )
     process.stdin.close()
@@ -420,9 +566,16 @@ def _probe_video(
   height: int,
 ) -> None:
   command = [
-    "ffprobe", "-v", "error", "-select_streams", "v:0",
-    "-show_entries", "stream=codec_name,width,height,pix_fmt,avg_frame_rate,nb_frames",
-    "-of", "json", str(path),
+    "ffprobe",
+    "-v",
+    "error",
+    "-select_streams",
+    "v:0",
+    "-show_entries",
+    "stream=codec_name,width,height,pix_fmt,avg_frame_rate,nb_frames",
+    "-of",
+    "json",
+    str(path),
   ]
   result = subprocess.run(command, check=True, capture_output=True, text=True)
   streams = json.loads(result.stdout).get("streams", [])
@@ -538,9 +691,11 @@ def _completed_episode(
   ):
     return None
   artifacts = done.get("artifacts")
-  expected = {"data.parquet", "stats.json", *{
-    f"{camera}.mp4" for camera in _camera_names(plan)
-  }}
+  expected = {
+    "data.parquet",
+    "stats.json",
+    *{f"{camera}.mp4" for camera in _camera_names(plan)},
+  }
   if not isinstance(artifacts, dict) or set(artifacts) != expected:
     return None
   for name, identity in artifacts.items():
@@ -592,16 +747,18 @@ def _run_workers(
       raise RuntimeError(
         f"committed checkpoint does not match the conversion plan: {committed}"
       )
-    pending.append({
-      "plan": plan,
-      "output_index": output_index,
-      "global_start_index": offset,
-      "committed": str(committed),
-      "partial": str(
-        episodes / f".episode-{output_index:06d}.partial-{uuid.uuid4().hex}"
-      ),
-      "plan_fingerprint": plan_fingerprint,
-    })
+    pending.append(
+      {
+        "plan": plan,
+        "output_index": output_index,
+        "global_start_index": offset,
+        "committed": str(committed),
+        "partial": str(
+          episodes / f".episode-{output_index:06d}.partial-{uuid.uuid4().hex}"
+        ),
+        "plan_fingerprint": plan_fingerprint,
+      }
+    )
   print(
     f"fast pi0.5 resume: completed={len(plans) - len(pending)} "
     f"pending={len(pending)} episode_workers={workers} "
@@ -613,10 +770,7 @@ def _run_workers(
       max_workers=workers,
       mp_context=multiprocessing.get_context("fork"),
     )
-    futures = {
-      executor.submit(_worker_episode, job): job
-      for job in pending
-    }
+    futures = {executor.submit(_worker_episode, job): job for job in pending}
     try:
       converted = 0
       for future in concurrent.futures.as_completed(futures):
@@ -675,7 +829,9 @@ def _validate_dataset(root: Path, plans: tuple[Any, ...]) -> None:
     raise RuntimeError(f"{root}: expected LeRobot v2.1")
   if metadata.total_episodes != len(plans) or metadata.total_frames != expected_frames:
     raise RuntimeError(f"{root}: metadata totals disagree with conversion plan")
-  if metadata.info.get("total_videos") != sum(len(_camera_names(plan)) for plan in plans):
+  if metadata.info.get("total_videos") != sum(
+    len(_camera_names(plan)) for plan in plans
+  ):
     raise RuntimeError(f"{root}: video count disagrees with conversion plan")
   for output_index, plan in enumerate(plans):
     parquet = root / metadata.get_data_file_path(output_index)
@@ -734,6 +890,8 @@ def _assemble(
     use_videos=True,
   )
   instruction = _instruction(plans[0])
+  action_contract = _conversion_action_contract(plans)
+  source_environment = _source_environment(plans)
   metadata.add_task(instruction)
   for output_index, (plan, _result) in enumerate(zip(plans, results, strict=True)):
     checkpoint = work_root / "episodes" / f"episode-{output_index:06d}"
@@ -757,6 +915,7 @@ def _assemble(
 
   manifest = {
     "schema": SCHEMA,
+    "action_contract": action_contract,
     "created_utc": datetime.now(UTC).isoformat(),
     "input_dir": str(input_dir),
     "output_dir": str(output_dir),
@@ -790,15 +949,31 @@ def _assemble(
         "frames": plan.exported_frames,
         "exported_frames_30hz": plan.exported_frames,
         "source_hdf5": str(plan.source.hdf5.path),
+        "action_contract": getattr(
+          plan.source, "action_contract", LEGACY_ACTION_CONTRACT
+        ),
         "artifacts": result["artifacts"],
       }
       for output_index, (plan, result) in enumerate(zip(plans, results, strict=True))
     ],
   }
+  if source_environment is not None:
+    manifest["source_environment"] = source_environment
   _write_json_lines(
     staging / "meta" / "kaihand_source_episodes.jsonl",
     _source_manifest_rows(plans, verify_source_hash=verify_source_hash),
   )
+  missing_metadata = [
+    relative
+    for relative in _PUBLISHED_METADATA_FILES
+    if not (staging / relative).is_file()
+  ]
+  if missing_metadata:
+    raise RuntimeError(f"staged LeRobot metadata is incomplete: {missing_metadata}")
+  manifest["metadata_artifacts"] = {
+    relative: _artifact_identity(staging / relative)
+    for relative in _PUBLISHED_METADATA_FILES
+  }
   _write_json(staging / "meta" / "kaihand_fast_pi05_conversion.json", manifest)
   _validate_dataset(staging, plans)
 
@@ -840,6 +1015,7 @@ def _fast_convert(
   del image_writer_processes, image_writer_threads
   if not plans:
     raise ValueError("conversion plan is empty")
+  source_environment = _source_environment(plans)
   input_dir = input_dir.expanduser().resolve(strict=True)
   output_dir = output_dir.expanduser().resolve()
   output_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -867,6 +1043,7 @@ def _fast_convert(
     "features": _base_features(plans[0]),
     "instruction": _instruction(plans[0]),
     "repo_id": _repo_id(plans[0]),
+    "source_environment": source_environment,
     "video_preset": VIDEO_PRESET,
     "video_crf": VIDEO_CRF,
     "conversion_sources": _conversion_source_hashes(),
@@ -976,6 +1153,7 @@ def _parallel_preflight(sources: tuple[Any, ...], workers: int) -> tuple[Any, ..
       )
   if sum(int(plan.exported_frames) for plan in resolved) <= 0:
     raise ValueError("preflight produced no training frames")
+  _conversion_action_contract(resolved)
   return resolved
 
 

@@ -1,5 +1,9 @@
 # 摸牌：共享配置与示例导出
 
+当前模型的拿牌/看牌成功门槛、可调终态 hold、专家压力准入与历史版本区别，见
+[摸牌成功判定](success_criteria.md#poker-draw)。本页带日期的验收记录保留原版本，
+不以该历史记录代替当前 `tip-pad-v7` 的参数。
+
 摸牌的 `tasks/poker_draw/scene.xml` 直接包含 `shared/mjcf/robot.xml`，
 机器人/双手外观、主桌、背景和相机沿用 shared；任务 config 直接导入
 `shared/posture.py::ARM_HOME`。不要在摸牌目录复制一套相机或初始姿势。
@@ -41,7 +45,7 @@
   窄边；长轴朝竖直、窄边在下，牌正面朝向机器人，不再横着看。
   选择肘部较低的竖牌逆解分支，并检查末端肘部不高于肩部 40 mm，避免抬肘遮头。
 
-普通 `pixi run view -- --task poker-draw` 仍是基础场景（拖牌目标每指 0.35 N）；
+普通 `pixi run --as-is view -- --task poker-draw` 仍是基础场景（拖牌目标每指 0.35 N）；
 中档正式采集仍是已有柔顺接触预设（拖牌目标每指 0.5 N）。两者现在共用
 有界法向力夹持反馈和短腕路径：基础场景的夹牌目标是每指 0.75 N、拇指 3 N，
 柔顺采集预设的夹牌目标维持每指 0.25 N、拇指 1 N。这些是控制目标，不保证
@@ -81,7 +85,7 @@ seed 示例相比：
 取得成功 Raw 后，下面的离线导出入口使用单线程软件渲染：
 
 ```bash
-pixi run export-poker-example -- \
+pixi run --as-is export-poker-example -- \
   /path/to/successful/episode_000000_card_right.h5 \
   --output-dir /new/path/poker_example
 ```

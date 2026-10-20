@@ -168,6 +168,7 @@ class EgoSteerPolicyClient:
     *,
     open_timeout: float = 30.0,
     response_timeout: float = 600.0,
+    allow_nonfinite_actions: bool = False,
   ) -> None:
     if not uri.startswith(("ws://", "wss://")):
       raise ValueError("policy URI must start with ws:// or wss://")
@@ -176,6 +177,9 @@ class EgoSteerPolicyClient:
     self.uri = uri
     self.open_timeout = float(open_timeout)
     self.response_timeout = float(response_timeout)
+    # Observation runners validate and reject these outputs transactionally,
+    # then advance a hold tick.  Shape/protocol checks always remain enabled.
+    self.allow_nonfinite_actions = bool(allow_nonfinite_actions)
     self.websocket: ClientConnection | None = None
     self.metadata: dict[str, Any] | None = None
 
@@ -237,9 +241,7 @@ class EgoSteerPolicyClient:
     if multi_camera:
       if not isinstance(camera_intrinsics, Mapping):
         raise ValueError("multi-camera images require camera_intrinsics mapping")
-      image_arrays = {
-        str(name): np.asarray(value) for name, value in images.items()
-      }
+      image_arrays = {str(name): np.asarray(value) for name, value in images.items()}
       intrinsic_arrays = {
         str(name): np.asarray(value, dtype=np.float64)
         for name, value in camera_intrinsics.items()
@@ -257,13 +259,10 @@ class EgoSteerPolicyClient:
     else:
       if expected_cameras != ("head",):
         raise ValueError(
-          "server requires multi-camera images: "
-          f"expected={list(expected_cameras)}"
+          f"server requires multi-camera images: expected={list(expected_cameras)}"
         )
       image_arrays = {"head": np.asarray(images)}
-      intrinsic_arrays = {
-        "head": np.asarray(camera_intrinsics, dtype=np.float64)
-      }
+      intrinsic_arrays = {"head": np.asarray(camera_intrinsics, dtype=np.float64)}
 
     frame_counts = set()
     for camera in expected_cameras:
@@ -276,9 +275,7 @@ class EgoSteerPolicyClient:
       if image_array.dtype != np.uint8:
         raise ValueError(f"{camera} images must use uint8, got {image_array.dtype}")
       if intrinsic_array.shape not in ((4,), (3, 3)):
-        raise ValueError(
-          f"{camera} camera_intrinsics must have shape (4,) or (3, 3)"
-        )
+        raise ValueError(f"{camera} camera_intrinsics must have shape (4,) or (3, 3)")
       frame_counts.add(int(image_array.shape[0]))
     if len(frame_counts) != 1:
       raise ValueError("all camera histories must contain the same frame count")
@@ -328,7 +325,9 @@ class EgoSteerPolicyClient:
       raise PolicyProtocolError("policy response has no pred_actions")
     actions = np.asarray(response["pred_actions"], dtype=np.float32).copy()
     expected_shape = (int(self.metadata["action_horizon"]), 48)
-    if actions.shape != expected_shape or not np.all(np.isfinite(actions)):
+    if actions.shape != expected_shape or (
+      not self.allow_nonfinite_actions and not np.all(np.isfinite(actions))
+    ):
       raise PolicyProtocolError(
         f"pred_actions must contain finite values with shape {expected_shape}, "
         f"got {actions.shape}"

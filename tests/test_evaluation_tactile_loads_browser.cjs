@@ -1,0 +1,95 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const {chromium}=require(process.env.KAI_PLAYWRIGHT_MODULE||'playwright');
+(async()=>{
+  const [url,out]=process.argv.slice(2);fs.mkdirSync(out,{recursive:true});
+  const browser=await chromium.launch({executablePath:process.env.KAI_CHROMIUM_EXECUTABLE,headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
+  try{
+    const page=await browser.newPage({viewport:{width:1480,height:1100}}),errors=[];
+    page.on('pageerror',e=>errors.push(e.message));
+    await page.goto(url);await page.waitForSelector('[data-load-chart="normal-total"]');
+    assert.equal(await page.locator('[data-load-chart]').count(),3);
+    assert.equal(await page.locator('.ke-load-fingers input').count(),5);
+    assert.equal(await page.locator('.ke-force-chart').count(),1,'old per-finger Fn chart remains');
+    assert.match(await page.locator('.ke-main').textContent(),/板擦—白板法向力/);
+    assert.match(await page.locator('.ke-load-banner').textContent(),/不是矢量合力/);
+    const data=await page.evaluate(()=>JSON.parse(document.getElementById('kai-tactile-load-data').textContent));
+    assert.equal(data.prediction_horizon,50);
+    assert.equal(data.time_s.length,2701);
+    assert(data.tangent_total_n.some(v=>v>0),'real current Ft data must exist');
+    const sample=1900,time=data.time_s[sample];
+    await page.locator('.ke-slider').evaluate((slider,t)=>{slider.value=String(t);slider.dispatchEvent(new Event('input',{bubbles:true}));},time);
+    await page.waitForFunction(t=>document.querySelector('[data-load-panel="normal-total"] .ke-load-reading').textContent.includes(t),time.toFixed(3));
+    const normal=data.normal_total_n[sample].toLocaleString('zh-CN',{minimumFractionDigits:3,maximumFractionDigits:3});
+    const tangent=data.tangent_total_n[sample].toLocaleString('zh-CN',{minimumFractionDigits:3,maximumFractionDigits:3});
+    assert.match(await page.locator('[data-load-panel="normal-total"] .ke-load-reading').textContent(),new RegExp(normal.replace('.','\\.')));
+    assert.match(await page.locator('[data-load-panel="tangent-total"] .ke-load-reading').textContent(),new RegExp(tangent.replace('.','\\.')));
+    await page.locator('.ke-force-chart').scrollIntoViewIfNeeded();
+    await page.screenshot({path:path.join(out,'normal.png')});
+    const normalTotal=await page.locator('[data-load-panel="normal-total"] .ke-load-reading').textContent();
+    await page.locator('.ke-channel-toggle input').first().uncheck();
+    assert.equal(await page.locator('[data-load-panel="normal-total"] .ke-load-reading').textContent(),normalTotal,'old checkbox must not redefine total');
+    const tangentTotal=await page.locator('[data-load-panel="tangent-total"] .ke-load-reading').textContent();
+    await page.locator('.ke-load-fingers input').first().uncheck();
+    assert.equal(await page.locator('[data-load-panel="tangent-total"] .ke-load-reading').textContent(),tangentTotal,'Ft checkbox must not redefine total');
+    assert.equal(await page.locator('.ke-load-fingers input:checked').count(),4);
+    await page.locator('.ke-load-fingers input').first().check();
+    const chart=page.locator('[data-load-chart="tangent-fingers"]');
+    await chart.scrollIntoViewIfNeeded();
+    const cursorBefore=await page.locator('.ke-slider').inputValue();
+    await chart.hover({position:{x:200,y:100}});
+    assert.equal(await page.locator('.ke-slider').inputValue(),cursorBefore,'hover must not seek');
+    assert.match(await page.locator('[data-load-panel="tangent-fingers"] .ke-load-hover').textContent(),/原生采样/);
+    await chart.click({position:{x:220,y:100}});
+    await page.waitForFunction(before=>document.querySelector('.ke-slider').value!==before,cursorBefore);
+    const selected=await page.locator('.ke-slider').inputValue();
+    await page.waitForFunction(()=>!document.querySelector('video').seeking&&document.querySelector('video').readyState>=2);
+    const mapping=await page.evaluate(()=>{
+      const viz=JSON.parse(document.querySelector('#kai-evaluation-data').textContent).visualization;
+      const t=Number(document.querySelector('.ke-slider').value);let expected=0;
+      viz.media.time_s.forEach((x,i)=>{if(x<=t+1e-8)expected=viz.media.video_time_s[i];});
+      return {actual:document.querySelector('video').currentTime,expected};
+    });
+    assert(Math.abs(mapping.actual-mapping.expected)<.001,'new chart must reuse explicit old video mapping');
+    await page.locator('[data-load-panel="tangent-fingers"]').screenshot({path:path.join(out,'tangent-fingers.png')});
+    await page.locator('[data-load-panel="tangent-total"]').screenshot({path:path.join(out,'tangent-total.png')});
+    await chart.focus();await page.keyboard.press('ArrowRight');
+    assert.notEqual(await page.locator('.ke-slider').inputValue(),selected);
+    await page.locator('video').evaluate(video=>video.play());
+    await page.waitForFunction(()=>!document.querySelector('video').paused);
+    const beforePlay=await page.locator('.ke-slider').inputValue();
+    await page.waitForFunction(before=>document.querySelector('.ke-slider').value!==before,beforePlay);
+    await page.locator('video').evaluate(video=>video.pause());
+    await page.setViewportSize({width:390,height:844});
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'mobile horizontal overflow');
+    await page.locator('[data-load-panel="tangent-fingers"]').scrollIntoViewIfNeeded();
+    await page.screenshot({path:path.join(out,'mobile.png')});
+    // A second independent component verifies instance-local cursor listeners and cleanup.
+    await page.evaluate(()=>{
+      const payload=JSON.parse(document.querySelector('#kai-evaluation-data').textContent);
+      const extension=JSON.parse(document.querySelector('#kai-tactile-load-data').textContent);
+      const second=document.createElement('div');second.id='second-test-instance';document.body.appendChild(second);
+      window.secondBase=KaiEvaluationDashboard.mount(second,payload);
+      window.secondLoads=KaiTactileLoadExtension.mount(second,extension,{sourceChannels:payload.visualization.channels});
+      const slider=second.querySelector('.ke-slider');slider.value='10';slider.dispatchEvent(new Event('input',{bubbles:true}));
+    });
+    await page.waitForFunction(()=>document.querySelector('#second-test-instance [data-load-panel="normal-total"] .ke-load-reading').textContent.includes('10.000'));
+    const firstTime=await page.locator('#kai-evaluation .ke-slider').inputValue();
+    assert.notEqual(firstTime,'10');
+    await page.evaluate(()=>{window.secondLoads.destroy();window.secondBase.destroy();document.getElementById('second-test-instance').remove();});
+    assert.equal(await page.locator('[data-load-chart]').count(),3);
+    // Unknown tangential inputs stay unknown and do not interfere with Fn.
+    await page.evaluate(()=>{
+      window.kaiTactileLoadView.destroy();
+      const extension=JSON.parse(document.querySelector('#kai-tactile-load-data').textContent);
+      extension.tangent_force_n=extension.time_s.map(()=>[null,null,null,null,null]);extension.tangent_total_n=extension.time_s.map(()=>null);
+      window.kaiTactileLoadView=KaiTactileLoadExtension.mount(document.getElementById('kai-evaluation'),extension);
+    });
+    assert.match(await page.locator('[data-load-panel="tangent-total"] .ke-load-reading').textContent(),/未知/);
+    assert.doesNotMatch(await page.locator('[data-load-panel="normal-total"] .ke-load-reading').textContent(),/未知/);
+    assert.deepEqual(errors,[]);
+    console.log(JSON.stringify({passed:true,checks:['three added charts','original Fn and board force retained','native current Ft not delta','H50-only','slider and video bidirectional','hover no seek','checkbox totals fixed','keyboard','two instances and destroy','missing Ft unknown','desktop/mobile','no browser errors']}));
+  }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

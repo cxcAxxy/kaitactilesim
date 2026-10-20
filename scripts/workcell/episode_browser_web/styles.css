@@ -26,6 +26,12 @@
   box-sizing: border-box;
 }
 
+/* Author display rules (for example .empty-state { display: flex }) must
+   not override the browser's hidden attribute after selecting an episode. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   width: 100%;
@@ -64,6 +70,7 @@ select:focus-visible,
 .sidebar {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex-direction: column;
   border-right: 1px solid var(--line);
   background:
@@ -377,6 +384,7 @@ kbd {
 .main-panel {
   position: relative;
   min-width: 0;
+  min-height: 0;
   height: 100%;
   overflow: auto;
   background:
@@ -689,6 +697,12 @@ kbd {
   transform: translateY(-1px);
 }
 
+.play-button:disabled {
+  cursor: wait;
+  opacity: 0.4;
+  transform: none;
+}
+
 .play-button svg {
   width: 16px;
   fill: currentColor;
@@ -937,6 +951,73 @@ kbd {
   margin-left: auto;
   color: var(--muted-2);
   font-style: normal;
+}
+
+.finger-heatmap {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 85px;
+  aspect-ratio: 5 / 7;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 8px 2px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  background: rgb(5, 4, 12);
+  color: white;
+  font: 11px ui-monospace, monospace;
+  text-shadow: 0 1px 3px black, 0 0 6px black;
+}
+
+.finger-heatmap.is-missing {
+  background: repeating-linear-gradient(135deg, #202530, #202530 8px, #161a21 8px, #161a21 16px);
+}
+
+.heatmap-saturation {
+  position: absolute;
+  top: 4px;
+  right: 3px;
+  padding: 2px;
+  border-radius: 3px;
+  background: #19130ea6;
+  font-size: 8px;
+}
+
+.hand-label small {
+  margin-top: 8px;
+  color: var(--muted);
+  font: 8px ui-monospace, monospace;
+}
+
+.tactile-legend i.heatmap-colorbar {
+  width: 90px;
+  height: 9px;
+  background: linear-gradient(to right, rgb(5,4,12) 0%, rgb(40,8,75) 19%, rgb(150,15,115) 44%, rgb(235,45,75) 69%, rgb(255,145,20) 88%, rgb(255,245,220) 100%);
+}
+
+@media (min-width: 1100px) {
+  .review-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    grid-template-areas: "camera tactile" "controls controls";
+    gap: 10px;
+  }
+  .camera-grid {
+    grid-area: camera;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(3, minmax(0, 1fr));
+    aspect-ratio: auto;
+    min-height: 600px;
+    max-height: 850px;
+  }
+  .camera-card:first-child { grid-row: auto; }
+  .data-strip { grid-area: tactile; margin-top: 0; }
+  .transport { grid-area: controls; margin-top: 0; }
+  .strip-copy { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .tactile-dashboard { grid-template-columns: 52px repeat(5, minmax(0, 1fr)); }
+  .tactile-legend em { margin-left: 0; line-height: 1.6; }
 }
 
 .modal {

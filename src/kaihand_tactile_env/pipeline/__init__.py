@@ -1,1 +1,1 @@
-"""Task-independent collection, conversion and evaluation orchestration."""
+"""Shared task catalogs and collection, conversion, deployment orchestration."""

@@ -318,6 +318,14 @@ def test_tightening_rejects_unloading_between_control_ticks(simulation, monkeypa
       assert not confirmations
   assert executor._tightening_verified
   assert confirmations == pytest.approx([0.46])
+  # Once one complete strict window has been certified, a later transient
+  # cannot revoke that historical event (the light and task monitor latch it).
+  executor._grip[3] = 3.9
+  simulation.data.time += simulation.timestep
+  executor._check_tightening_stall()
+  assert executor._tightening_verified
+  assert executor._tightening_stall_s >= config.TIGHTENING_HOLD_S - 1e-9
+  assert confirmations == pytest.approx([0.46])
 
 
 def test_cancellation_returns_failure_without_advancing_further(simulation):
@@ -463,8 +471,12 @@ def test_invalid_motion_mode(simulation, kwargs):
 def test_cli_defaults_to_fast_five_finger_and_retains_legacy_mode():
   args = _cli().parse_args(["--run-task"])
   assert args.speed == "fast" and args.grasp == "five-finger"
-  args = _cli().parse_args(["--run-task", "--grasp", "pinch", "--speed", "normal"])
+  assert args.position_seed is None
+  args = _cli().parse_args(
+    ["--run-task", "--grasp", "pinch", "--speed", "normal", "--position-seed", "1"]
+  )
   assert args.speed == "normal" and args.grasp == "pinch"
+  assert args.position_seed == 1
 
 
 def _cli():
@@ -482,6 +494,7 @@ def _cli():
     ["--run-task", "--mechanics-demo"],
     ["--video", "unused.mp4"],
     ["--video-fps", "nan"],
+    ["--position-seed", "-1"],
     ["--run-task", "--video", "same.mp4", "--result-json", "same.json"],
   ],
 )

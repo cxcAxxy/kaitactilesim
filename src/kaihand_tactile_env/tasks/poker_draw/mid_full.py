@@ -11,8 +11,14 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Iterator
 
+import mujoco
 import numpy as np
 
+from ...shared.physics_integrity import (
+  PHYSICS_INTEGRITY_VERSION,
+  check_physics_clock,
+  check_physics_state,
+)
 from .acceptance import (
   MAXIMUM_MULTI_FINGER_LOW_LOAD_S,
   MINIMUM_LOADED_FINGERS,
@@ -56,6 +62,30 @@ CONTACT_MODEL_VERSION = "poker-compliant-contact-v3"
 # solref, masses and solver clocks; never change parameters mid-episode.
 MID_TABLE_CONTACT_IMPEDANCE = (0.90, 0.95, 0.0005, 0.5, 2.0)
 MID_CARD_CONTACT_IMPEDANCE = (0.95, 0.98, 0.0005, 0.5, 2.0)
+
+
+def configure_poker_physics_integrity(
+  simulation: MidForcePokerSimulation,
+) -> dict[str, object]:
+  """Use implicit damping for the light free card, without changing its physics.
+
+  In MuJoCo 3.8.1 implicitfast's unconstrained free-body midpoint branch can
+  explicitly integrate angular damping and amplify this card's angular speed.
+  Keep the 2 ms clock, damping, mass, contacts and actuator gains unchanged.
+  This override is poker-local, fixed before stepping, and part of the protocol.
+  """
+  original = mujoco.mjtIntegrator(simulation.model.opt.integrator).name
+  simulation.model.opt.integrator = mujoco.mjtIntegrator.mjINT_IMPLICIT
+  return {
+    "physics_integrity_version": PHYSICS_INTEGRITY_VERSION,
+    "physics_integrator_original": original,
+    "physics_integrator_used": mujoco.mjtIntegrator(
+      simulation.model.opt.integrator
+    ).name,
+    "mujoco_version": mujoco.__version__,
+    "physics_integrity_checks": "every physical step: numerical warnings, finite state, exact clock advance",
+    "physics_error_policy": "abort invalid trial; no auto-reset catch-up or state repair",
+  }
 
 
 def configure_middle_contact_impedance(
@@ -137,6 +167,7 @@ def middle_force_simulation(
       add_genesis_probes=False,
     )
     metadata.update(configure_middle_contact_impedance(sim))
+    metadata.update(configure_poker_physics_integrity(sim))
     yield sim, metadata
 
 
@@ -151,9 +182,13 @@ class MidForcePokerSimulation(ForceLimitedPokerSimulation):
     )
 
   def step(self, steps: int = 1) -> None:
-    evaluated_at = float(self.data.time)
-    super().step(steps)
-    self._observation_time = max(evaluated_at, float(self.data.time) - self.timestep)
+    for _ in range(max(1, int(steps))):
+      check_physics_state(self.data, stage="before_step")
+      evaluated_at = float(self.data.time)
+      super().step(1)
+      check_physics_state(self.data, stage="after_step")
+      check_physics_clock(evaluated_at, float(self.data.time), timestep=self.timestep)
+      self._observation_time = evaluated_at
 
   def end_cartesian_drive(self) -> dict[str, object]:
     if self.drive_limit_n is None or getattr(self, "_cartesian_drive", None) is None:

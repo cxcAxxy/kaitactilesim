@@ -18,17 +18,24 @@ matplotlib = ">=3.10,<4"
 mujoco = ">=3.3,<4"
 numpy = ">=2,<3"
 pillow = ">=11,<13"
+pyarrow = ">=22,<23"
 msgpack = ">=1.1,<2"
 websockets = ">=16,<17"
 
 [tasks]
+view-bulb-screw-inplace = { cmd = "python scripts/workcell/view_bulb_screw_inplace.py", description = "Inspect the independent socket-entry bulb screw task" }
+run-bulb-screw-inplace = { cmd = "python scripts/workcell/view_bulb_screw_inplace.py --run-task", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Run in-place approach, grasp, physical screw-in, tightening, release and home cleanup" }
+check-bulb-screw-inplace = { cmd = "python scripts/workcell/view_bulb_screw_inplace.py --headless --duration 2", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Check the stable, threaded-but-unseated initial condition without rendering" }
+unified-evaluation = { cmd = "python scripts/analysis/evaluate_unified.py", description = "Offline staged import, shared rules and source-bound local reports; no simulation" }
+serve-unified = { cmd = "python scripts/analysis/serve_evaluation.py --directory reports --port 8877", description = "Serve unified reports on loopback port 8877; leave original H50 port 8876 unchanged" }
 view-whiteboard-wipe = { cmd = "python scripts/workcell/view_whiteboard_wipe.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", LP_NUM_THREADS = "4" }, description = "Inspect the independent 45-degree whiteboard scene" }
 run-whiteboard-wipe = { cmd = "python scripts/workcell/view_whiteboard_wipe.py --run-task", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", LP_NUM_THREADS = "4" }, description = "Pick up the eraser, wipe the board, and put it down" }
 check-whiteboard-wipe = { cmd = "python scripts/workcell/view_whiteboard_wipe.py --headless", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Headless whiteboard startup check" }
 record-whiteboard-example = { cmd = "python scripts/workcell/record_whiteboard_example.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", LP_NUM_THREADS = "4", MUJOCO_GL = "egl", MPLCONFIGDIR = "/tmp/whiteboard_matplotlib" }, description = "Record shared Raw whiteboard data, synchronized review videos and force analysis" }
-collect = { cmd = "python scripts/collect/collect.py", description = "Unified server collection for all eight tasks; see scripts/collect/README.md" }
-convert-dataset = { cmd = "python scripts/convert/convert.py", description = "Unified Raw to EgoSteer, pi0.5, EgoTouch or model-neutral LeRobot v3 conversion" }
-evaluate-policy = { cmd = "python scripts/evaluate/evaluate.py", description = "Unified task/model policy evaluation dispatcher with manifest camera-contract validation" }
+collect = { cmd = "python scripts/collect/collect.py", description = "[stable] Collect Raw with explicit task profiles, verified publication and resume" }
+convert-dataset = { cmd = "python scripts/convert/convert.py", description = "[stable] Convert Raw using semantic adapters and named model runtimes" }
+deploy-policy = { cmd = "python scripts/deploy/deploy.py", description = "[stable] Prepare, verify, serve and run a model deployment with managed lifecycle" }
+evaluate-policy = { cmd = "python scripts/evaluate/evaluate.py", description = "[stable] Evaluate an existing deployment with explicit model/camera contracts" }
 view-install-ram = { cmd = "python scripts/workcell/view_install_ram.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Inspect the independent realistic-size DIMM installation scene" }
 run-install-ram = { cmd = "python scripts/workcell/view_install_ram.py --run-task", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Run RAM grasp, alignment, insertion and release" }
 check-install-ram = { cmd = "python scripts/workcell/view_install_ram.py --headless --duration 2", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1" }, description = "Headless RAM scene startup check" }
@@ -72,12 +79,12 @@ poker-mid-full = { cmd = "python scripts/workcell/validate_poker_mid_full.py", e
 dashboard = { cmd = "python scripts/workcell/tactile_dashboard.py", description = "Open the 2x5 fingertip dashboard and grasp controls" }
 tactile-dashboard = { cmd = "python scripts/workcell/tactile_dashboard.py", description = "Alias for the tactile dashboard" }
 grasp = { cmd = "python scripts/workcell/run_grasp.py", description = "Execute one known-state grasp" }
-record = { cmd = "python scripts/workcell/record_dataset.py", description = "Record synchronized HDF5 episodes" }
+record = { cmd = "python scripts/workcell/record_dataset.py", description = "[compatibility] Original recorder; use collect for managed multi-task batches" }
 validate = { cmd = "python scripts/workcell/validate_episode.py", description = "Validate an HDF5 episode" }
-replay = { cmd = "python scripts/workcell/replay_episode.py", description = "Replay any task HDF5 natively or export synchronized cameras, tactile heatmaps and curves" }
+replay = { cmd = "python scripts/workcell/replay_episode.py", description = "[stable] Replay Raw or export synchronized cameras, tactile heatmaps and curves" }
 render = { cmd = "python scripts/workcell/render_workcell.py", description = "Render RGB, depth and segmentation snapshots" }
 compare-tactile = { cmd = "python scripts/workcell/compare_tactile_streams.py", description = "Compare probe and solver tactile streams" }
-convert-egosteer = { cmd = "python scripts/workcell/convert_to_egosteer.py", description = "Convert recorded HDF5 episodes to EgoSteer WebDataset" }
+convert-egosteer = { cmd = "python scripts/workcell/convert_to_egosteer.py", description = "[compatibility] Original EgoSteer converter; use convert-dataset for task dispatch" }
 convert-tict = { cmd = "python scripts/workcell/convert_to_tict.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Export full wrist/fingertip SE3 and signed tactile into the documented T-ICT release" }
 package-tict = { cmd = "python scripts/workcell/package_tict.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Offline T-ICT assembly with explicit session splits, train-only statistics and portable RGB path rebasing" }
 validate-tict = { cmd = "python scripts/workcell/validate_tict.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1" }, description = "Check the local T-ICT release contract and every H50 action window" }
@@ -85,6 +92,6 @@ audit-tict-source = { cmd = "python scripts/workcell/audit_tict_source.py", env 
 export-poker-review = { cmd = "python scripts/workcell/export_poker_review.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "1" }, description = "Offline head/right-wrist and right-hand Fn/Ft review MP4/PNGs from one HDF5; legacy overhead supported, no simulation" }
 export-poker-example = { cmd = "python scripts/workcell/export_poker_example.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "1", MUJOCO_GL = "egl", KAIHAND_RENDER_BACKEND = "software", LIBGL_ALWAYS_SOFTWARE = "1" }, description = "Publish a new poker example: recorded head/right-wrist/tactile review, saved-qpos global video and force curves; no overwrite" }
 validate-egosteer = { cmd = "python scripts/workcell/validate_egosteer_dataset.py", description = "Validate an EgoSteer WebDataset export" }
-egosteer-rollout = { cmd = "python scripts/workcell/run_egosteer_policy.py", description = "Run the remote EgoSteer policy in the local MuJoCo workcell" }
+egosteer-rollout = { cmd = "python scripts/workcell/run_egosteer_policy.py", description = "[compatibility] Original rollout; use deploy-policy or evaluate-policy for managed evaluation" }
 egosteer-poker-rollout = { cmd = "python scripts/workcell/run_poker_egosteer_policy.py", env = { OPENBLAS_NUM_THREADS = "1", OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", LP_NUM_THREADS = "1" }, description = "Poker model rollout with contact-conditioned Cartesian budget and tactile feedback" }
 test = { cmd = "pytest -q", env = { PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1" }, description = "Run environment tests" }

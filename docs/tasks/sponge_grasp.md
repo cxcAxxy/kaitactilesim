@@ -1,5 +1,8 @@
 # Sponge grasp：柔性海绵抓取与入盘
 
+五指 0.05 N / 0.5 秒抓稳、12 cm 抬升、搬运离桌、盘底承载与 1 秒稳定窗口的完整条件，
+以及模型与专家验收区别，见[海绵成功判定](success_criteria.md#sponge-grasp)。
+
 任务场景为 `sponge-grasp`。右手从桌面抓起柔性海绵，保持五指接触，搬运到右侧盘子，
 松开并等待稳定。海绵由 MuJoCo flex 和真实接触力驱动，没有隐藏的物体附着或位姿控制。
 
@@ -13,7 +16,8 @@
 HDF5 与结果 sidecar；质量检查应同时确认任务成功、五指接触、海绵入盘和 Raw 校验。
 回放使用[Raw 可视化入口](../workflows/data_visualization.md)。
 
-目前注册了 π0.5 和模型中立 LeRobot v3 的 `head + right_wrist` 转换，
+目前注册了 π0.5 和模型中立 LeRobot v3 的 `head + right_wrist` 转换，以及 π0.5
+统一闭环评估，
 见[转换文档](../workflows/data_conversion.md)。LeRobot v3 会验证 100 Hz 控制步相机时间戳、
 采集 sidecar 的任务审计，并保留柔体顶点和盘子支撑力等诊断。EgoSteer、EgoTouch
-转换和统一闭环评估尚未注册，不能用其他任务的 action 合同替代。
+转换与闭环评估尚未注册，不能用其他任务的 action 合同替代。

@@ -23,7 +23,9 @@ from .config import (
   WorkcellConfig,
   model_fingerprint,
 )
+from .physics_integrity import check_physics_clock
 from .rendering import WorkcellRenderer
+from .runtime_contract import simulation_runtime_contract
 from .simulation import ArmHandSimulation
 from .tactile import (
   GenesisProbeTactileProvider,
@@ -314,6 +316,7 @@ class EpisodeRecorder:
     self._finalized = False
     self._next_state_time = float(simulation.data.time)
     self._next_camera_time = float(simulation.data.time)
+    self._last_observed_time = float(simulation.data.time)
     self._outcome: dict[str, Any] = {}
     self._state_samples = 0
     self._camera_samples = {camera.name: 0 for camera in config.cameras}
@@ -367,6 +370,16 @@ class EpisodeRecorder:
     file.attrs["control_hz"] = self.config.control_hz
     file.attrs["camera_hz"] = self.config.camera_hz
     file.attrs["tactile_source"] = self.tactile_provider.source
+    file.attrs["runtime_contract_json"] = json.dumps(
+      simulation_runtime_contract(
+        self.sim,
+        tactile_provider=self.tactile_provider,
+        contact_force_provider=self.contact_force_provider,
+      ),
+      ensure_ascii=False,
+      sort_keys=True,
+      allow_nan=False,
+    )
     backend_info = getattr(self.renderer, "backend_info", None)
     if backend_info:
       file.attrs["render_backend_json"] = json.dumps(backend_info, sort_keys=True)
@@ -571,9 +584,7 @@ class EpisodeRecorder:
         group.attrs["finger_names_json"] = json.dumps(
           ["thumb", "index", "middle", "ring", "little"]
         )
-        group.attrs["wrist_sites_json"] = json.dumps(
-          self.taskspace_capture.wrist_names
-        )
+        group.attrs["wrist_sites_json"] = json.dumps(self.taskspace_capture.wrist_names)
         group.attrs["fingertip_sites_json"] = json.dumps(
           self.taskspace_capture.finger_names
         )
@@ -650,6 +661,8 @@ class EpisodeRecorder:
     self._file.flush()
 
   def record_initial(self, phase: str = "reset") -> None:
+    check_physics_clock(self._last_observed_time, float(self.sim.data.time))
+    self._last_observed_time = float(self.sim.data.time)
     self._record_state(phase)
     self._next_state_time += 1.0 / self.config.control_hz
     self._capture_cameras()
@@ -665,6 +678,8 @@ class EpisodeRecorder:
     if self._closed:
       raise RuntimeError("cannot record terminal state after recorder is closed")
     timestamp = float(self.sim.data.time)
+    check_physics_clock(self._last_observed_time, timestamp)
+    self._last_observed_time = timestamp
     state_appended = False
     if self._last_state_time is None or timestamp > self._last_state_time:
       self._record_state(phase)
@@ -696,6 +711,9 @@ class EpisodeRecorder:
   def observe(self, simulation: ArmHandSimulation, phase: str) -> None:
     if simulation is not self.sim:
       raise ValueError("recorder received a different simulation instance")
+    timestamp = float(self.sim.data.time)
+    check_physics_clock(self._last_observed_time, timestamp)
+    self._last_observed_time = timestamp
     tolerance = 0.5 * self.sim.timestep
     if self.sim.data.time + tolerance >= self._next_state_time:
       self._record_state(phase)

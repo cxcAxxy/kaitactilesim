@@ -1,0 +1,106 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const {chromium}=require(process.env.KAI_PLAYWRIGHT_MODULE||'playwright');
+(async()=>{
+  const url=process.argv[2],output=process.argv[3];fs.mkdirSync(output,{recursive:true});
+  const browser=await chromium.launch({executablePath:process.env.KAI_CHROMIUM_EXECUTABLE,headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
+  try{
+    const page=await browser.newPage({viewport:{width:1440,height:1100}}),errors=[];
+    page.on('pageerror',error=>errors.push(error.message));
+    await page.goto(url);await page.waitForSelector('.event-card');
+    await page.evaluate(()=>{
+      for(const video of document.querySelectorAll('video')){
+        if(video.requestVideoFrameCallback){
+          const record=(_,metadata)=>{video._lastPresentedMediaTime=metadata.mediaTime;video.requestVideoFrameCallback(record);};
+          video.requestVideoFrameCallback(record);
+        }
+      }
+    });
+    const data=await page.evaluate(()=>JSON.parse(document.getElementById('review-data').textContent));
+    assert.equal(data.episodes.length,2);
+    assert(data.episodes.every(e=>e.role==='policy'&&e.outcome==='fail'));
+    const episode=data.episodes.find(e=>e.id.includes('step24999'));
+    assert.equal(await page.locator('.event-card').count(),episode.events.length);
+    assert.equal(episode.events.length,47);
+    assert.match(await page.locator('#event-title').textContent(),/清洁读数不变/);
+    assert.match(await page.locator('#event-facts').textContent(),/38\.516%/);
+    assert.match(await page.locator('#event-facts').textContent(),/实测手腕采样路径/);
+    assert.equal(await page.locator('#view-select').inputValue(),'head');
+    await page.waitForFunction(()=>document.querySelector('#main-video').readyState>=2&&!document.querySelector('#main-video').seeking);
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    const mapping=await page.evaluate(()=>{
+      const d=JSON.parse(document.querySelector('#review-data').textContent),ep=d.episodes[Number(document.querySelector('#episode-select').value)];
+      const selected=ep.events.find(e=>e.id===ep.preferred_event_id);let expected=null;
+      ep.media.time_s.forEach((t,i)=>{if(t<=selected.start_s+1e-8)expected=ep.media.video_time_s[i];});
+      return {expected,actual:document.querySelector('#main-video').currentTime};
+    });
+    assert(Math.abs(mapping.expected-mapping.actual)<.001);
+    await page.screenshot({path:path.join(output,'desktop.png')});
+    await page.setViewportSize({width:1600,height:1100});
+    const shape=await page.locator('#video-viewport').boundingBox();
+    assert(Math.abs(shape.width/shape.height-434/324)<.002,'wide crop must preserve camera aspect ratio');
+    await page.screenshot({path:path.join(output,'wide.png')});
+    await page.setViewportSize({width:1440,height:1100});
+    await page.locator('#view-select').selectOption('wrist');
+    assert(Math.abs(await page.locator('#main-video').evaluate(node=>parseFloat(node.style.top))+149.659864)<.01);
+    await page.locator('.review-layout').screenshot({path:path.join(output,'wrist.png')});
+    await page.locator('#view-select').selectOption('full');
+    assert(!(await page.locator('#video-viewport').getAttribute('class')).includes('crop'));
+    await page.locator('#view-select').selectOption('head');
+    await page.locator('#play').click();
+    await page.waitForFunction(()=>!document.getElementById('main-video').paused);
+    await page.waitForFunction(()=>document.getElementById('main-video').currentTime>63);
+    await page.locator('#play').click();
+    assert(await page.evaluate(()=>document.getElementById('main-video').paused));
+    await page.locator('#event-filter').selectOption('growth');
+    assert.equal(await page.locator('.event-card').count(),episode.events.filter(e=>e.kind==='growth').length);
+    await page.locator('.event-card').first().click();
+    assert.match(await page.locator('#event-title').textContent(),/增长/);
+    assert.doesNotMatch(await page.locator('.evidence-boundary').textContent(),/没有新增清洁/);
+    await page.locator('#event-filter').selectOption('all');
+    await page.locator(`[data-id="${episode.preferred_event_id}"]`).click();
+    await page.locator('#open-contrast').click();
+    assert(await page.locator('#contrast-panel').isVisible());
+    assert(await page.locator('#selection-video').isVisible());
+    await page.locator('#selection-replay').click();
+    await page.waitForFunction(()=>{const v=document.getElementById('selection-video');return !v.seeking&&v.readyState>=2&&Math.abs(v._lastPresentedMediaTime-v.currentTime)<.11;});
+    await page.waitForFunction(()=>!document.getElementById('selection-video').paused);
+    await page.locator('#selection-replay').click();
+    const before=await page.locator('#scrubber').inputValue();
+    const options=await page.locator('#contrast-select option').evaluateAll(nodes=>nodes.map(n=>n.value));
+    await page.locator('#contrast-select').selectOption(options.at(-1));
+    assert.equal(await page.locator('#scrubber').inputValue(),before,'contrast must not seek primary video');
+    await page.locator('#contrast-replay').click();
+    await page.waitForFunction(()=>!document.getElementById('contrast-video').paused);
+    await page.locator('#contrast-replay').click();
+    await page.waitForFunction(()=>{const v=document.getElementById('contrast-video');return !v.seeking&&v.readyState>=2&&Math.abs(v._lastPresentedMediaTime-v.currentTime)<.11;});
+    await page.locator('#contrast-panel').screenshot({path:path.join(output,'contrast.png')});
+    await page.locator('#close-contrast').click();
+    await page.locator('#event-filter').selectOption('all');
+    await page.locator('#whole').click();
+    assert.match(await page.locator('#event-title').textContent(),/全程/);
+    assert(!(await page.locator('#loop').isChecked()));
+    assert.match(await page.locator('#position-note').textContent(),/全程/);
+    await page.locator('#hand-toggle').uncheck();
+    await page.locator('#hand-toggle').check();
+    const zero=data.episodes.findIndex(e=>e.id.includes('step20000'));
+    await page.locator('#episode-select').selectOption(String(zero));
+    assert.equal(await page.locator('.event-card').count(),1);
+    assert.match(await page.locator('#event-facts').textContent(),/0\.000%/);
+    assert(await page.locator('#open-contrast').isDisabled());
+    assert.match(await page.locator('#event-facts').textContent(),/不自动判失败/);
+    const original=data.episodes.findIndex(e=>e.id.includes('step24999'));
+    await page.locator('#episode-select').selectOption(String(original));
+    await page.waitForFunction(()=>document.getElementById('main-video').readyState>=2&&!document.getElementById('main-video').seeking);
+    await page.setViewportSize({width:390,height:844});
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'mobile overflow');
+    assert((await page.locator('#episode-select').boundingBox()).width>300,'mobile selector must show trajectory name');
+    await page.screenshot({path:path.join(output,'mobile.png'),fullPage:true});
+    await page.locator('#baseline-link').click();await page.waitForSelector('.hub-horizon-notice');
+    assert.match(await page.locator('.hub-horizon-notice').textContent(),/H50-only/);
+    assert.deepEqual(errors,[]);
+    console.log(JSON.stringify({passed:true,checks:['all 47 candidates','failure and zero-progress retained','wrist provenance','verified video map','camera crop switch','real playback','independent same-episode contrast','no diagnosis','whole trajectory','desktop/mobile','stable return link','no page errors']}));
+  }finally{await browser.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -7,6 +7,7 @@ from runpy import run_path
 import h5py
 import numpy as np
 import pytest
+from kaihand_tactile_env.pipeline.catalog import EVALUATION_RUNNERS
 from kaihand_tactile_env.pipeline.conversion import (
   adapter_catalog,
   adapter_for,
@@ -519,9 +520,10 @@ def test_evaluation_cli_lists_task_model_support_without_manifest(capsys):
   rows = {(row["task"], row["model_family"]): row["backend"]
           for row in payload["runners"]}
   assert rows[("usb-insert", "pi05")] == "evaluate_usb_pi05_policy_batch.py"
+  assert rows[("pick-place", "egotouch")] == "evaluate_pickplace_policy_batch.py"
   assert rows[("pick-place", "lingbot-vla2")] == "evaluate_pickplace_lingbot_vla2_batch.py"
   assert rows[("poker-draw", "pi05+trex")] == "evaluate_poker_pi05+trex_policy_batch.py"
-  assert ("sponge-grasp", "pi05") not in rows
+  assert rows[("sponge-grasp", "pi05")] == "evaluate_shared_task_policy_batch.py"
 
 
 def test_lingbot_evaluation_dispatch_preserves_frozen_model_identity(tmp_path, capsys):
@@ -566,10 +568,47 @@ def test_evaluation_defaults_to_twenty_recorded_trials_at_horizon(
   assert payload["num_trials"] == 20
   assert payload["seeds"] == list(range(20))
   assert payload["video_count"] == 20
+  assert payload["max_sim_seconds"] == 90.0
+  assert payload["guard_mode"] == "observe"
+  assert payload["formal_metrics_valid"] is False
   assert payload["execute_steps"] == 32
   assert len(payload["evaluations"]) == 1
   assert payload["evaluations"][0]["request"] == "horizon"
   assert payload["command"][payload["command"].index("--execute-steps") + 1] == "32"
+  assert payload["command"][payload["command"].index("--max-sim-seconds") + 1] == "90.0"
+  assert payload["command"][payload["command"].index("--guard-mode") + 1] == "observe"
+
+
+@pytest.mark.parametrize("limit", ["nan", "inf", "0", "-1"])
+def test_evaluation_rejects_invalid_simulation_limit(tmp_path, limit):
+  module = run_path(str(Path(__file__).parents[1] / "scripts/evaluate/evaluate.py"))
+  with pytest.raises(SystemExit):
+    module["parse_args"]([
+      "--task", "usb-insert", "--model-family", "pi05",
+      "--deployment-manifest", str(tmp_path / "deployment.json"),
+      "--output-dir", str(tmp_path / "evaluation"),
+      "--max-sim-seconds", limit,
+    ])
+
+
+def test_evaluation_forwards_custom_limit_and_strict_guards(tmp_path, capsys):
+  manifest = tmp_path / "deployment.json"
+  manifest.write_text(json.dumps({
+    "task": "usb-insert", "model_family": "pi0.5", "prediction_horizon": 50,
+    "observation_contract": {"cameras": ["head"]},
+  }))
+  module = run_path(str(Path(__file__).parents[1] / "scripts/evaluate/evaluate.py"))
+  assert module["main"]([
+    "--task", "usb-insert", "--model-family", "pi05",
+    "--deployment-manifest", str(manifest), "--output-dir", str(tmp_path / "evaluation"),
+    "--max-sim-seconds", "120", "--guard-mode", "strict", "--dry-run",
+  ]) == 0
+  payload = json.loads(capsys.readouterr().out)
+  assert payload["max_sim_seconds"] == 120
+  assert payload["guard_mode"] == "strict"
+  command = payload["command"]
+  assert command[command.index("--max-sim-seconds") + 1] == "120.0"
+  assert command[command.index("--guard-mode") + 1] == "strict"
 
 
 def test_evaluation_uses_matching_checkpoint_dataset_for_reference(
@@ -678,18 +717,31 @@ def test_evaluation_explicit_reference_overrides_checkpoint_inference(
   assert payload["command"][payload["command"].index("--reference-dataset") + 1] == str(explicit)
 
 
-def test_all_registered_model_task_pairs_default_to_their_horizon(
-  tmp_path, capsys
+def test_registered_pairs_use_safe_default_execution_chunks(
+  tmp_path, capsys, monkeypatch
 ):
+  # This test exercises routing/default K only. Full frozen tactile manifests
+  # and rejection paths are covered by test_tactile_pipeline/task_contracts.
+  monkeypatch.setattr(
+    "kaihand_tactile_env.shared.tactile_deployment.validate_manifest", lambda payload: payload
+  )
   module = run_path(str(Path(__file__).parents[1] / "scripts/evaluate/evaluate.py"))
-  assert len(module["RUNNERS"]) == 20
+  assert set(module["RUNNERS"]) == set(EVALUATION_RUNNERS)
   for task, family in module["RUNNERS"]:
     manifest = tmp_path / f"{task}_{family}.json"
     manifest.write_text(json.dumps({
       "task": task,
       "model_family": family,
       "prediction_horizon": 30,
-      "observation_contract": {"cameras": ["head"]},
+      "execute_steps": 5,
+      "action_start_index": 1 if family == "ftp1" else 0,
+      "observation_contract": {
+        "cameras": (
+          ["head", "right_wrist"]
+          if (task, family) == ("pick-place", "egotouch") or family in {"pi05+cpm", "ftp1"}
+          else ["head"]
+        )
+      },
     }))
     assert module["main"]([
       "--task", task, "--model-family", family,
@@ -698,8 +750,34 @@ def test_all_registered_model_task_pairs_default_to_their_horizon(
       "--dry-run",
     ]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["execute_steps"] == 30
-    assert payload["command"][payload["command"].index("--execute-steps") + 1] == "30"
+    expected = 5 if (task, family) == ("pick-place", "egotouch") or family in {"pi05+cpm", "ftp1"} else 30
+    assert payload["execute_steps"] == expected
+    assert payload["command"][
+      payload["command"].index("--execute-steps") + 1
+    ] == str(expected)
+
+
+@pytest.mark.parametrize("requested", ("horizon", "50"))
+def test_pickplace_egotouch_rejects_open_loop_horizon_execution(
+  tmp_path, requested
+):
+  manifest = tmp_path / "deployment.json"
+  manifest.write_text(json.dumps({
+    "task": "pick-place",
+    "model_family": "egotouch",
+    "prediction_horizon": 50,
+    "observation_contract": {"cameras": ["head", "right_wrist"]},
+  }))
+  module = run_path(str(Path(__file__).parents[1] / "scripts/evaluate/evaluate.py"))
+  with pytest.raises(ValueError, match="exactly 5 waypoints"):
+    module["main"]([
+      "--task", "pick-place",
+      "--model-family", "egotouch",
+      "--deployment-manifest", str(manifest),
+      "--output-dir", str(tmp_path / "evaluation"),
+      "--execute-steps", requested,
+      "--dry-run",
+    ])
 
 
 @pytest.mark.parametrize("missing", ["task", "model_family", "observation_contract"])
@@ -811,6 +889,7 @@ def test_policy_camera_contract_rejects_ambiguous_sets(cameras):
     ("whiteboard-wipe", "egosteer"),
     ("whiteboard-wipe", "pi05"),
     ("whiteboard-wipe", "egotouch"),
+    ("sponge-grasp", "pi05"),
   ],
 )
 def test_new_tasks_dispatch_to_shared_closed_loop_batch(

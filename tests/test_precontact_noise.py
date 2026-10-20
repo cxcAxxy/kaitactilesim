@@ -54,6 +54,11 @@ def _simulation(monkeypatch, *, cls=noise.PrecontactPokerSimulation, signals=Non
     ctrl=np.zeros(16),
     qpos=np.linspace(-0.1, 0.1, 16),
     qvel=np.linspace(0.0, 0.2, 16),
+    qacc=np.zeros(16),
+    warning=[
+      SimpleNamespace(number=0, lastinfo=0)
+      for _ in range(shared.mujoco.mjtWarning.mjNWARNING)
+    ],
     qfrc_bias=np.linspace(0.0, 0.3, 16),
     qfrc_applied=np.zeros(16),
     fingertip_contact=np.zeros(5, dtype=bool),

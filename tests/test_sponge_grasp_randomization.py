@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from kaihand_tactile_env.shared.policy_tasks import TaskPolicyAdapter
 from kaihand_tactile_env.tasks.sponge_grasp import config
 from kaihand_tactile_env.tasks.sponge_grasp.task import SpongeGraspSimulation
 
@@ -56,3 +57,25 @@ def test_unseeded_sponge_stays_at_calibrated_pose():
 def test_sponge_rejects_invalid_randomization(kwargs):
   with pytest.raises(ValueError):
     SpongeGraspSimulation(**kwargs)
+
+
+def test_policy_adapter_uses_seeded_collection_reset_and_strict_initial_state():
+  adapter = TaskPolicyAdapter("sponge-grasp", 17)
+  expected = np.random.default_rng(17).uniform(
+    config.COLLECTION_XY_OFFSET_LOW_M,
+    config.COLLECTION_XY_OFFSET_HIGH_M,
+  )
+
+  assert adapter.simulation.randomize_xy is True
+  assert np.allclose(adapter.simulation.sponge_xy_offset_m, expected)
+  assert adapter.instruction == (
+    "Pick up the upright sponge with the right hand, carry it to the plate on "
+    "the robot's right, place it inside the plate, and release it."
+  )
+  assert adapter.success is False
+  assert adapter.stage() == "pick_sponge"
+  assert adapter.state.grasp_established is False
+  assert adapter.state.lift_established is False
+  assert adapter.state.release_allowed is False
+  assert adapter.state.released is False
+  assert adapter.simulation.grasp_patch.enabled is False

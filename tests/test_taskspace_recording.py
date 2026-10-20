@@ -125,7 +125,8 @@ def test_native_capture_requires_a_clock_not_an_assumed_state_timestamp(tmp_path
 
 def test_middle_step_labels_last_preintegration_solver_time(monkeypatch):
   simulation = object.__new__(mid_full.MidForcePokerSimulation)
-  simulation.data = SimpleNamespace(time=1.0)
+  simulation.data = mujoco.MjData(mujoco.MjModel.from_xml_string(_xml()))
+  simulation.data.time = 1.0
   simulation.timestep = 0.002
   calls = []
 
@@ -136,7 +137,7 @@ def test_middle_step_labels_last_preintegration_solver_time(monkeypatch):
   monkeypatch.setattr(mid_full.ForceLimitedPokerSimulation, "step", step)
   assert simulation.observation_time == 1.0
   simulation.step(3)
-  assert [count for _, count in calls] == [3]
+  assert [count for _, count in calls] == [1, 1, 1]
   assert simulation.data.time == pytest.approx(1.006)
   assert simulation.observation_time == pytest.approx(1.004)
   simulation.data.time = 0.0  # reset cannot retain a future cache timestamp
@@ -342,6 +343,7 @@ def test_progress_flush_is_middle_only_once_per_five_simulated_seconds(
   recorder.taskspace_capture = object() if capture_taskspace else None
   recorder._next_state_time = float("inf")
   recorder._next_camera_time = float("inf")
+  recorder._last_observed_time = float(sim.data.time)
   recorder._next_progress_time = 5.0
   recorder._recording_started = 0.0
   recorder._state_write_seconds = 1.0

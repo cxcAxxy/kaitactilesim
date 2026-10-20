@@ -70,6 +70,31 @@ class SideActionTargets:
   site_rotations_world: np.ndarray
   site_quaternions_wxyz: np.ndarray
   fingertips_world: np.ndarray
+  # EgoSteer's legacy 48-D action contains fingertip XYZ only, while
+  # EgoTouch's 108-D task-space action contains complete fingertip SE(3).
+  # Keeping this optional preserves the position-only EgoSteer contract and
+  # lets the shared executor opt into pose-aware hand IK when rotations exist.
+  fingertip_rotations_world: np.ndarray | None = None
+
+  @property
+  def fingertip_poses_world(self) -> np.ndarray | None:
+    """Return homogeneous fingertip targets when orientation is available."""
+    if self.fingertip_rotations_world is None:
+      return None
+    positions = np.asarray(self.fingertips_world)
+    rotations = np.asarray(self.fingertip_rotations_world)
+    if rotations.shape != positions.shape[:-1] + (3, 3):
+      raise ValueError(
+        "fingertip rotations/positions have incompatible shapes: "
+        f"{rotations.shape} and {positions.shape}"
+      )
+    poses = np.zeros(positions.shape[:-1] + (4, 4), dtype=np.result_type(
+      positions, rotations
+    ))
+    poses[..., :3, :3] = rotations
+    poses[..., :3, 3] = positions
+    poses[..., 3, 3] = 1.0
+    return poses
 
 
 @dataclass(frozen=True)

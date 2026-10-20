@@ -1,0 +1,18 @@
+# Local model runtimes. Simulation always stays in the v2 Pixi environment.
+[runtimes.cpm]
+python = "/cpfs_infra/user/chenxianchi/miniconda3/envs/touchguidance/bin/python"
+project_root = "/cpfs_infra/user/chenxianchi/yidu/openpi-main"
+
+[runtimes.cpm.env]
+CUDA_VISIBLE_DEVICES = "0"
+OMP_NUM_THREADS = "8"
+OPENBLAS_NUM_THREADS = "1"
+
+[runtimes.ftp1]
+python = "/cpfs_infra/user/chenxianchi/code/ftp1-policy/.venv/bin/python"
+project_root = "/cpfs_infra/user/chenxianchi/code/ftp1-policy"
+
+[runtimes.ftp1.env]
+CUDA_VISIBLE_DEVICES = "0"
+OMP_NUM_THREADS = "8"
+OPENBLAS_NUM_THREADS = "1"

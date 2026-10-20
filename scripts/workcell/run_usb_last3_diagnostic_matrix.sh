@@ -78,10 +78,11 @@ run_batch() {
 
 check_smoke() {
   local destination=$1
-  "$SIM_DIR/.venv/bin/python" -c '
+  PYTHONPATH="$SIM_DIR/src" "$SIM_DIR/.venv/bin/python" -c '
 import json
 import sys
 from pathlib import Path
+from kaihand_tactile_env.shared.evaluation_video import evaluation_artifact_directory
 
 trial = Path(sys.argv[1]) / "seed_000"
 summary = json.loads((trial / "summary.json").read_text(encoding="utf-8"))
@@ -90,7 +91,7 @@ if stats.get("requests", 0) < 1 or stats.get("action_steps", 0) < 1:
     raise SystemExit(f"smoke did not complete inference and action execution: {trial}")
 if summary.get("sim_seconds", 0) <= 0 or not isinstance(summary.get("evaluation"), dict):
     raise SystemExit(f"smoke has no simulation time or evaluation metrics: {trial}")
-review = trial / "review"
+review = evaluation_artifact_directory(trial)
 for name in ("review.mp4", "review.json", "frames.jsonl", "first_frame.png", "last_frame.png"):
     artifact = review / name
     if not artifact.is_file() or artifact.stat().st_size == 0:

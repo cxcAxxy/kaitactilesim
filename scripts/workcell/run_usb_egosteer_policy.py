@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -21,6 +22,15 @@ from kaihand_tactile_env.shared.egosteer_adapter import (
 from kaihand_tactile_env.shared.egosteer_client import (
   EgoSteerPolicyClient,
   ObservationHistory,
+)
+from kaihand_tactile_env.shared.evaluation_guards import (
+  DEFAULT_MAX_SIM_SECONDS,
+  GUARD_MODES,
+  configure_evaluation_guards,
+  ensure_evaluation_physics,
+  evaluation_guard_report,
+  recover_nonfinite_action,
+  task_guard,
 )
 from kaihand_tactile_env.shared.policy_cameras import (
   include_model_right_wrist_panel,
@@ -53,6 +63,14 @@ CONTROLLER = "direct-30hz-egosteer-taskspace-v1"
 PENETRATION_GUARD_THRESHOLD_M = 0.0003
 
 
+def _mark_record_error(report: dict, error: Exception) -> None:
+  message = f"{type(error).__name__}: {error}"
+  previous = report.get("record_error")
+  report["record_error"] = message if previous is None else f"{previous}; {message}"
+  report["stop_reason"] = "fatal_error"
+  report["formal_metrics_valid"] = False
+
+
 def parse_args(argv=None):
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--server", default="ws://127.0.0.1:18782")
@@ -63,13 +81,24 @@ def parse_args(argv=None):
   parser.add_argument("--yaw-jitter-deg", type=float, default=5.0)
   parser.add_argument("--execute-steps", type=int, default=5)
   parser.add_argument("--max-requests", type=int, default=0)
-  parser.add_argument("--max-sim-seconds", type=float, default=50.0)
+  parser.add_argument(
+    "--max-sim-seconds", type=float, default=DEFAULT_MAX_SIM_SECONDS
+  )
+  parser.add_argument(
+    "--guard-mode",
+    choices=GUARD_MODES,
+    default="observe",
+    help=(
+      "observe records task/action violations and continues; strict terminates "
+      "on the first violation"
+    ),
+  )
   parser.add_argument(
     "--disable-penetration-guard",
     action="store_true",
     help=(
-      "Diagnostic-only: continue after USB socket penetration exceeds 0.3 mm; "
-      "socket load, drop and nonfinite-state guards remain enabled"
+      "Deprecated observe-mode alias: omit penetration-limit events while all "
+      "other task violations remain observable"
     ),
   )
   parser.add_argument("--response-timeout", type=float, default=180.0)
@@ -133,6 +162,8 @@ def parse_args(argv=None):
     parser.error("review dimensions must be positive")
   if args.review_width % 2 or args.review_height % 2:
     parser.error("review output dimensions must be even")
+  if args.disable_penetration_guard and args.guard_mode == "strict":
+    parser.error("--disable-penetration-guard is incompatible with --guard-mode strict")
   args.control_side = "right"
   if args.real_time is None:
     args.real_time = args.viewer == "native"
@@ -203,24 +234,66 @@ def validate_server(metadata, *, execute_steps: int, deployment: dict) -> int:
 def _guard_usb_state(
   outcome: UsbPolicyOutcome, simulation, *, penetration_guard_enabled: bool = True
 ) -> None:
+  # Numerical faults are terminal and take precedence over observable task limits.
+  ensure_evaluation_physics(simulation)
   state = outcome.state
-  if state.socket_normal_load_n > usb_config.MAX_SOCKET_NORMAL_LOAD_N:
-    raise RuntimeError("USB socket total normal load exceeded task limit")
-  if state.axial_resistance_n > usb_config.MAX_SOCKET_AXIAL_FORCE_N:
-    raise RuntimeError("USB socket axial resistance exceeded task limit")
-  if state.wall_normal_load_n > usb_config.MAX_SOCKET_WALL_LOAD_N:
-    raise RuntimeError("USB socket side-wall load exceeded task limit")
-  if (
-    penetration_guard_enabled
-    and state.maximum_socket_penetration_m > PENETRATION_GUARD_THRESHOLD_M
-  ):
-    raise RuntimeError("USB socket penetration exceeded 0.3 mm")
-  if float(simulation.object_pose("usb_plug")[2]) < 0.5:
-    raise RuntimeError("USB plug fell below work surface")
-  if not np.isfinite(simulation.data.qpos).all() or not np.isfinite(
-    simulation.data.qvel
-  ).all():
-    raise RuntimeError("nonfinite simulation state")
+  task_guard(
+    simulation,
+    state.socket_normal_load_n > usb_config.MAX_SOCKET_NORMAL_LOAD_N,
+    "usb_socket_normal_load",
+    "USB socket total normal load exceeded task limit",
+    measured=state.socket_normal_load_n,
+    threshold=usb_config.MAX_SOCKET_NORMAL_LOAD_N,
+  )
+  task_guard(
+    simulation,
+    state.axial_resistance_n > usb_config.MAX_SOCKET_AXIAL_FORCE_N,
+    "usb_socket_axial_resistance",
+    "USB socket axial resistance exceeded task limit",
+    measured=state.axial_resistance_n,
+    threshold=usb_config.MAX_SOCKET_AXIAL_FORCE_N,
+  )
+  task_guard(
+    simulation,
+    state.wall_normal_load_n > usb_config.MAX_SOCKET_WALL_LOAD_N,
+    "usb_socket_wall_load",
+    "USB socket side-wall load exceeded task limit",
+    measured=state.wall_normal_load_n,
+    threshold=usb_config.MAX_SOCKET_WALL_LOAD_N,
+  )
+  if penetration_guard_enabled:
+    task_guard(
+      simulation,
+      state.maximum_socket_penetration_m > PENETRATION_GUARD_THRESHOLD_M,
+      "usb_socket_penetration",
+      "USB socket penetration exceeded 0.3 mm",
+      measured=state.maximum_socket_penetration_m,
+      threshold=PENETRATION_GUARD_THRESHOLD_M,
+    )
+  plug_height = float(simulation.object_pose("usb_plug")[2])
+  task_guard(
+    simulation,
+    plug_height < 0.5,
+    "usb_plug_dropped",
+    "USB plug fell below work surface",
+    measured=plug_height,
+    threshold=0.5,
+  )
+
+
+def _validated_or_rejected_prediction(
+  simulation, actions, *, horizon: int, action_dim: int
+):
+  try:
+    return _validated_prediction(
+      actions,
+      horizon=horizon,
+      action_dim=action_dim,
+    )
+  except Exception as error:
+    if not recover_nonfinite_action(simulation, error):
+      raise
+    return None
 
 
 async def run(args):
@@ -245,8 +318,10 @@ async def run(args):
     "max_sim_seconds": args.max_sim_seconds,
     "control_hz": CONTROL_HZ,
     "replan_period_s": args.execute_steps / CONTROL_HZ,
-    "diagnostic_only": bool(args.disable_penetration_guard),
-    "formal_metrics_valid": not args.disable_penetration_guard,
+    "guard_mode": args.guard_mode,
+    "diagnostic_only": args.guard_mode == "observe",
+    "formal_metrics_valid": args.guard_mode == "strict",
+    "task_success": False,
     "penetration_guard_enabled": not args.disable_penetration_guard,
     "penetration_guard_threshold_m": PENETRATION_GUARD_THRESHOLD_M,
     "training_controller_equivalent": False,
@@ -263,7 +338,9 @@ async def run(args):
   first_penetration_limit_exceeded_s = None
   try:
     async with EgoSteerPolicyClient(
-      args.server, response_timeout=args.response_timeout
+      args.server,
+      response_timeout=args.response_timeout,
+      allow_nonfinite_actions=args.guard_mode == "observe",
     ) as client:
       metadata = client.metadata or {}
       prediction_horizon = validate_server(
@@ -283,11 +360,18 @@ async def run(args):
         xy_jitter_m=args.xy_jitter_mm / 1000.0,
         yaw_jitter_rad=float(np.deg2rad(args.yaw_jitter_deg)),
       )
+      configure_evaluation_guards(simulation, args.guard_mode)
+      ensure_evaluation_physics(simulation)
       report["initial_plug_pose"] = simulation.object_pose("usb_plug").tolist()
       stats.maximum_object_height = float(report["initial_plug_pose"][2])
       outcome = UsbPolicyOutcome(simulation)
       if outcome.state.maximum_socket_penetration_m > PENETRATION_GUARD_THRESHOLD_M:
         first_penetration_limit_exceeded_s = float(simulation.data.time)
+      _guard_usb_state(
+        outcome,
+        simulation,
+        penetration_guard_enabled=not args.disable_penetration_guard,
+      )
       head = CameraConfig(
         "head", width=320, height=240, rgb=True, depth=False, segmentation=False
       )
@@ -334,7 +418,7 @@ async def run(args):
 
           recorder = EvaluationVideo(
             simulation,
-            output / "review",
+            output,
             fps=args.record_fps,
             width=args.review_width,
             height=args.review_height,
@@ -366,8 +450,9 @@ async def run(args):
               "control_hz": CONTROL_HZ,
               "replan_period_s": args.execute_steps / CONTROL_HZ,
               "max_sim_seconds": args.max_sim_seconds,
-              "diagnostic_only": bool(args.disable_penetration_guard),
-              "formal_metrics_valid": not args.disable_penetration_guard,
+              "guard_mode": args.guard_mode,
+              "diagnostic_only": args.guard_mode == "observe",
+              "formal_metrics_valid": args.guard_mode == "strict",
               "penetration_guard_enabled": not args.disable_penetration_guard,
               "penetration_guard_threshold_m": PENETRATION_GUARD_THRESHOLD_M,
               "observation_contract": deployment["observation_contract"],
@@ -403,15 +488,20 @@ async def run(args):
               jpeg_quality=95,
             )
             stats.requests += 1
-            predicted = _validated_prediction(
+            predicted = _validated_or_rejected_prediction(
+              simulation,
               response.pred_actions,
               horizon=prediction_horizon,
               action_dim=deployment["action_dim"],
             )
-            decoded = decode_action_targets(
-              simulation,
-              relative_to_absolute(states[-1], predicted),
-              camera_from_world,
+            decoded = (
+              None
+              if predicted is None
+              else decode_action_targets(
+                simulation,
+                relative_to_absolute(states[-1], predicted),
+                camera_from_world,
+              )
             )
             row = {
               "request": stats.requests,
@@ -423,7 +513,16 @@ async def run(args):
                 0
               ].tolist(),
               "right_wrist_targets_world": (
-                decoded.right.site_positions_world.tolist()
+                None
+                if decoded is None
+                else decoded.right.site_positions_world.tolist()
+              ),
+              "action_rejected": (
+                "nonfinite_action" if decoded is None else None
+              ),
+              "recovery": (
+                "hold_last_valid_command_and_replan"
+                if decoded is None else None
               ),
             }
             log.write(json.dumps(row) + "\n")
@@ -455,19 +554,26 @@ async def run(args):
               flush=True,
             )
 
-            for action_index in range(args.execute_steps):
+            action_count = 1 if decoded is None else args.execute_steps
+            for action_index in range(action_count):
               if simulation.data.time >= args.max_sim_seconds or outcome.success:
                 break
               if viewer is not None and not viewer.is_running():
                 raise ViewerClosed("native viewer closed")
               tick_started = time.monotonic()
-              _command_action_step(
-                simulation, decoded, action_index, args, stats
+              if decoded is not None:
+                _command_action_step(
+                  simulation, decoded, action_index, args, stats
+                )
+              action_rejected = decoded is None or bool(
+                getattr(simulation, "_evaluation_action_rejected", False)
               )
               control_tick += 1
               target_time = control_tick / CONTROL_HZ
               while simulation.data.time < target_time - 1.0e-12:
+                before_time = float(simulation.data.time)
                 simulation.step()
+                ensure_evaluation_physics(simulation, before_time=before_time)
                 outcome.update(simulation)
                 if (
                   first_penetration_limit_exceeded_s is None
@@ -499,6 +605,11 @@ async def run(args):
                 await asyncio.sleep(
                   max(0.0, 1.0 / CONTROL_HZ - (time.monotonic() - tick_started))
                 )
+              if action_rejected:
+                # The generic command transaction rolled back the rejected
+                # waypoint.  Advance one held tick, then discard this chunk so
+                # the next observation immediately replans.
+                break
 
         report["status"] = "success" if outcome.success else "task_not_completed"
   except ViewerClosed as error:
@@ -508,11 +619,34 @@ async def run(args):
     report.update(status="error", error=run_error)
     raise
   finally:
+    guard_report = {}
     if simulation is not None:
-      report["sim_seconds"] = float(simulation.data.time)
-      report["final_plug_pose"] = simulation.object_pose("usb_plug").tolist()
+      guard_report = evaluation_guard_report(
+        simulation,
+        status=report.get("status"),
+        error=report.get("error") or run_error,
+      )
+      report.update(guard_report)
+      sim_seconds = float(simulation.data.time)
+      report["sim_seconds"] = sim_seconds if math.isfinite(sim_seconds) else None
+      report["final_plug_pose"] = (
+        simulation.object_pose("usb_plug").tolist()
+        if guard_report["physics_valid"]
+        else None
+      )
+    else:
+      report.update(
+        guard_events=[],
+        stop_reason=(
+          "fatal_error" if report.get("status") in {"error", "viewer_closed"}
+          else None
+        ),
+        physics_valid=None,
+        formal_metrics_valid=False,
+      )
     if outcome is not None:
       report["evaluation"] = outcome.report()
+      report["task_success"] = bool(outcome.success)
       stats.stable_success = outcome.success
     report["penetration_diagnostics"] = {
       "guard_enabled": not args.disable_penetration_guard,
@@ -526,9 +660,10 @@ async def run(args):
     report.update(stats=asdict(stats), wall_seconds=time.monotonic() - started)
     if recorder is not None:
       try:
-        recorder.capture(control_tick, outcome.stage(), force=True)
+        if report.get("physics_valid", True):
+          recorder.capture(control_tick, outcome.stage(), force=True)
       except Exception as error:
-        report["record_error"] = f"{type(error).__name__}: {error}"
+        _mark_record_error(report, error)
       try:
         report["video"] = recorder.finish(
           status=report.get("status", "error"),
@@ -538,6 +673,7 @@ async def run(args):
         report["video"].update(
           seed=args.seed,
           success=bool(report.get("evaluation", {}).get("success", False)),
+          task_success=report["task_success"],
           inference_requests=stats.requests,
           simulation_time_s=report.get("sim_seconds"),
           wall_time_s=report["wall_seconds"],
@@ -549,8 +685,13 @@ async def run(args):
           execute_steps=args.execute_steps,
           control_hz=CONTROL_HZ,
           replan_period_s=args.execute_steps / CONTROL_HZ,
-          diagnostic_only=bool(args.disable_penetration_guard),
-          formal_metrics_valid=not args.disable_penetration_guard,
+          guard_events=report["guard_events"],
+          stop_reason=report["stop_reason"],
+          physics_valid=report["physics_valid"],
+          formal_metrics_valid=report["formal_metrics_valid"],
+          diagnostic_only=report["diagnostic_only"],
+          guard_mode=report["guard_mode"],
+          record_error=report.get("record_error"),
           penetration_guard_enabled=not args.disable_penetration_guard,
           penetration_guard_threshold_m=PENETRATION_GUARD_THRESHOLD_M,
           maximum_socket_penetration_m=(
@@ -560,12 +701,12 @@ async def run(args):
             first_penetration_limit_exceeded_s
           ),
         )
-        (output / "review" / "review.json").write_text(
+        (output / "review.json").write_text(
           json.dumps(report["video"], ensure_ascii=False, indent=2),
           encoding="utf-8",
         )
       except Exception as error:
-        report["record_error"] = f"{type(error).__name__}: {error}"
+        _mark_record_error(report, error)
     with (output / "summary.json").open("x") as file:
       json.dump(report, file, indent=2)
     print(

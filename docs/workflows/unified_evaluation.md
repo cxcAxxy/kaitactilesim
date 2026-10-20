@@ -1,0 +1,447 @@
+# 统一评估：执行、导入与观察台
+
+本工程独立于 `kaitactilesim`、`kaitactilesim_laest`，不覆盖其源码或已有报告。
+仿真执行仍使用 `scripts/evaluate/evaluate.py`；新增离线入口只读取已有评估。
+`integration_manifest.json` 保存合并时实际工作树的来源、文件大小、SHA 和 Git HEAD；
+不是用 Git HEAD 丢弃两边未提交的修改。数据、模型、环境、Git 元数据和旧报告没有复制进代码快照。
+
+## 当前入口
+
+当前使用本工程自己的 `.pixi/envs/default`，不再依赖旧工程解释器。
+新节点按 `pixi install --locked` 安装完整依赖；本节点从缓存离线安装时跳过了
+`pyarrow`，可用已安装 Python 或 `pixi run --as-is ...` 做规则查询、CPU 物理验证及
+已有视频回放。转换前需补齐相应依赖，`--as-is` 不会补装它们。
+
+下面三条只读命令用于查看当前规则、发现已有归档和启动本机网页：
+
+```bash
+cd /cpfs_infra/user/chenxianchi/code/kaitactilesim_unified
+.pixi/envs/default/bin/python -B scripts/analysis/evaluate_unified.py rules
+.pixi/envs/default/bin/python -B scripts/analysis/evaluate_unified.py discover \
+  --source-root /cpfs_infra/user/chenxianchi/kaitactilesim_evaluations
+.pixi/envs/default/bin/python -B scripts/analysis/serve_evaluation.py --directory reports --port 8877
+```
+
+现有整合站为 `http://127.0.0.1:8877/staged_h50_20261015/index.html`。
+默认监听 `127.0.0.1`，远程 IDE 需转发 8877；也可显式配置私有内网地址直接访问，见
+[内网直接访问](policy_evaluation_video.md#内网直接访问)。若端口已在使用，先检查现有服务，不重复启动。
+原 H50 稳定站点的文件不受本工程新输出影响。
+
+### USB 拔出规则变更与历史边界
+
+当前源码的 `usb-unplug` 使用 `usb-unplug-held-clear-2s-v2`：完全清离插座后，
+右手仍有实际接触、插头无桌面接触共同连续 ≥2 秒，不再要求放回、释放、退手。
+原生与 staged 记录各自的协议和连续计时，具体见[成功判据](../tasks/success_criteria.md#usb-unplug)
+及[阶段判定](staged_evaluation.md#usb-unplug完全拔出并手持保持-2-秒)。
+
+现有 360 条 H50 网站仍展示当时归档的严格放回规则和原成绩，未重算或重命名其阶段。
+新试验应使用新的输出目录及匹配当前源码、指令和完成协议的 deployment；
+不要修改旧 manifest 或旧来源 SHA 绕过冻结检查。若需对旧轨迹按新规则复评，应另外导出
+明确标记的复评结果，并核对完整连续物理证据；单个终态/旧布尔标志不足以证明手持两秒。
+
+`scripts/deploy/run_pi05_staged_groups.py` 及其 handoff/retry 工具针对旧的只读冻结快照和
+9 任务批次，仍按旧阶段定义验收，保留用于历史队列复现；它不是新版 USB 两秒保持的发布器。
+新版试验使用 `scripts/evaluate/evaluate.py` 的通用入口及匹配当前协议的部署，不复用旧批次计划。
+
+### 重新导出及完整核验的前提
+
+`export` 和 `verify` 都会严格核验 `integration_manifest.json` 中两份原工程的 source。
+目前这两个旧根目录不在原路径，故 `verify-originals`、完整 `verify` 和重新 `export`
+会因来源不可访问而失败；这不表示当前已有网页文件损坏。不要删除来源保护、重写 SHA，
+或把历史成功的核验记录当作当前复核结果。要重新导出，须先恢复可验证的原来源，
+并提供仍可访问、具有原回退清单的旧观察台目录。
+
+满足上述前提后，从本工程根目录执行以下模板，替换 `/path/to/...` 为真实路径：
+
+```bash
+.pixi/envs/default/bin/python -B scripts/analysis/evaluate_unified.py verify-originals
+.pixi/envs/default/bin/python -B scripts/analysis/evaluate_unified.py export \
+  --source-root /cpfs_infra/user/chenxianchi/kaitactilesim_evaluations \
+  --previous-workbench /path/to/preserved_h50_workbench \
+  --output reports/staged_h50_new --workers 4
+.pixi/envs/default/bin/python -B scripts/analysis/evaluate_unified.py verify reports/staged_h50_new
+```
+
+输出必须是不存在的新目录；已有报告不会就地更新。小批检查可增加 `--trial-limit 9`，
+优先选取每个任务各一条；`--no-model-plots` 可跳过缺图补绘。
+额外的完整 staged 记录通过 `--extra-root /path/to/evaluation` 显式加入；每条仍须通过归档身份和完整性校验，不能仅凭目录名导入。
+默认回退锚点指向旧工程 H50 多任务站点；旧目录退役时，不能省略上述来源前提。
+
+### 只核验已有网页文件
+
+若原来源已不可访问，仍可按原生成物清单逐文件核验已有报告。以下只读检查只证明
+`artifact_manifest.json` 所列文件的内容，不等价于完整 `verify`、原源码保护或模型评估复现：
+
+```bash
+.pixi/envs/default/bin/python -B - <<'PY'
+import hashlib
+import json
+from pathlib import Path
+
+manifest = Path("reports/staged_h50_20261015/artifact_manifest.json")
+rows = json.loads(manifest.read_text())["files"]
+for row in rows:
+    path = Path(row["path"])
+    assert path.stat().st_size == row["size"], path
+    with path.open("rb") as file:
+        assert hashlib.file_digest(file, "sha256").hexdigest() == row["sha256"], path
+print(f"Verified {len(rows)} archived report files")
+PY
+```
+
+## 同一 H50 实验的四个 checkpoint（450 条统一入口）
+
+平台根入口现在按实验组织 π0.5 H50 结果，而不是将历史 360 条与新增 90 条分成两个主入口。
+四个 checkpoint 为 `10000`、`15000`、`20000`、`24999`，分别有 45、45、180、180 条成员记录，
+覆盖同一组 9 个任务，共 450 条。每个任务的新旧 checkpoint 使用同一个训练目录；
+成员身份仍绑定任务、H/K、checkpoint 与原始摘要 SHA，不靠 seed 或成绩匹配。
+
+450 是实验成员数，不是 450 条都可计分：其中 430 条维持现有可统计身份，20 条旧水平线迹白板
+step20000 记录保持 `quarantined_replay_only`，仅能经隔离说明查看原工作台回放，不进入原生或
+阶段成功分母。本次没有修复、重判或解除其原有发布隔离。USB-out 新旧完成协议仍分组显示；
+同一实验不意味着不同 checkpoint、规则、原生成功和 staged 成功可混成一个总成功率。
+EgoTouch 的 120 条放在独立实验页面，不计入此 450 条。
+
+```bash
+cd /cpfs_infra/user/chenxianchi/code/kaitactilesim_unified_v2
+.pixi/envs/default/bin/python -B scripts/analysis/export_evaluation_experiment.py \
+  --status-snapshot reports/evaluation_status_20261019_r2 \
+  --historical-report reports/kaitactilesim_official_h50_20261015_r2 \
+  --output reports/h50_checkpoint_experiment_20261019 \
+  --publish-index
+.pixi/envs/default/bin/python -B scripts/analysis/export_evaluation_experiment.py \
+  --verify reports/h50_checkpoint_experiment_20261019
+```
+
+输出仍必须为不存在的新目录。导出器核验父快照、原工作台的生成物清单和来源身份，复用已有详情、
+视频与曲线，不重跑评估、不重复复制媒体、不改写旧站点。旧 source tree 的完整原始核验保护不变，
+退役原始 source tree 不宣称本次已验证。根入口仅在快照验证通过后原子切换，并保存旧入口备份。
+
+本机服务仍为 `http://127.0.0.1:8877/`（远程 IDE 转发 8877）。统一入口直达
+`http://127.0.0.1:8877/h50_checkpoint_experiment_20261019/index.html`，独立 EgoTouch 实验位于
+`http://127.0.0.1:8877/h50_checkpoint_experiment_20261019/egotouch.html`。
+
+## 先前的各任务归档状态快照（只读归档发布）
+
+`export_evaluation_status.py` 从当前规范归档生成一个静态状态快照，并保留现有 360 条 H50
+工作台入口。它不是上文的旧 full-H50 `export`：不会重跑仿真、重判历史轨迹或改写来源目录，
+也不会取消 `verify-originals` 对完整 H50 重导出的保护。此快照只核验当前归档元数据、复制的
+生成物字节和历史站点的生成物清单；退役的原始 source tree 仍明确记录为**未在本次验证**，
+不得据此宣称它们已重新核验。
+
+从本工程根目录发布一个不存在的新目录：
+
+```bash
+cd /cpfs_infra/user/chenxianchi/code/kaitactilesim_unified_v2
+.pixi/envs/default/bin/python -B scripts/analysis/export_evaluation_status.py \
+  --source-root /cpfs_infra/user/chenxianchi/kaitactilesim_evaluations \
+  --historical-report reports/kaitactilesim_official_h50_20261015_r2 \
+  --output reports/evaluation_status_20261019_r2 \
+  --publish-index
+.pixi/envs/default/bin/python -B scripts/analysis/export_evaluation_status.py \
+  --verify reports/evaluation_status_20261019_r2
+```
+
+输出目录必须是与历史站点同级的 fresh canonical directory；同名目录已存在时应换用新的时间戳或
+版本号，不能覆盖。导出器先完成并核验快照，只有核验通过且根入口在导出期间未被其他进程修改时，
+`--publish-index` 才原子替换 `reports/index.html`。替换前的根入口保存在新快照的
+`previous_root_index.html`，入口切换另记在 `portal_publication.json`；若导出或核验失败，旧入口保持不变。
+发布后也应执行上面的独立 `--verify`，并以其成功结果作为交付记录。
+
+归档选择以 canonical index 为准。与历史 H50 `summary.json` SHA-256 完全匹配的轨迹直接链接已保留的
+旧详情，不复制或修改旧 payload；规范归档中的 EgoTouch 与新评估组使用各自冻结的原生摘要、视频和
+证据生成新详情。canonical index 明确隔离的旧未发布记录继续保持隔离，不导入、不补算，也不按当前
+规则重新判定。实际任务、分组和轨迹数量应读取新快照的 `catalog.json` 与验证输出，不在流程文档中
+写死候选扫描数量。
+
+展示和统计始终分开保存原生成功、staged 阶段、`diagnostic`／`formal` 身份及完成协议；只在相同任务、
+checkpoint、模式、协议和规则身份内统计，禁止把不同协议的结果汇成一个总成功率。归一化作业只能显示
+为作业状态，不是模型评估轨迹，也不产生成功率。来源评估目录、历史 360 站点及其 payload 全程只读。
+
+该页面是发布时刻的静态快照，不是自动监控面板；来源变化后须用新的输出目录重新导出、核验并切换入口。
+本机仍复用只读静态服务：
+
+```bash
+.pixi/envs/default/bin/python -B scripts/analysis/serve_evaluation.py --directory reports --port 8877
+```
+
+服务默认监听 `127.0.0.1`；远程 IDE 转发 8877 后访问 `http://127.0.0.1:8877/`，也可直接访问
+`http://127.0.0.1:8877/evaluation_status_20261019_r2/index.html`。启动前先检查端口，已有服务时无需重启。
+
+## 各任务目标参考与白板贴合诊断版
+
+保留的 360 条 H50 工作台入口为 `http://127.0.0.1:8877/kaitactilesim_official_h50_20261015_r2/index.html`。
+它基于 `staged_h50_studio_20261015_r2`，在现有布局上统一 KaiTactileSim 官方品牌与栏目名称，
+保留 USB/白板参考版全部目标线、白板贴合指标、视频和原始判定。
+保留全部 360 条 H50 轨迹，9 种任务各 40 条，逐条增加来源核验的单项参考线。
+三种白板的 120 条轨迹还补充已归档的几何贴合指标和最大单元墨迹余量；不重跑仿真。
+原 `staged_h50_20261015` 稳定版及仅有灯泡参考线的 `staged_h50_goal_refs_20261015`
+和 RAM/抽卡参考版 `staged_h50_goal_refs_ram_poker_20261015` 的网页、数据和生成物清单保持不变。
+
+### KaiTactileSim 官方品牌展示版
+
+`kaitactilesim_official_h50_20261015_r2` 使用主标题“KaiTactileSim 官方评估平台”，
+英文品牌“KaiTactileSim Evaluation Platform”，副标题“机器人操作任务评估 · 动作回放 · 触觉分析”。
+总览浏览器标题保留 H50 批次标识；详情页采用“任务名 · 轨迹分析”和“任务名 | KaiTactileSim”。
+栏目统一为评估总览、轨迹分析、专家示范、阶段记录与评估规则，保留来源审计和诊断说明。
+
+官方品牌表示平台归属，不表示该批记录已成为正式认证或新的排名；
+`diagnostic_only`、`formal_metrics_valid`、原生结果、阶段记录及分组统计均保持原样。
+“同规则、同权重的阶段统计”仍位于数量提示下方、轨迹列表上方。
+这是本地展示改版，没有新增局域网监听、开放防火墙端口或改变访问权限。
+
+```bash
+.pixi/envs/default/bin/python -B scripts/analysis/evaluation_goal_reference_snapshot.py \
+  --source-report reports/staged_h50_studio_20261015_r2 \
+  --output-dir reports/kaitactilesim_official_h50_next \
+  --presentation-only --detail-navigation --visual-refresh
+.pixi/envs/default/bin/python -B scripts/analysis/evaluation_goal_reference_snapshot.py \
+  --verify reports/kaitactilesim_official_h50_20261015_r2
+```
+
+品牌信息独立保存在 `presentation_extension.branding`，不写入原生／阶段判定。
+逐条 HTML/JSON、曲线和媒体保持归档字节不变；详情品牌由新的 UI 资产显示，旧站点不加载新资产。
+
+### 科研评估工作台视觉版
+
+`staged_h50_studio_20261015` 及其 `r2` 是独立的展示快照，不是重新评估：
+
+- 详情页压缩页首与固定播放工具栏，首屏并排展示模型动作和任务关键曲线；原任务结果与累计阶段仍独立。
+- 触觉区集中呈现五指法向/切向载荷及单指阵列/接触力图；页内分区导航可直达任务、触觉、专家和全程图。
+- 专家参考默认收起，可单独展开播放，始终保留独立时间线，不与模型强行对齐。
+- 总览用紧凑数量摘要代替大统计卡，保留筛选与分组统计，提供卡片/紧凑列表两种浏览方式。
+- `r2` 将“同规则、同权重的阶段统计”放在“显示 X / 360 条轨迹”下方、轨迹列表上方，
+  仍默认折叠，保留原始统计口径及任务/权重筛选；首版视觉站点原样保留。
+- 保留已有任务目标线、白板贴合数据、腕部视角、三类诊断图及缺测说明；当前游标与归档终态值分别标注。
+
+本批仍是 9 任务、360 条既有 H50；USB 继续显示该批当时的严格放回规则和原成绩，
+不因当前源码增加两秒保持协议而改判。新原位旋入任务没有被补成模型评估轨迹。
+
+从已核验快照另存视觉版（输出目录须不存在）：
+
+```bash
+.pixi/envs/default/bin/python -B scripts/analysis/evaluation_goal_reference_snapshot.py \
+  --source-report reports/staged_h50_studio_20261015 \
+  --output-dir reports/staged_h50_studio_next \
+  --presentation-only --detail-navigation --visual-refresh
+.pixi/envs/default/bin/python -B scripts/analysis/evaluation_goal_reference_snapshot.py \
+  --verify reports/staged_h50_studio_20261015_r2
+```
+
+`--visual-refresh` 需显式搭配前两个展示开关，记录 `evaluation-studio-v1` 展示版本。
+只替换既有白名单中的总览/详情 UI 资产与展示元数据；逐条报告 HTML/JSON、原始曲线、
+参考线、贴合数据和视频均逐文件核验为不变，不放宽 replay/data 资产保护。
+所有旧网址保留；回退可直接打开 `staged_h50_detail_navigation_20261015` 或更早稳定版。
+
+### 总览展示与内部审计分离
+
+精简总览移除运行模式筛选、模式统计/卡片徽标，以及“数据覆盖与来源”整个展示区
+（覆盖数量、快照时间、USB 图来源说明和清单/筛选/验证下载链接）。顶部仅保留任务数和轨迹数；
+任务、模型、checkpoint、原记录结果、阶段及 seed 筛选仍可用，每条轨迹的媒体可用性提示仍保留。
+
+`formal` 是 `formal_metrics_valid=true` 且 `diagnostic_only=false` 的来源协议标记，
+不是任务成功或独立认证；本批 360 条均为 `diagnostic`。移出界面不改变这些内部标记，
+`batch.json`、`selection.json`、`verification.json`、原生/阶段和来源证据仍保存。
+这是展示精简，不是删除原始文件或提供访问控制；详情页原有的协议说明仍保留。
+
+只精简既有快照的总览时使用以下命令，不重读原始仿真数据、不重算目标值或贴合指标：
+
+```bash
+.pixi/envs/default/bin/python -B scripts/analysis/evaluation_goal_reference_snapshot.py \
+  --source-report reports/staged_h50_goal_refs_usb_whiteboard_20261015 \
+  --output-dir reports/staged_h50_clean_view_next \
+  --presentation-only
+.pixi/envs/default/bin/python -B scripts/analysis/evaluation_goal_reference_snapshot.py \
+  --verify reports/staged_h50_clean_view_20261015
+```
+
+该模式完整独立复制父快照，只允许更改总览 HTML、`suite.js/css`、新增展示元数据和验证清单；
+逐条报告 HTML/JSON、参考线与贴合数据、回放资源均核对为字节不变。
+所有旧网址保留，回退只需打开原地址。
+
+### 详情页阶段概览与同任务切换
+
+轨迹详情页头部直接显示归档的任务专属阶段徽标：`✓` 已达到、`—` 未达到、`?` 未记录。
+这些是整条轨迹**累计曾达到**的结果，拖动模型时间游标不会改写它们；当前时刻的阶段观测仍在原详细面板中查看。
+原任务结果严格读取该条归档的原生 `task_success`（真/假/未知），与 staged 阶段结果分开展示。
+本批两条原生成功轨迹的 staged 完整阶段仍未通过；三类白板仅定义拿起阶段，绿色拿起徽标不等于擦净或完整成功。
+
+模型时间条顶部增加“同任务切换”：
+
+- 上一条／下一条，以及按模型与 checkpoint 分组的 seed 下拉选择；当前批次每个任务有 40 条。
+- 按任务精确匹配，不将水平、倾斜和横线白板混为同一个任务；可在同任务不同权重之间切换。
+- 导航随模型时间条固定，滚动查看图表时也可操作；切换完整加载目标页面，从该条自己的时间起点开始，
+  不沿用上一条游标，也不对齐模型与专家时间线。
+- 首尾方向禁用；索引缺失、路径或身份校验失败、`file://` 无法读取索引时明确提示不可用，
+  当前回放和指标继续可用，并保留“返回任务列表”入口。
+
+轻量导航索引 `trajectory_index.json` 只含 H50 轨迹身份、任务、模型、权重、seed、相对报告路径和原生成功标记，
+不包含源文件系统路径或内部 provenance。它只是批次清单的展示投影，不重判任何阶段。
+
+从已有快照生成独立详情导航版：
+
+```bash
+.pixi/envs/default/bin/python -B scripts/analysis/evaluation_goal_reference_snapshot.py \
+  --source-report reports/staged_h50_clean_view_20261015 \
+  --output-dir reports/staged_h50_detail_navigation_next \
+  --presentation-only --detail-navigation
+.pixi/envs/default/bin/python -B scripts/analysis/evaluation_goal_reference_snapshot.py \
+  --verify reports/staged_h50_detail_navigation_20261015
+```
+
+`--detail-navigation` 必须与 `--presentation-only` 一起使用，才额外允许替换 `workbench.js/css` 并生成导航索引；
+原 portal-only 模式的回放资产保护不放宽。逐条报告 HTML/JSON、阶段/目标/贴合数据和媒体仍核对为字节不变。
+`staged_h50_clean_view_20261015` 及更早各版均原样保留。
+
+### 单项参考线
+
+- 紫色虚线表示机械位置目标或单侧阈值（`≤` / `≥`）；淡色带表示已核实的几何容差或允许范围。
+- 灯泡旋拧曲线和读数统一显示角度（°），由原净圈数 ×360 得到，反向转动会抵消，
+  不将角度归一化为整个任务完成率。新导出使用 `clockwise_angle_deg`、`angle_removed_deg`，
+  原位任务另用 `rotation_from_initial_deg` 表示相对实际初态的净旋入角度。
+  新版观察台也可在显示时换算旧 `turn` 曲线及其目标线，不改写归档样本。
+- 旋入角度目标为 100°，轴向目标为 7.111 mm；
+  几何容差分别为 ±28.8°（原 ±0.08 圈）、±0.3 mm。它们只是机械到座条件的一部分。
+  原位任务的相对初态角度需扣除本条实际初始角，不直接套用固定的 100° 终点。
+- 旋出角度参考为 131.5°的名义脱扣位置，**不画对称脱扣容差带**。
+  121.5°只是合法脱扣事件的最低旋出量校验，不是名义终点。
+  轴向 `≤−3 mm` 是完全清离的单侧几何条件，不是放回桌面后的目标。
+- RAM 插入深度目标为 **6 mm**，原就位容差 **±0.2 mm**，显示 **5.8–6.2 mm** 容差带；
+  该有符号几何量不是越大越好，必须结合完整插入边与孔口匹配观察。
+  姿态误差理想值为 **0°**，原就位门槛为 **≤1° / 0.017453 rad**，显示 **0–1°** 允许区。
+  两项满足仍不证明真实压底；原生成功另需压底证据及稳定保持，不证明电连接或卡扣闭锁。
+- 抽卡 `card_displacement_now_mm`（当前位移）和 `card_displacement_peak_mm`（累计最大位移）
+  均标 **≥50 mm** 的模型原生抽出边缘阶段位移参考。
+  当前位移是相对本轨迹初态朝机器人方向的有符号位移；累计最大值只说明曾达到，卡片回退后仍会保持峰值。
+  达到该位移还须同一物理时刻桌面支撑、平放和悬出比例满足，之后还要夹持、抬牌和持牌检查；
+  不把位移越线标成完整成功，也不混用专家完整流程中的 **>80 mm** 条件。
+  这也不是独立 staged Stage 1 的 **XY 位移 ≥20 mm + 桌面有效接触持续 0.05 s** 门槛。
+- USB 插入：背挡目标 **12 mm**，机械近底范围 **11.9–12.1 mm**；机械就位姿态上限 **3°**，
+  允许区 **0–3°**。图中的对准条件插深原来以孔口匹配和 **≤5°** 决定是否记非零，
+  未对准记 0 是记录约定；不要把该 5°门槛与机械就位的 3°混同，也不改写原深度。
+- USB 拔出：有符号轴向位置 **≤−2 mm** 是完全清离的几何条件之一，
+  还需无插座接触并保持 **0.10 s**；不是放回桌面的最终位置。
+- 白板：平均 `cleaned_fraction=1` / **100%** 只画“理想参考”，不是独立的成功阈值。
+  从同轨迹已归档 `staged_states.jsonl:measurements.native_task_state.maximum_ink_remaining`
+  补充“最大单元墨迹余量”曲线，标出真实原生擦净条件 **≤1e−9**。
+  三种白板仍分别检查 25/25/8 块墨迹；还须满足拿取/抬升、释放以及水平变体回位等各自条件。
+  科学计数法保留微小非零残留，不把显示四舍五入的 0% 当作已经擦净。
+- 图的纵轴同时包含真实观测和参考值，即使模型没有推进也能看到离目标的距离。
+  原始数值、采样时刻、缺口和游标不改变；扭矩与螺纹载荷不强设“完成终点”。
+
+参考值只在该 trial 绑定的 summary、deployment manifest、source inventory 和已审阅
+配置/测量源码 SHA 全部核实后生成；不是直接取当前默认值重判历史数据。
+目标元数据保存在各 trial 的 `goal_references.json`；来源不足时状态为 `unavailable`，不补造参考线。
+入带或到线不等于真实压底、拧紧、释放、真实脱扣、完成持牌检查或整个任务成功，仍须结合原生/阶段标志。
+
+### 白板接触期间贴合面积比
+
+旧网页缺少字段映射，并非本批没有记录。新版从 SHA 绑定的 staged 状态日志和最终汇总提取：
+
+- `effective_pad_contact_area_ratio`：当前有板面承载接触时的有效贴合面积 / 完整毡底面积；
+  非接触时留空，而有接触却不贴合的真实 0 保留。
+- `contact_time_weighted_mean_effective_area_ratio`：截至当前的接触期间累计均值，
+  公式为 `∫有效贴合面积 dt /（完整毡底面积 × 板面承载接触时长）`。
+  直接采用原物理 dt 积分记录，不对低频展示点或视频帧重新取平均。
+- 终态摘要另外显示整个 episode 的接触期均值和累计板面承载接触时长，不随当前回放游标变化。
+
+该测量是**带载刚体几何贴合估计**，分母为编译后的完整毡底平面多边形，
+当前批次按有限板内重叠、法向偏差 ≤20°、表面间隙/穿透 ±2 mm、实际承载 >1e−8 N 筛选；
+它不是真实形变接触面积，不是墨迹累计覆盖率，也不等于有效擦除。
+指标没有预设“达到某百分比就成功”的线。6 条零板面接触轨迹的均值为 `null / no_contact`，
+显示“无接触，均值未定义”，不显示伪造的 0%；来源冲突则明确不可用，不回填终态值。
+原生、staged 和完整任务成功三层结果保持原样，白板 staged 仍只定义拾取而没有完整清洁成功布尔式。
+
+此入口只为**现有报告的独立副本**增加展示标注及已有记录的曲线投影，不启动推理或重算物理指标，
+与前文需要两份原工程来源的 `evaluate_unified.py export` 不是同一个操作。
+新网页、媒体与图像都是独立文件副本，不依赖指向旧站的软/硬链接；
+其来源复核不应被误读为已重新验证退役原工程或重跑物理。
+
+从 unified 根目录执行；再次生成时选择尚不存在的新目录：
+
+```bash
+.pixi/envs/default/bin/python -B scripts/analysis/evaluation_goal_reference_snapshot.py \
+  --source-report reports/staged_h50_goal_refs_ram_poker_20261015 \
+  --output-dir reports/staged_h50_goal_refs_next \
+  --verified-usb-source-copy /cpfs_infra/user/chenxianchi/code/kaitactilesim_unified
+.pixi/envs/default/bin/python -B scripts/analysis/evaluation_goal_reference_snapshot.py \
+  --verify reports/staged_h50_goal_refs_usb_whiteboard_20261015
+```
+
+本批 USB 插入归档没有源码 root 字段，因此命令**显式**提供 USB 源码字节副本：每个必需配置、
+监视器及记录模块文件仍须与该 trial 冻结 manifest 的 SHA/大小匹配；不是使用当前默认参数。
+不提供该选项时缺源则不显示 USB 参考线。其它任务仍从各自 SHA 绑定的冻结源码 root 读取。
+白板补充记录另保存在 `whiteboard_contact_area.json`，来源、时钟原点、分母和几何参数均可追溯；
+新增序列带 `presentation_extension` 标记，完整保留已有曲线的数值、时刻和缺口。
+
+旧参考版可以作为新导出的父报告；每条目标线仍重新核验来源，证据缺失时删除新副本中的旧线，
+而不是把旧标注当作可信默认值。整个导出不会覆盖任何父报告。
+
+`--verify` 检查新版文件清单/哈希及原站完整文件清单/哈希；原站仍须可访问。
+回退时打开原网址即可，不需覆盖文件或撤销代码。
+
+## 分层证据与统计边界
+
+| 层 | 来源 | 含义 |
+|---|---|---|
+| 原任务结果 | 归档 summary 的 task_success/status | 当次执行记录的任务结果，保留原值 |
+| 阶段结果 | staged_evaluation.json / staged_states.jsonl | 按当时规则累计曾到达的阶段，保留首次到达时间 |
+| 数据审核 | 物理标志、来源 SHA、日志时钟、合同校验 | 是否具备所需证据；不覆盖上两层事实 |
+| 动作与触觉观察 | 模型/专家视频、Fn/Ft、关节与腕部曲线 | 帮助观察行为与载荷关系，不构成因果证明 |
+
+阶段统计仅在相同任务、模型、权重内容、批次和归档规则身份内计数。
+同为 `staged_v1` 不代表源码相同：例如扑克修复批次单独保留其 observer SHA。
+当前规则导出的目录 SHA 也不是历史规则实现的 SHA。导入验证归档 inventory/manifest 与记录合同，
+不会声称已经按历史源码重新仿真或重算判定。离线读取依照实际归档合同及来源身份，
+不会用当前在线规则替换归档定义。
+
+当前代码共有 13 个任务，其中 10 个注册了 `staged_v1`；完整列表、数值门槛和累计方式见
+[阶段评估规则](staged_evaluation.md)。原生任务成功及专家完整执行的条件见
+[各任务成功条件](../tasks/success_criteria.md)。现有 360 条归档只包含当时的 9 个任务，
+没有新任务 `bulb-screw-inplace`；新任务已能产生当前阶段观测，不等于已验证历史站导入链路。
+
+现有站点导入的 staged 记录均为 diagnostic_only，不应标为正式模型成功率或跨任务综合排名。
+白板三类任务仅定义拿起阶段，`complete_success=null`：未定义完整擦拭结果，不是 0，也不等于成功擦净。
+几何覆盖与真实去污/接触面积亦不混同。失败、未知及证据缺失都保留。
+
+## 时间与力的解释
+
+- 专家视频使用自己的播放时间线，不与模型按秒对齐，不计算时间轴相似度。
+- 只有明确共享原生时钟的 staged 记录才提供“跳到模型首次到达”；否则保留独立绝对时间和 unmapped 标志。
+- 保留日志真实采样间隔和缺口，不将累计阶段标志解释为当前接触，不插值补造状态。
+- 五指法向载荷与切向载荷是局部测点/手指载荷的标量汇总，不是统一世界坐标的净合力。
+- 台面支撑、板擦—白板、插座等对象交互力来自各任务物理记录，与手指载荷分开标注。
+- USB 插入缺少原三类 PNG 时，由模型原生 NPZ 补绘模型自身曲线，不伪造专家对照。
+
+## 此次导入与回退
+
+默认 canonical staged 批次有 340 条；显式额外导入水平线擦拭 step20000 的 20 条完整记录，合计 360 条。
+额外记录所属运行组标为 failed，这一批处理警告保留，不抹去每条已完成日志，也不解释成每条任务失败。
+历史扑克中断/重试目录不重复纳入。`selection.json` 记录选择、排除和来源，
+`source_manifest.json` / `artifact_manifest.json` / `verification.json` 可复核导出证据。
+
+原站文件及服务仍可访问时，继续访问原站 8876 即可回退；不需要 checkout 或覆盖目录。
+导航锚点本身不复制旧网页或恢复已退役目录；若原路径已缺失，须从实际保存位置恢复访问。
+新站 `_preserved_h50` 是原站的导航和校验锚点，不是原报告副本。
+实际数据盘在本次整合前已清理部分旧输入：新锚点会严格核对仍可访问的历史来源，
+对仅路径迁移且 SHA/大小一致的别名留痕重绑定；已缺失的历史输入明确记录为不可验证。
+旧站自身的原 artifact manifest 及其中全部生成物另行逐文件校验保护，
+不会把“旧网页保留完好”误写成“旧原始数据全部还在”。此模式使用 `_preserved_h50_site_bound`。
+本工程包含完整仿真源码；整合站是已有记录的离线导入，不是新模型 rollout。未来启动新 rollout 时，
+必须重新 prepare/verify 生成绑定新源码的部署 manifest，不能复用旧部署的源码 SHA。
+
+## 2026-10-15 整合初版归档验收
+
+- 完整输出：`reports/staged_h50_20261015`，本地入口 `http://127.0.0.1:8877/`。
+- 9 个任务各 40 条、18 个规则/权重/批次分组各 20 条；共 360 条 H50/K50，没有 H30 或重试重复。
+- 360 条逐条核对原 summary/sidecar：原生字段、完整阶段结果、首次时间和诊断标志一致；白板 120 条完整成功保留 null。
+- Fn、Ft、专家回放和三类全程图均覆盖 360 条；USB 插入 40 条的三类图为模型自身日志补绘。
+- 319 项 Python 测试和 117 项子测试通过；前端力学/游标辅助测试通过。
+- 两组浏览器验收均通过 9 任务；新版另核对 18 分组、7 次实际阶段跳转、专家独立时钟、腕部切换与 390px 布局。
+- 整合初版验收时，`verify` 全量核验通过，856 个原来源文件与合并清单一致；这是历史验收，不保证这些路径今天仍可访问。
+- 整合初版只做离线导入，没有新建模型 rollout、训练或 GPU 仿真。
+
+之后新增的[灯泡原位旋入](../tasks/bulb_screw_inplace.md)已完成 CPU 专家物理验证，
+三相机 Raw 与独立预览位于新目录，未混入上述 360 条模型评估。其预览可直接打开
+`http://127.0.0.1:8877/bulb_screw_inplace_demo_20261015/review.mp4`。
+最近一次只读复核中，原整合站 4,334 个归档文件的大小和 SHA256 全部一致。

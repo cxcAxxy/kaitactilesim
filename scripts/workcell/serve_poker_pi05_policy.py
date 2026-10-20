@@ -11,6 +11,26 @@ from pathlib import Path
 
 from kaihand_tactile_env.shared.pi05_deployment_integrity import verify_pi05_deployment
 
+try:
+  from prepare_poker_pi05_deployment import (
+    SCHEMA_V2,
+    validate_manifest_training_binding,
+    validate_train_config,
+  )
+  from serve_shared_task_pi05_policy import warmup_policy
+except ModuleNotFoundError as error:
+  if error.name not in {
+    "prepare_poker_pi05_deployment",
+    "serve_shared_task_pi05_policy",
+  }:
+    raise
+  from scripts.workcell.prepare_poker_pi05_deployment import (
+    SCHEMA_V2,
+    validate_manifest_training_binding,
+    validate_train_config,
+  )
+  from scripts.workcell.serve_shared_task_pi05_policy import warmup_policy
+
 CONFIG_NAME = "pi05_kaihand"
 
 
@@ -23,7 +43,10 @@ def bind_checkpoint_assets(config, manifest: dict):
     or asset_id in {".", ".."}
   ):
     raise RuntimeError("manifest normalizer_asset_id must be one directory name")
-  assets = dataclasses.replace(config.data.assets, asset_id=asset_id)
+  replacements = {"asset_id": asset_id}
+  if hasattr(config.data.assets, "assets_dir"):
+    replacements["assets_dir"] = str(Path(manifest["checkpoint_path"]) / "assets")
+  assets = dataclasses.replace(config.data.assets, **replacements)
   data = dataclasses.replace(config.data, assets=assets)
   return dataclasses.replace(config, data=data)
 
@@ -31,17 +54,15 @@ def bind_checkpoint_assets(config, manifest: dict):
 def _load_manifest(path: Path) -> tuple[Path, dict]:
   resolved = path.expanduser().resolve()
   payload = json.loads(resolved.read_text(encoding="utf-8"))
-  if payload.get("schema") != "poker_pi05_deployment_v1":
-    raise RuntimeError("expected poker_pi05_deployment_v1 manifest")
-  if payload.get("task") != "poker-draw" or payload.get("model_family") != "pi0.5":
-    raise RuntimeError("manifest is not a poker-draw pi0.5 deployment")
-  if payload.get("model_config_name") != CONFIG_NAME:
-    raise RuntimeError(f"manifest must use OpenPI config {CONFIG_NAME!r}")
+  validate_manifest_training_binding(payload)
   checkpoint = Path(payload["checkpoint_path"])
   if not checkpoint.is_dir():
     raise FileNotFoundError(checkpoint)
   for row in payload.get("checkpoint_files", []):
-    source = checkpoint / row["path"]
+    relative = Path(row["path"])
+    if relative.is_absolute() or ".." in relative.parts:
+      raise RuntimeError("unsafe checkpoint file path")
+    source = checkpoint / relative
     if not source.is_file() or source.stat().st_size != row["size"]:
       raise RuntimeError(f"checkpoint file snapshot mismatch: {source}")
   asset_id = payload.get("normalizer_asset_id")
@@ -60,22 +81,28 @@ def _load_manifest(path: Path) -> tuple[Path, dict]:
   return resolved, payload
 
 
-def main() -> None:
+def main(argv=None) -> None:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--deployment-manifest", type=Path, required=True)
   parser.add_argument("--port", type=int, default=18784)
-  args = parser.parse_args()
+  args = parser.parse_args(argv)
   if not 1 <= args.port <= 65535:
     parser.error("port must be in 1..65535")
 
+  manifest_path, manifest = _load_manifest(args.deployment_manifest)
+  verify_pi05_deployment(manifest, evaluation_root=Path(__file__).resolve().parents[2])
+
+  # Authenticate all repository source bytes before importing the model stack.
   from openpi.policies import policy_config
   from openpi.serving import websocket_policy_server
   from openpi.training import config as openpi_config
 
-  manifest_path, manifest = _load_manifest(args.deployment_manifest)
-  verify_pi05_deployment(manifest)
   config = bind_checkpoint_assets(
     openpi_config.get_config(manifest["model_config_name"]), manifest
+  )
+  training_provenance = validate_manifest_training_binding(manifest)
+  metadata = validate_train_config(
+    config, manifest["model_config_name"], training_provenance
   )
   expected = {
     "action_dim": manifest["action_dim"],
@@ -88,8 +115,8 @@ def main() -> None:
       "observation.images.head",
       "observation.images.right_wrist",
     ],
+    "action_semantics": manifest["action_representation"],
   }
-  metadata = dict(config.policy_metadata or {})
   mismatches = {
     key: {"expected": value, "actual": metadata.get(key)}
     for key, value in expected.items()
@@ -101,12 +128,31 @@ def main() -> None:
     config,
     manifest["checkpoint_path"],
     default_prompt=manifest["instruction"],
+    expected_use_quantile_norm=(
+      training_provenance["record"]["normalizer"]["use_quantile_norm"]
+      if training_provenance is not None
+      else None
+    ),
+  )
+  logging.info(
+    "WARMUP_START task=poker-draw deployment=%s H=%s",
+    manifest["deployment_id"],
+    manifest["prediction_horizon"],
+  )
+  warmup = warmup_policy(policy, manifest)
+  logging.info(
+    "WARMUP_OK duration_s=%.3f action_shape=%s rng_restored=%s",
+    warmup["duration_s"],
+    warmup["action_shape"],
+    warmup["rng_restored"],
   )
   server_metadata = {
     **metadata,
     "evaluation_task": "poker-draw",
     "model_family": manifest["model_family"],
     "model_config_name": manifest["model_config_name"],
+    "normalizer_asset_id": manifest["normalizer_asset_id"],
+    "training_provenance": training_provenance,
     "deployment_manifest": str(manifest_path),
     "deployment_id": manifest["deployment_id"],
     "checkpoint_path": manifest["checkpoint_path"],
@@ -114,6 +160,17 @@ def main() -> None:
     "prediction_horizon": manifest["prediction_horizon"],
     "observation_contract": manifest["observation_contract"],
     "action_representation": manifest["action_representation"],
+    "required_action_interpolation": manifest.get(
+      "required_action_interpolation", "linear"
+    ),
+    "diagnostic_only": True,
+    "formal_metrics_valid": False,
+    "diagnostic_reasons": [
+      "poker_checkpoint_missing_bound_source_environment"
+      if manifest["schema"] == SCHEMA_V2
+      else "legacy_v1_unbound_deployment"
+    ],
+    "server_warmup": warmup,
   }
   logging.info(
     "Serving deployment %s step=%s H=%s physical_action_dim=%s on port %s",

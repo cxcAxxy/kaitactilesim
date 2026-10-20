@@ -1,39 +1,28 @@
 #!/usr/bin/env python3
 """Unified dispatch for task/model-specific simulation evaluation adapters."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT / "src") not in sys.path:
+  sys.path.insert(0, str(ROOT / "src"))
+
+from kaihand_tactile_env.pipeline.catalog import (
+  EVALUATION_RUNNERS,
+  MODEL_FAMILIES,
+  TASKS,
+)
 from kaihand_tactile_env.shared.policy_cameras import policy_camera_names
 
-ROOT = Path(__file__).resolve().parents[2]
-RUNNERS = {
-  ("pick-place", "egosteer"): "evaluate_pickplace_policy_batch.py",
-  ("pick-place", "pi05"): "evaluate_pickplace_policy_batch.py",
-  ("pick-place", "lingbot-vla2"): "evaluate_pickplace_lingbot_vla2_batch.py",
-  ("poker-draw", "egosteer"): "evaluate_poker_policy_batch.py",
-  ("poker-draw", "pi05"): "evaluate_poker_pi05_policy_batch.py",
-  ("poker-draw", "pi05+trex"): "evaluate_poker_pi05+trex_policy_batch.py",
-  ("usb-insert", "egosteer"): "evaluate_usb_policy_batch.py",
-  ("usb-insert", "pi05"): "evaluate_usb_pi05_policy_batch.py",
-  ("bulb-screw", "egosteer"): "evaluate_shared_task_policy_batch.py",
-  ("bulb-screw", "pi05"): "evaluate_shared_task_policy_batch.py",
-  ("bulb-screw", "egotouch"): "evaluate_shared_task_policy_batch.py",
-  ("install-ram", "egosteer"): "evaluate_shared_task_policy_batch.py",
-  ("install-ram", "pi05"): "evaluate_shared_task_policy_batch.py",
-  ("install-ram", "egotouch"): "evaluate_shared_task_policy_batch.py",
-  ("vase-wipe", "egosteer"): "evaluate_shared_task_policy_batch.py",
-  ("vase-wipe", "pi05"): "evaluate_shared_task_policy_batch.py",
-  ("vase-wipe", "egotouch"): "evaluate_shared_task_policy_batch.py",
-  ("whiteboard-wipe", "egosteer"): "evaluate_shared_task_policy_batch.py",
-  ("whiteboard-wipe", "pi05"): "evaluate_shared_task_policy_batch.py",
-  ("whiteboard-wipe", "egotouch"): "evaluate_shared_task_policy_batch.py",
-}
+RUNNERS = EVALUATION_RUNNERS
 
 _SOURCE_TASK_DIRECTORY = {"usb-insert": "usb_insert"}
 
@@ -97,14 +86,11 @@ def parse_args(argv=None):
   )
   parser.add_argument(
     "--task",
-    choices=(
-      "pick-place", "poker-draw", "usb-insert", "bulb-screw", "vase-wipe",
-      "install-ram", "whiteboard-wipe",
-    ),
+    choices=TASKS,
   )
   parser.add_argument(
     "--model-family",
-    choices=("egosteer", "pi05", "pi05+trex", "egotouch", "lingbot-vla2")
+    choices=MODEL_FAMILIES,
   )
   parser.add_argument("--deployment-manifest", type=Path)
   parser.add_argument("--output-dir", type=Path)
@@ -130,11 +116,12 @@ def parse_args(argv=None):
     "--execute-steps",
     type=_execute_steps_request,
     nargs="+",
-    default=("horizon",),
+    default=None,
     metavar="N|horizon",
     help=(
-      "One or more action-chunk execution lengths. The default executes the "
-      "deployment prediction horizon"
+      "One or more action-chunk execution lengths. The default is 5 for "
+      "PickPlace EgoTouch, frozen deployment K for CPM/FTP-1, "
+      "and the deployment prediction horizon otherwise"
     ),
   )
   parser.add_argument(
@@ -145,7 +132,12 @@ def parse_args(argv=None):
   parser.add_argument(
     "--max-sim-seconds",
     type=float,
-    help="Maximum simulated seconds per trial (default: task runner default)",
+    default=90.0,
+    help="Maximum simulated seconds per trial (default: 90; success/fatal errors stop early)",
+  )
+  parser.add_argument(
+    "--guard-mode", choices=("observe", "strict"), default="observe",
+    help="Observe and record task guards without stopping (default), or use strict termination",
   )
   parser.add_argument(
     "--record-fps",
@@ -178,10 +170,13 @@ def parse_args(argv=None):
     args.video_count = args.num_trials
   if not 0 <= args.video_count <= args.num_trials:
     parser.error("--video-count must be between 0 and --num-trials")
-  if len(args.execute_steps) != len(set(args.execute_steps)):
+  if (
+    args.execute_steps is not None
+    and len(args.execute_steps) != len(set(args.execute_steps))
+  ):
     parser.error("--execute-steps entries must be distinct")
-  if args.max_sim_seconds is not None and args.max_sim_seconds <= 0:
-    parser.error("--max-sim-seconds must be positive")
+  if not math.isfinite(args.max_sim_seconds) or args.max_sim_seconds <= 0:
+    parser.error("--max-sim-seconds must be finite and positive")
   if args.reference_episode_index < 0:
     parser.error("--reference-episode-index must be nonnegative")
   duplicated = [
@@ -191,6 +186,7 @@ def parse_args(argv=None):
       "--video-count",
       "--execute-steps",
       "--max-sim-seconds",
+      "--guard-mode",
       "--record-fps",
       "--reference-dataset",
       "--reference-episode-index",
@@ -240,15 +236,24 @@ def _validate_manifest(path, task, family, cameras=None):
     raise ValueError(
       f"deployment model_family {payload.get('model_family')!r} differs from {family!r}"
     )
+  if family in {"pi05+cpm", "ftp1"}:
+    from kaihand_tactile_env.shared.tactile_deployment import validate_manifest
+    validate_manifest(payload)
   observation = payload.get("observation_contract")
   if not isinstance(observation, dict) or "cameras" not in observation:
     raise ValueError("deployment manifest must declare observation_contract.cameras")
   declared_cameras = observation["cameras"]
   camera_names = policy_camera_names(observation)
-  if normalized_family == "egotouch" and camera_names != ("head",):
-    raise ValueError(
-      "the current EgoTouch worker is single-RGB and requires cameras=['head']"
-    )
+  if normalized_family == "egotouch":
+    if task == "pick-place" and camera_names != ("head", "right_wrist"):
+      raise ValueError(
+        "pick-place EgoTouch requires cameras=['head', 'right_wrist'], "
+        f"got {list(camera_names)!r}"
+      )
+    if task != "pick-place" and camera_names != ("head",):
+      raise ValueError(
+        "the current EgoTouch worker is single-RGB and requires cameras=['head']"
+      )
   if cameras is not None and tuple(declared_cameras or ()) != tuple(cameras):
     raise ValueError(
       f"deployment cameras {declared_cameras!r} differ from requested {cameras!r}"
@@ -267,12 +272,12 @@ def _resolve_execution_modes(requests, payload):
         raise ValueError(
           "--execute-steps horizon requires a positive prediction_horizon in the deployment manifest"
         )
-      value = horizon
+      value = horizon - int(payload.get("action_start_index", 0))
       name = f"execute_steps_horizon_{horizon}"
     else:
       value = int(request)
       name = f"execute_steps_{value}"
-    if horizon is not None and value > horizon:
+    if horizon is not None and value > horizon - int(payload.get("action_start_index", 0)):
       raise ValueError(
         f"execute-steps={value} exceeds deployment prediction_horizon={horizon}"
       )
@@ -307,7 +312,26 @@ def main(argv=None):
     reference_dataset = _reference_dataset_from_checkpoint(payload, args.task)
   if reference_dataset is not None:
     reference_dataset = reference_dataset.expanduser().resolve()
-  modes = _resolve_execution_modes(args.execute_steps, payload)
+  execution_requests = args.execute_steps
+  if execution_requests is None:
+    execution_requests = (
+      (5,) if (args.task, args.model_family) == ("pick-place", "egotouch")
+      else (payload["execute_steps"],) if args.model_family in {"pi05+cpm", "ftp1"}
+      else ("horizon",)
+    )
+  if (
+    (args.task, args.model_family) == ("pick-place", "egotouch")
+    and tuple(execution_requests) != (5,)
+  ):
+    raise ValueError(
+      "PickPlace EgoTouch must execute exactly 5 waypoints per observation; "
+      "H50 is the prediction horizon, not the open-loop execution length"
+    )
+  modes = _resolve_execution_modes(execution_requests, payload)
+  if args.model_family in {"pi05+cpm", "ftp1"} and any(
+    mode["value"] != payload["execute_steps"] for mode in modes
+  ):
+    raise ValueError("execute_steps is frozen for CPM/FTP-1; prepare another deployment for a different K")
   try:
     runner = RUNNERS[(args.task, args.model_family)]
   except KeyError as error:
@@ -329,8 +353,7 @@ def main(argv=None):
       "--video-count", str(args.video_count),
       "--execute-steps", str(mode["value"]),
     ]
-    if args.max_sim_seconds is not None:
-      command.extend(("--max-sim-seconds", str(args.max_sim_seconds)))
+    command.extend(("--max-sim-seconds", str(args.max_sim_seconds), "--guard-mode", args.guard_mode))
     if args.record_fps is not None:
       command.extend(("--record-fps", str(args.record_fps)))
     if reference_dataset is not None:
@@ -341,6 +364,9 @@ def main(argv=None):
     command.extend(runner_args)
     evaluations.append({**mode, "output_dir": str(output), "command": command})
   description = {
+    "schema": "kaihand_evaluation_plan_v1",
+    "schema_version": 1,
+    "stage": "evaluate",
     "task": args.task,
     "model_family": args.model_family,
     "deployment_id": payload.get("deployment_id"),
@@ -350,6 +376,9 @@ def main(argv=None):
     "video_count": args.video_count,
     "execute_steps": [mode["value"] for mode in modes],
     "max_sim_seconds": args.max_sim_seconds,
+    "guard_mode": args.guard_mode,
+    "diagnostic_only": args.guard_mode == "observe",
+    "formal_metrics_valid": False if args.guard_mode == "observe" else None,
     "record_fps": args.record_fps,
     "reference_dataset": (
       None if reference_dataset is None else str(reference_dataset)

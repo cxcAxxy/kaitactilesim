@@ -9,6 +9,7 @@ import pytest
 from kaihand_tactile_env.workcell.egosteer_client import (
   EgoSteerPolicyClient,
   ObservationHistory,
+  PolicyProtocolError,
   encode_jpeg_sequence,
   pack_payload,
   unpack_payload,
@@ -70,6 +71,46 @@ def test_jpeg_sequence_schema_and_rgb_order() -> None:
   assert decoded.shape == (8, 9, 3)
   assert float(decoded[..., 0].mean()) > 245.0
   assert float(decoded[..., 1:].mean()) < 10.0
+
+
+@pytest.mark.parametrize(
+  ("allow_nonfinite", "shape", "accepted"),
+  [(False, (2, 48), False), (True, (2, 48), True), (True, (1, 48), False)],
+)
+def test_policy_client_can_defer_only_nonfinite_action_validation(
+  allow_nonfinite: bool, shape: tuple[int, int], accepted: bool
+) -> None:
+  actions = np.full(shape, np.nan, dtype=np.float32)
+
+  class FakeWebSocket:
+    async def send(self, payload: bytes) -> None:
+      assert isinstance(payload, bytes)
+
+    async def recv(self) -> bytes:
+      return pack_payload({"pred_actions": actions})
+
+  async def scenario() -> np.ndarray:
+    client = EgoSteerPolicyClient(
+      "ws://127.0.0.1:1", allow_nonfinite_actions=allow_nonfinite
+    )
+    client.websocket = FakeWebSocket()
+    client.metadata = {"action_horizon": 2, "action_dim": 48}
+    response = await client.infer(
+      images=np.zeros((1, 2, 2, 3), dtype=np.uint8),
+      states=np.zeros((1, 48), dtype=np.float32),
+      camera_intrinsics=np.eye(3),
+      instruction="move",
+      image_format="raw",
+    )
+    return response.pred_actions
+
+  if accepted:
+    result = asyncio.run(scenario())
+    assert result.shape == (2, 48)
+    assert np.all(np.isnan(result))
+  else:
+    with pytest.raises(PolicyProtocolError):
+      asyncio.run(scenario())
 
 
 def test_policy_client_end_to_end_protocol() -> None:

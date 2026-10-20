@@ -1,5 +1,8 @@
 # Pick and place 当前示例
 
+原生成功的几何、释放代理与 0.1 秒稳态门槛，以及它与专家结果的区别，见
+[取放成功判定](success_criteria.md#pick-place)。本页主要介绍动作与示例产物。
+
 场景继承 shared 的机器人、双臂初姿、桌面和相机。任务物体为浅灰圆柱和白色盒子。
 自动控制器从 shared home 连续运动，不在 reset 中预定位。
 
@@ -28,7 +31,14 @@ Raw 保留三路共享相机 head、left_wrist、right_wrist，320×240、30 Hz�
 初始帧为 0。全局视频采用距离视频时刻最近的保存状态，仅执行运动学，不执行物理步进，
 不替换训练图像。逐帧索引、校验和与检查结果放在 Raw 同名 JSON 的 `example` 字段中。
 
-重新生成并替换当前示例：
+日常复现先写到尚未存在的新目录，不覆盖既有数据或 H50 报告：
+
+```bash
+MUJOCO_GL=egl .pixi/envs/default/bin/python scripts/workcell/record_pick_place_example.py \
+  --output-dir datasets/pick_place_example_new
+```
+
+以下是**明确要求替换当前开发样例时**才执行的覆盖操作，不是普通查看/评估命令：
 
 ```bash
 MUJOCO_GL=egl .pixi/envs/default/bin/python scripts/workcell/record_pick_place_example.py --overwrite

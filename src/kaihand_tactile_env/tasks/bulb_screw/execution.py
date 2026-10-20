@@ -153,7 +153,8 @@ class BulbScrewExecutor:
     )
     self.observer, self.should_stop = observer, should_stop
     self.max_strokes = max_strokes
-    self.monitor = BulbScrewMonitor(simulation)
+    # This expert performs its own loaded-stall and final-release checks.
+    self.monitor = BulbScrewMonitor(simulation, auto_confirm_tightening=False)
     self._names = simulation._hand_joint_names["right"]
     self._body = simulation.model.body("bulb").id
     self._pads = {
@@ -275,8 +276,10 @@ class BulbScrewExecutor:
       raise _TaskFailure(f"required fingertip contact lost during {phase}")
     if require_thread and not self._state.engaged:
       raise _TaskFailure(f"thread disengaged during {phase}")
-    if np.max(self._grip) > 35:
-      raise _TaskFailure(f"fingertip load exceeded 35 N during {phase}")
+    if np.max(self._grip) > config.MAX_FINGERTIP_LOAD_N:
+      raise _TaskFailure(
+        f"fingertip load exceeded {config.MAX_FINGERTIP_LOAD_N:g} N during {phase}"
+      )
 
   def _advance(self, duration, phase, **checks):
     for _ in range(max(1, round(duration / self.sim.timestep))):
@@ -340,6 +343,11 @@ class BulbScrewExecutor:
 
   def _servo_object(self, position, rotation, phase, **checks):
     actual, actual_rotation = self._object_pose()
+    if phase == "turn" and self.finger_count == 2:
+      # Wrist rotation changes the opposed-pad geometry.  Preserve the actual
+      # thumb/index preload at the same 50 Hz cadence as the legacy Cartesian
+      # servo instead of relying on a hidden contact from a tucked finger.
+      self._regulate_grip()
     wrist, wrist_rotation = self.sim.current_pose_matrix("right")
     delta = np.clip(0.3 * (position - actual), -0.0008, 0.0008)
     angular = 0.3 * _rotation_vector_world(rotation, actual_rotation)
@@ -570,7 +578,7 @@ class BulbScrewExecutor:
         upper = np.minimum(limit, bounds[selection, 1] - target[selection])
         lower[0] = upper[0] = 0.0
         target[selection] += _bounded_finger_delta(
-          jac, direction * 0.00005 * error * duration_s / 0.02, lower, upper
+          jac, direction * 0.000025 * error * duration_s / 0.02, lower, upper
         )
         continue
       gradient = direction @ jacobian[:, self.sim._hand_dofs["right"][selection]]
@@ -802,8 +810,14 @@ class BulbScrewExecutor:
       self._advance(0.02, "return_home", require_thread=True)
     self._advance(0.5, "return_home", require_thread=True)
     self._advance(0.5, "verify_seated", require_thread=True)
-    if not self._state.success or np.max(self._grip) > 0.01:
-      raise _TaskFailure("bulb did not remain seated after release")
+    if (
+      not self._state.success
+      or not self._state.released
+      or not self._state.bulb_lit
+      or not self._tightening_verified
+      or np.max(self._grip) > 0.01
+    ):
+      raise _TaskFailure("bulb did not remain seated, lit, tightened, and released")
 
   def _screw_with_fingers(self):
     wrist, rotation = self.sim.current_pose_matrix("right")
@@ -933,14 +947,23 @@ class BulbScrewExecutor:
     if not self._tightening_verified:
       self._tightening = False
       raise _TaskFailure("tightening did not establish loaded angular stall")
-    # Keep the loaded targets after illumination so lighting visibly precedes
-    # release, including when confirmation arrives on the last control tick.
-    self._advance(
-      config.TIGHTENING_LIGHT_HOLD_S,
-      "hold_tight",
-      require_grip=True,
-      require_thread=True,
-    )
+    # Keep regulating the five-finger normal load after illumination. A fixed
+    # target can relax one pad on the smaller globe even though the tightening
+    # gate was satisfied on the preceding control tick.
+    if self.finger_count == 5:
+      self._preload(
+        config.TIGHTENING_LIGHT_HOLD_S,
+        "hold_tight",
+        require_grip=True,
+        require_thread=True,
+      )
+    else:
+      self._advance(
+        config.TIGHTENING_LIGHT_HOLD_S,
+        "hold_tight",
+        require_grip=True,
+        require_thread=True,
+      )
     self._tightening = False
 
   def _check_tightening_stall(self):
@@ -956,6 +979,8 @@ class BulbScrewExecutor:
         self._hand_torque_nm,
         float(min(self._grip)),
         self._state.seated,
+        self._state.right_hand_nonpad_contact_count == 0
+        and self._state.robot_contact_count == self._state.right_hand_contact_count,
       )
     )
     while len(history) > 1 and t - history[1][0] >= config.TIGHTENING_HOLD_S:
@@ -965,15 +990,23 @@ class BulbScrewExecutor:
     )
     duration = t - history[0][0]
     displacement = max(h[1] for h in history) - min(h[1] for h in history)
-    self._tightening_verified = bool(
+    verified = bool(
       duration >= config.TIGHTENING_HOLD_S - 1e-9
       and displacement <= config.TIGHTENING_MAX_ROTATION_RAD
       and min(h[2] for h in history) >= config.TIGHTENING_MIN_TORQUE_NM
       and min(h[3] for h in history) >= 4.0
       and all(h[4] for h in history)
+      and all(h[5] for h in history)
     )
-    self._tightening_stall_s = duration if self._tightening_verified else 0.0
-    if self._tightening_verified and not self.sim.bulb_lit:
+    # Certification records that one complete strict window occurred.  Keep it
+    # monotonic, matching BulbScrewMonitor and the already irreversible light:
+    # a later transient while finishing the commanded effort must not erase a
+    # physically valid earlier loaded stall.  Final release is still checked
+    # independently over its own continuous all-robot-contact-free window.
+    if verified:
+      self._tightening_verified = True
+      self._tightening_stall_s = max(self._tightening_stall_s, duration)
+    if verified and not self.sim.bulb_lit:
       self.sim.confirm_tightening()
       self._state = replace(self._state, bulb_lit=True)
 

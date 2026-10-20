@@ -33,6 +33,15 @@ from kaihand_tactile_env.shared.config import (
   default_model_path,
 )
 from kaihand_tactile_env.shared.contact_tactile import SolverDistributedTactileProvider
+from kaihand_tactile_env.shared.evaluation_guards import (
+  configure_evaluation_guards,
+  ensure_evaluation_physics,
+  evaluation_guard_report,
+  mark_physics_invalid,
+  record_guard_event,
+  recover_nonfinite_action,
+)
+from kaihand_tactile_env.shared.physics_integrity import PhysicsIntegrityError
 from kaihand_tactile_env.shared.policy_cameras import (
   image_shape_hwc,
   policy_camera_names,
@@ -74,6 +83,17 @@ DEFAULT_TACTILE_ROOT = Path(
 )
 
 
+def validate_tactile_physical_actions(actions: np.ndarray) -> np.ndarray:
+  actions = np.asarray(actions)
+  if actions.shape != (30, 27):
+    raise RuntimeError(
+      f"tactile policy action shape must be (30, 27), got {actions.shape}"
+    )
+  if not np.isfinite(actions).all():
+    raise RuntimeError("tactile policy produced invalid physical actions")
+  return actions
+
+
 def parse_args(argv=None):
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--deployment-manifest", type=Path, required=True)
@@ -94,7 +114,10 @@ def parse_args(argv=None):
          "the next full pi0.5 inference begins at execute-steps",
   )
   parser.add_argument("--max-requests", type=int, default=0)
-  parser.add_argument("--max-sim-seconds", type=float, default=50.0)
+  parser.add_argument("--max-sim-seconds", type=float, default=90.0)
+  parser.add_argument(
+    "--guard-mode", choices=("observe", "strict"), default="observe"
+  )
   parser.add_argument("--success-hold-seconds", type=float, default=0.10)
   parser.add_argument(
     "--full-duration-evaluation", action="store_true",
@@ -381,8 +404,7 @@ class LocalTactilePolicy:
     ) + self.action_q01
     # Delta arm actions remain anchored to the beginning of this chunk.
     actions[:, :7] += self.chunk_start_state[None, :7]
-    if actions.shape != (30, 27) or not np.isfinite(actions).all():
-      raise RuntimeError("tactile policy produced invalid physical actions")
+    actions = validate_tactile_physical_actions(actions)
     return {"actions": actions}
 
 
@@ -424,8 +446,13 @@ def run(args) -> dict:
     "full_duration_evaluation": args.full_duration_evaluation,
     "control_hz": CONTROL_HZ,
     "replan_period_s": args.execute_steps / CONTROL_HZ,
-    "diagnostic_only": bool(args.disable_penetration_guard),
-    "formal_metrics_valid": not args.disable_penetration_guard,
+    "guard_mode": args.guard_mode,
+    "guard_events": [],
+    "stop_reason": None,
+    "physics_valid": False,
+    "diagnostic_only": bool(args.disable_penetration_guard) or args.guard_mode == "observe",
+    "formal_metrics_valid": not args.disable_penetration_guard and args.guard_mode == "strict",
+    "task_success": False,
     "penetration_guard_enabled": not args.disable_penetration_guard,
     "penetration_guard_threshold_m": PENETRATION_GUARD_THRESHOLD_M,
     "expert_used": True,
@@ -439,6 +466,7 @@ def run(args) -> dict:
   maximum_supported_table_penetration_m = 0.0
   first_penetration_limit_exceeded_s = None
   error_text = None
+  artifact_failure = None
   try:
     policy = LocalTactilePolicy(args, deployment)
     report["policy_metadata"] = policy.metadata
@@ -455,6 +483,7 @@ def run(args) -> dict:
       simulation,
       contact,
     ):
+      configure_evaluation_guards(simulation, args.guard_mode)
       report["contact_model"] = contact
       report["initial_card_randomization"] = reset_randomized_card(
         simulation,
@@ -462,6 +491,7 @@ def run(args) -> dict:
         xy_jitter_m=args.xy_jitter_mm / 1000.0,
         yaw_jitter_rad=float(np.deg2rad(args.yaw_jitter_deg)),
       )
+      ensure_evaluation_physics(simulation)
       report["initial_card_pose"] = simulation.object_pose("card").tolist()
       tactile = OnlineTactile(simulation)
       monitor = PokerOutcomeMonitor(
@@ -521,7 +551,7 @@ def run(args) -> dict:
 
           recorder = PokerPolicyVideo(
             simulation,
-            output / "review",
+            output,
             fps=args.record_fps,
             width=args.review_width,
             height=args.review_height,
@@ -556,8 +586,9 @@ def run(args) -> dict:
               "control_hz": CONTROL_HZ,
               "replan_period_s": args.execute_steps / CONTROL_HZ,
               "max_sim_seconds": args.max_sim_seconds,
-              "diagnostic_only": bool(args.disable_penetration_guard),
-              "formal_metrics_valid": not args.disable_penetration_guard,
+              "guard_mode": args.guard_mode,
+              "diagnostic_only": bool(args.disable_penetration_guard) or args.guard_mode == "observe",
+              "formal_metrics_valid": not args.disable_penetration_guard and args.guard_mode == "strict",
               "penetration_guard_enabled": not args.disable_penetration_guard,
               "penetration_guard_threshold_m": PENETRATION_GUARD_THRESHOLD_M,
               "observation_contract": deployment["observation_contract"],
@@ -582,9 +613,14 @@ def run(args) -> dict:
             images, state, deployment["instruction"], history, current, maps
           )
           requests += 1
-          actions = validated_actions(
-            response, horizon=horizon, action_dim=deployment["action_dim"]
-          )
+          try:
+            actions = validated_actions(
+              response, horizon=horizon, action_dim=deployment["action_dim"]
+            )
+          except Exception as error:
+            if not recover_nonfinite_action(simulation, error):
+              raise
+            actions = None
           row = {
             "request": requests,
             "sim_time": float(simulation.data.time),
@@ -595,14 +631,14 @@ def run(args) -> dict:
             "right_f6": current.tolist(),
             "right_f6_history": history.tolist() if args.save_raw else None,
             "right_map_abs_max_n": float(np.max(np.abs(maps))),
-            "predicted_action_min": np.min(actions, axis=0).tolist(),
-            "predicted_action_max": np.max(actions, axis=0).tolist(),
-            "predicted_actions": actions.tolist() if args.save_raw else None,
+            "predicted_action_min": None if actions is None else np.min(actions, axis=0).tolist(),
+            "predicted_action_max": None if actions is None else np.max(actions, axis=0).tolist(),
+            "predicted_actions": actions.tolist() if args.save_raw and actions is not None else None,
             "right_tactile_map": maps.tolist() if args.save_raw else None,
           }
           log.write(json.dumps(row, ensure_ascii=False) + "\n")
           log.flush()
-          if requests == 1 and args.save_first_request:
+          if requests == 1 and args.save_first_request and actions is not None:
             np.savez_compressed(
               output / "first_request.npz",
               **{f"{name}_image": image for name, image in images.items()},
@@ -618,17 +654,24 @@ def run(args) -> dict:
             flush=True,
           )
 
-          for index in range(args.execute_steps):
+          action_count = 1 if actions is None else args.execute_steps
+          for index in range(action_count):
             if simulation.data.time >= args.max_sim_seconds or monitor.success:
               break
-            if index and index % args.tactile_refine_every == 0:
+            action_rejected = actions is None
+            if not action_rejected and index and index % args.tactile_refine_every == 0:
               history, current, maps = tactile.observation()
               refine_started = time.monotonic()
-              refined = policy.refine(history, current, maps)
-              actions = validated_actions(
-                refined, horizon=horizon, action_dim=deployment["action_dim"]
-              )
               tactile_refinements += 1
+              try:
+                refined = policy.refine(history, current, maps)
+                actions = validated_actions(
+                  refined, horizon=horizon, action_dim=deployment["action_dim"]
+                )
+              except Exception as error:
+                if not recover_nonfinite_action(simulation, error):
+                  raise
+                action_rejected = True
               log.write(json.dumps({
                 "event": "tactile_refinement", "request": requests,
                 "offset": index, "sim_time": float(simulation.data.time),
@@ -636,20 +679,27 @@ def run(args) -> dict:
                 "right_f6": current.tolist(),
                 "right_f6_history": history.tolist() if args.save_raw else None,
                 "right_map_abs_max_n": float(np.max(np.abs(maps))),
-                "predicted_actions": actions.tolist() if args.save_raw else None,
+                "predicted_actions": (
+                  actions.tolist()
+                  if args.save_raw and not action_rejected else None
+                ),
                 "right_tactile_map": maps.tolist() if args.save_raw else None,
+                "action_rejected": action_rejected,
               }, ensure_ascii=False) + "\n")
               log.flush()
-            clipped_values += apply_action(
-              simulation, joint_names, actions[index], lower, upper
-            )
+            if not action_rejected:
+              clipped_values += apply_action(
+                simulation, joint_names, actions[index], lower, upper
+              )
             control_tick += 1
             target_time = control_tick / CONTROL_HZ
             while (
               simulation.data.time < target_time - 1.0e-12
               and simulation.data.time < args.max_sim_seconds - 1.0e-12
             ):
+              before_time = float(simulation.data.time)
               simulation.step()
+              ensure_evaluation_physics(simulation, before_time=before_time)
               review_metrics.update(simulation)
               observe_simulation(
                 monitor, observer, report["initial_card_pose"][0]
@@ -675,19 +725,51 @@ def run(args) -> dict:
             action_steps += 1
             if recorder is not None:
               recorder.capture(control_tick, outcome_stage(monitor))
+            if action_rejected:
+              break
 
       report["status"] = "success" if monitor.success else "task_not_completed"
   except Exception as error:
+    if simulation is not None and isinstance(error, PhysicsIntegrityError):
+      mark_physics_invalid(simulation)
+      record_guard_event(
+        simulation,
+        "physics_invalid",
+        "poker physics integrity check failed",
+        recovery="stop",
+        details={"error": str(error), **error.details},
+      )
     error_text = f"{type(error).__name__}: {error}"
     report.update(status="error", error=error_text)
     raise
   finally:
     if simulation is not None:
-      report["sim_seconds"] = float(simulation.data.time)
-      report["final_card_pose"] = simulation.object_pose("card").tolist()
-      report["last_drive_state"] = simulation.drive_state()
+      guard_report = evaluation_guard_report(
+        simulation, status=report.get("status"), error=error_text
+      )
+      report.update(guard_report)
+      sim_time = float(simulation.data.time)
+      report["sim_seconds"] = sim_time if np.isfinite(sim_time) else None
+      if guard_report["physics_valid"]:
+        report["final_card_pose"] = simulation.object_pose("card").tolist()
+        report["last_drive_state"] = simulation.drive_state()
+      else:
+        report["final_card_pose"] = None
+        report["last_drive_state"] = None
+      if (
+        report.get("status") == "task_not_completed"
+        and args.max_requests
+        and requests >= args.max_requests
+        and report["sim_seconds"] is not None
+        and report["sim_seconds"] < args.max_sim_seconds
+      ):
+        report["stop_reason"] = "request_limit"
+      if args.disable_penetration_guard:
+        report.update(diagnostic_only=True, formal_metrics_valid=False)
     if observer is not None:
-      report["terminal_metrics"] = observer.terminal_metrics()
+      report["terminal_metrics"] = (
+        observer.terminal_metrics() if report.get("physics_valid") else None
+      )
     if monitor is not None:
       report["evaluation"] = monitor.report()
     report["stats"] = {
@@ -706,24 +788,48 @@ def run(args) -> dict:
       "first_limit_exceeded_sim_time_s": first_penetration_limit_exceeded_s,
     }
     report["wall_seconds"] = time.monotonic() - started
+    report["task_success"] = bool(
+      report.get("evaluation", {}).get("success", False)
+    )
     if raw_capture is not None:
       try:
-        report["raw"] = raw_capture.finish(report, outcome_stage(monitor))
+        if report.get("physics_valid") is False:
+          report["raw"] = {
+            "episode": str(raw_capture.path.relative_to(output)),
+            "validated": False,
+            "terminal_capture_skipped": "physics_invalid",
+          }
+        else:
+          report["raw"] = raw_capture.finish(report, outcome_stage(monitor))
       except Exception as raw_error:
         report["raw_record_error"] = f"{type(raw_error).__name__}: {raw_error}"
-      finally:
+        report.update(stop_reason="fatal_error", formal_metrics_valid=False)
+        if error_text is None:
+          report.update(status="error", error=report["raw_record_error"])
+        artifact_failure = raw_error
+      try:
         raw_capture.close_incomplete()
+      except Exception as raw_close_error:
+        report["raw_record_error"] = (
+          f"{type(raw_close_error).__name__}: {raw_close_error}"
+        )
+        report.update(stop_reason="fatal_error", formal_metrics_valid=False)
+        if error_text is None:
+          report.update(status="error", error=report["raw_record_error"])
+        artifact_failure = artifact_failure or raw_close_error
     if recorder is not None:
       try:
-        recorder.capture(control_tick, outcome_stage(monitor), force=True)
+        if not getattr(simulation, "_evaluation_physics_invalid", False):
+          recorder.capture(control_tick, outcome_stage(monitor), force=True)
         video = recorder.finish(
           status=report.get("status", "error"),
           evaluation=report.get("evaluation"),
-          error=error_text,
+          error=error_text or report.get("raw_record_error"),
         )
         video.update(
           seed=args.seed,
           success=bool(report.get("evaluation", {}).get("success", False)),
+          task_success=report["task_success"],
           inference_requests=requests,
           tactile_refinements=tactile_refinements,
           simulation_time_s=report.get("sim_seconds"),
@@ -740,8 +846,12 @@ def run(args) -> dict:
           execute_steps=args.execute_steps,
           control_hz=CONTROL_HZ,
           replan_period_s=args.execute_steps / CONTROL_HZ,
-          diagnostic_only=bool(args.disable_penetration_guard),
-          formal_metrics_valid=not args.disable_penetration_guard,
+          guard_mode=report.get("guard_mode"),
+          guard_events=report.get("guard_events", []),
+          stop_reason=report.get("stop_reason"),
+          physics_valid=report.get("physics_valid"),
+          diagnostic_only=report.get("diagnostic_only"),
+          formal_metrics_valid=report.get("formal_metrics_valid"),
           penetration_guard_enabled=not args.disable_penetration_guard,
           penetration_guard_threshold_m=PENETRATION_GUARD_THRESHOLD_M,
           maximum_supported_table_penetration_m=(
@@ -751,12 +861,16 @@ def run(args) -> dict:
             first_penetration_limit_exceeded_s
           ),
         )
-        (output / "review" / "review.json").write_text(
+        (output / "review.json").write_text(
           json.dumps(video, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         report["video"] = video
       except Exception as record_error:  # noqa: BLE001 - preserve rollout report on recorder failures
         report["record_error"] = f"{type(record_error).__name__}: {record_error}"
+        report.update(stop_reason="fatal_error", formal_metrics_valid=False)
+        if error_text is None:
+          report.update(status="error", error=report["record_error"])
+        artifact_failure = artifact_failure or record_error
     (output / "summary.json").write_text(
       json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -765,6 +879,8 @@ def run(args) -> dict:
       f"requests={requests} action_steps={action_steps}",
       flush=True,
     )
+    if artifact_failure is not None and error_text is None:
+      raise RuntimeError(report["error"]) from artifact_failure
   return report
 
 

@@ -5,19 +5,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+from kaihand_tactile_env.pipeline.catalog import TASKS
 from kaihand_tactile_env.shared.cameras import TRAINING_CAMERA_NAMES
 
-TASKS = (
-  "pick-place",
-  "poker-draw",
-  "usb-insert",
-  "bulb-screw",
-  "vase-wipe",
-  "install-ram",
-  "whiteboard-wipe",
-  "sponge-grasp",
-)
 FORMATS = ("egosteer", "pi05", "egotouch", "lerobot-v3")
 
 
@@ -36,79 +28,209 @@ class AdapterContract:
   supported_camera_sets: tuple[tuple[str, ...], ...]
   backend: str
   resumable: bool = False
+  runtime: str = "current-python"
+  backend_location: str = "workcell"
+  runtime_profile_fields: tuple[str, ...] = ("python", "env")
+  worker_option: str | None = None
+  worker_semantics: str = "not used by this adapter"
+  capabilities: frozenset[str] = frozenset()
+
+  def supports(self, capability: str) -> bool:
+    return capability in self.capabilities
+
+
+_EGOSTEER_BATCH = {
+  "runtime": "current-python",
+  "backend_location": "workcell",
+  "runtime_profile_fields": ("python", "env"),
+  "worker_option": "--workers",
+  "worker_semantics": "maximum parallel episode conversion processes",
+  "capabilities": frozenset({
+    "cameras",
+    "dataset_name",
+    "expected_episodes",
+    "instruction",
+    "staging_root",
+    "verify_source_hash",
+  }),
+}
+_PI05_FAST = {
+  "runtime": "pi05-python",
+  "backend_location": "workcell",
+  "runtime_profile_fields": ("python", "project_root", "env"),
+  "worker_option": "--fingerprint-workers",
+  "worker_semantics": (
+    "source fingerprint/hash threads and fast episode conversion workers"
+  ),
+  "capabilities": frozenset({
+    "expected_episodes",
+    "openpi_root",
+    "staging_root",
+    "verify_source_hash",
+  }),
+}
+_PI05_USB = {
+  "runtime": "pi05-python",
+  "backend_location": "workcell",
+  "runtime_profile_fields": ("python", "project_root", "env"),
+  "worker_option": "--fingerprint-workers/--image-writer-threads",
+  "worker_semantics": (
+    "source fingerprint/hash threads and image-writer threads; image-writer "
+    "processes stay disabled"
+  ),
+  "capabilities": frozenset({
+    "expected_episodes",
+    "image_writer_threads",
+    "openpi_root",
+    "staging_root",
+    "verify_source_hash",
+  }),
+}
+_PI05_TASK_CAMERA = frozenset({"task", "cameras", "instruction", "dataset_name"})
+_LEROBOT_V3 = {
+  "runtime": "lerobot-v3-python",
+  "backend_location": "workcell",
+  "runtime_profile_fields": ("python", "env"),
+  "worker_option": "--workers",
+  "worker_semantics": (
+    "parallel source preflight and episode conversion processes"
+  ),
+  "capabilities": frozenset({
+    "expected_episodes",
+    "repo_id",
+    "resume",
+    "staging_root",
+    "task",
+    "verify_source_hash",
+    "work_dir",
+  }),
+}
+_EGOTOUCH = {
+  "runtime": "in-process",
+  "backend_location": "in-process",
+  "runtime_profile_fields": ("env",),
+  "worker_option": "in-process pool",
+  "worker_semantics": "maximum parallel episode-by-camera export processes",
+  "capabilities": frozenset({"resume", "verify_source_hash"}),
+}
 
 
 ADAPTERS = {
   ("pick-place", "egosteer"): AdapterContract(
-    "pick-place", "egosteer", (("head",),), "convert_to_egosteer.py"
+    "pick-place", "egosteer", (("head",),), "convert_to_egosteer.py",
+    runtime="current-python",
+    backend_location="workcell",
+    runtime_profile_fields=("python", "env"),
+    capabilities=frozenset({"dataset_name", "instruction"}),
   ),
   ("poker-draw", "egosteer"): AdapterContract(
-    "poker-draw", "egosteer", (), "convert_card_to_egosteer.py"
+    "poker-draw", "egosteer", (), "convert_card_to_egosteer.py",
+    capabilities=_EGOSTEER_BATCH["capabilities"] | {"task"},
+    **{key: value for key, value in _EGOSTEER_BATCH.items() if key != "capabilities"},
   ),
   ("usb-insert", "egosteer"): AdapterContract(
-    "usb-insert", "egosteer", (), "convert_usb_to_egosteer.py"
+    "usb-insert", "egosteer", (), "convert_usb_to_egosteer.py",
+    **_EGOSTEER_BATCH,
   ),
   ("bulb-screw", "egosteer"): AdapterContract(
-    "bulb-screw", "egosteer", (), "convert_card_to_egosteer.py"
+    "bulb-screw", "egosteer", (), "convert_card_to_egosteer.py",
+    capabilities=_EGOSTEER_BATCH["capabilities"] | {"task"},
+    **{key: value for key, value in _EGOSTEER_BATCH.items() if key != "capabilities"},
   ),
   ("install-ram", "egosteer"): AdapterContract(
-    "install-ram", "egosteer", (), "convert_card_to_egosteer.py"
+    "install-ram", "egosteer", (), "convert_card_to_egosteer.py",
+    capabilities=_EGOSTEER_BATCH["capabilities"] | {"task"},
+    **{key: value for key, value in _EGOSTEER_BATCH.items() if key != "capabilities"},
   ),
   ("whiteboard-wipe", "egosteer"): AdapterContract(
-    "whiteboard-wipe", "egosteer", (), "convert_card_to_egosteer.py"
+    "whiteboard-wipe", "egosteer", (), "convert_card_to_egosteer.py",
+    capabilities=_EGOSTEER_BATCH["capabilities"] | {"task"},
+    **{key: value for key, value in _EGOSTEER_BATCH.items() if key != "capabilities"},
   ),
   ("pick-place", "pi05"): AdapterContract(
     "pick-place", "pi05", (("head",),),
     "convert_pickplace_unified_to_lerobot.py",
     resumable=True,
+    **_PI05_FAST,
   ),
   ("poker-draw", "pi05"): AdapterContract(
     "poker-draw", "pi05", (("head", "right_wrist"),),
     "convert_poker_unified_to_lerobot.py",
     resumable=True,
+    capabilities=_PI05_FAST["capabilities"] | _PI05_TASK_CAMERA,
+    **{key: value for key, value in _PI05_FAST.items() if key != "capabilities"},
   ),
   ("usb-insert", "pi05"): AdapterContract(
     "usb-insert", "pi05", (("head", "right_wrist"),),
     "convert_usb_unified_to_lerobot.py",
+    **_PI05_USB,
   ),
   ("bulb-screw", "pi05"): AdapterContract(
     "bulb-screw", "pi05", (), "convert_shared_to_lerobot.py",
     resumable=True,
+    capabilities=_PI05_FAST["capabilities"] | _PI05_TASK_CAMERA,
+    **{key: value for key, value in _PI05_FAST.items() if key != "capabilities"},
   ),
   ("vase-wipe", "pi05"): AdapterContract(
     "vase-wipe", "pi05", (), "convert_shared_to_lerobot.py",
     resumable=True,
+    capabilities=_PI05_FAST["capabilities"] | _PI05_TASK_CAMERA,
+    **{key: value for key, value in _PI05_FAST.items() if key != "capabilities"},
   ),
   ("install-ram", "pi05"): AdapterContract(
     "install-ram", "pi05", (), "convert_shared_to_lerobot.py",
     resumable=True,
+    capabilities=_PI05_FAST["capabilities"] | _PI05_TASK_CAMERA,
+    **{key: value for key, value in _PI05_FAST.items() if key != "capabilities"},
   ),
   ("whiteboard-wipe", "pi05"): AdapterContract(
     "whiteboard-wipe", "pi05", (), "convert_shared_to_lerobot.py",
     resumable=True,
+    capabilities=_PI05_FAST["capabilities"] | _PI05_TASK_CAMERA,
+    **{key: value for key, value in _PI05_FAST.items() if key != "capabilities"},
   ),
   ("sponge-grasp", "pi05"): AdapterContract(
     "sponge-grasp", "pi05", (("head", "right_wrist"),),
     "convert_shared_to_lerobot.py",
+    capabilities=_PI05_FAST["capabilities"] | _PI05_TASK_CAMERA,
+    **{key: value for key, value in _PI05_FAST.items() if key != "capabilities"},
   ),
+  **{
+    (task, "pi05"): AdapterContract(
+      task, "pi05", (("head", "right_wrist"),),
+      "convert_shared_to_lerobot.py", resumable=True,
+      capabilities=_PI05_FAST["capabilities"] | _PI05_TASK_CAMERA,
+      **{key: value for key, value in _PI05_FAST.items() if key != "capabilities"},
+    )
+    for task in (
+      "usb-unplug", "whiteboard-wipe-horizontal", "whiteboard-wipe-horizontal-line",
+      "bulb-unscrew", "bulb-screw-inplace",
+    )
+  },
   **{
     (task, "lerobot-v3"): AdapterContract(
       task, "lerobot-v3", (("head", "right_wrist"),),
       "convert_kaihand_to_lerobot_v3.py", resumable=True,
+      **_LEROBOT_V3,
     )
     for task in (
       "pick-place", "poker-draw", "usb-insert", "bulb-screw",
       "install-ram", "vase-wipe", "whiteboard-wipe", "sponge-grasp",
+      "usb-unplug", "whiteboard-wipe-horizontal", "whiteboard-wipe-horizontal-line",
+      "bulb-unscrew", "bulb-screw-inplace",
     )
   },
   ("poker-draw", "egotouch"): AdapterContract(
-    "poker-draw", "egotouch", (), "shared.tict_export", resumable=True
+    "poker-draw", "egotouch", (), "shared.tict_export", resumable=True,
+    **_EGOTOUCH,
   ),
   ("usb-insert", "egotouch"): AdapterContract(
-    "usb-insert", "egotouch", (), "shared.tict_export", resumable=True
+    "usb-insert", "egotouch", (), "shared.tict_export", resumable=True,
+    **_EGOTOUCH,
   ),
   ("whiteboard-wipe", "egotouch"): AdapterContract(
-    "whiteboard-wipe", "egotouch", (), "shared.tict_export", resumable=True
+    "whiteboard-wipe", "egotouch", (), "shared.tict_export", resumable=True,
+    **_EGOTOUCH,
   ),
 }
 
@@ -134,11 +256,122 @@ def adapter_catalog() -> tuple[dict[str, object], ...]:
         else "listed_sets_only"
       ),
       "resumable": contract.resumable,
+      "runtime": {
+        "kind": contract.runtime,
+        "backend_location": contract.backend_location,
+        "profile_fields": list(contract.runtime_profile_fields),
+      },
+      "workers": {
+        "backend_option": contract.worker_option,
+        "semantics": contract.worker_semantics,
+      },
+      "capabilities": sorted(contract.capabilities),
     }
     for contract in sorted(
       ADAPTERS.values(), key=lambda value: (value.task, value.output_format)
     )
   )
+
+
+def _jsonable(value: Any) -> Any:
+  if isinstance(value, bytes):
+    return value.decode("utf-8", errors="replace")
+  if isinstance(value, dict):
+    return {str(key): _jsonable(item) for key, item in value.items()}
+  if isinstance(value, (tuple, list)):
+    return [_jsonable(item) for item in value]
+  if hasattr(value, "tolist"):
+    return _jsonable(value.tolist())
+  if isinstance(value, (str, int, float, bool)) or value is None:
+    return value
+  return str(value)
+
+
+def _json_attribute(value: Any) -> Any:
+  value = _jsonable(value)
+  if not isinstance(value, str):
+    return value
+  try:
+    return json.loads(value)
+  except json.JSONDecodeError:
+    return value
+
+
+def _declared_contracts(metadata: dict[str, Any]) -> dict[str, Any]:
+  """Transcribe contract-like source metadata without adding semantics."""
+
+  selected = {}
+  for key, value in metadata.items():
+    normalized = key.lower()
+    if (
+      normalized.endswith("_contract")
+      or "action" in normalized
+      or "camera" in normalized
+      or "control" in normalized
+      or normalized in {"observation_clock", "recording_contract"}
+    ):
+      selected[key] = _jsonable(value)
+  return selected
+
+
+def source_contract(dataset: RawDataset) -> dict[str, Any]:
+  """Read action/camera facts from Raw HDF5 files without semantic inference."""
+
+  import h5py
+
+  episodes = []
+  for path in dataset.episodes:
+    with h5py.File(path, "r") as file:
+      metadata_value = _json_attribute(file.attrs.get("metadata_json", "{}"))
+      metadata = metadata_value if isinstance(metadata_value, dict) else {}
+      commands = file.get("commands")
+      streams = {}
+      if isinstance(commands, h5py.Group):
+        for name, value in commands.items():
+          if isinstance(value, h5py.Dataset):
+            streams[name] = {
+              "dtype": str(value.dtype),
+              "shape": list(value.shape),
+            }
+      root_facts = {
+        name: _json_attribute(file.attrs[name])
+        for name in (
+          "schema_version",
+          "physics_hz",
+          "control_hz",
+          "camera_hz",
+          "tactile_source",
+          "contact_force_source",
+          "runtime_contract_json",
+        )
+        if name in file.attrs
+      }
+      runtime_contract = (
+        {
+          "status": "declared",
+          "source_attribute": "runtime_contract_json",
+          "value": root_facts["runtime_contract_json"],
+        }
+        if "runtime_contract_json" in root_facts
+        else {
+          "status": "unknown_not_declared",
+          "source_attribute": "runtime_contract_json",
+          "value": None,
+        }
+      )
+      episodes.append({
+        "source": path.relative_to(dataset.root).as_posix(),
+        "root_facts": root_facts,
+        "runtime_contract": runtime_contract,
+        "declared_contracts": _declared_contracts(metadata),
+        "available_cameras": list(file.get("cameras", {})),
+        "command_streams": streams,
+      })
+  return {
+    "authority": "Raw HDF5 attributes and groups; no action semantics inferred",
+    "selected_cameras": list(dataset.cameras),
+    "episodes": episodes,
+  }
 
 
 def canonical_cameras(values) -> tuple[str, ...]:

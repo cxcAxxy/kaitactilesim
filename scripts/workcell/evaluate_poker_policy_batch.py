@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from collections import Counter
 from pathlib import Path
 
 from kaihand_tactile_env.shared.config import default_model_path, model_fingerprint
+from kaihand_tactile_env.shared.evaluation_video import evaluation_artifact_directory
 
 ROOT = Path(__file__).resolve().parents[2]
 EGL_VENDOR = ROOT / "scripts/collect/nvidia_egl_vendor.json"
@@ -70,6 +72,8 @@ def fingerprints():
     source / "shared" / name
     for name in (
       "simulation.py",
+      "evaluation_guards.py",
+      "physics_integrity.py",
       "egosteer_adapter.py",
       "egosteer_client.py",
       "rendering.py",
@@ -86,6 +90,10 @@ def fingerprints():
 
 
 def classify(report):
+  if any(
+    value for key, value in report.items() if key.endswith("record_error")
+  ):
+    return "infrastructure_or_unclassified_error", False
   if (
     report.get("status") == "success"
     and report.get("evaluation", {}).get("success") is True
@@ -120,7 +128,10 @@ def main():
   parser.add_argument("--deployment-manifest", type=Path, required=True)
   parser.add_argument("--seeds", nargs="+", type=int, default=list(range(30)))
   parser.add_argument("--trial-wall-limit", type=float, default=600.0)
-  parser.add_argument("--max-sim-seconds", type=float, default=50.0)
+  parser.add_argument("--max-sim-seconds", type=float, default=90.0)
+  parser.add_argument(
+    "--guard-mode", choices=("observe", "strict"), default="observe"
+  )
   parser.add_argument(
     "--video-count",
     type=int,
@@ -150,8 +161,11 @@ def main():
     parser.error("video-count must be between zero and the number of seeds")
   if args.execute_steps <= 0:
     parser.error("execute-steps must be positive")
-  if args.max_sim_seconds <= 0 or args.trial_wall_limit <= 0:
-    parser.error("time limits must be positive")
+  if any(
+    not math.isfinite(value) or value <= 0
+    for value in (args.max_sim_seconds, args.trial_wall_limit)
+  ):
+    parser.error("time limits must be finite and positive")
   deployment_path, deployment = load_deployment_manifest(args.deployment_manifest)
   if args.execute_steps > deployment["prediction_horizon"]:
     parser.error(
@@ -181,8 +195,9 @@ def main():
     "execute_steps": args.execute_steps,
     "replan_period_s": args.execute_steps / 30,
     "control_hz": 30,
-    "diagnostic_only": bool(args.disable_penetration_guard),
-    "formal_metrics_valid": not args.disable_penetration_guard,
+    "guard_mode": args.guard_mode,
+    "diagnostic_only": bool(args.disable_penetration_guard) or args.guard_mode == "observe",
+    "formal_metrics_valid": not args.disable_penetration_guard and args.guard_mode == "strict",
     "penetration_guard": {
       "enabled": not args.disable_penetration_guard,
       "threshold_m": 0.0006,
@@ -206,7 +221,7 @@ def main():
     "server_sampling_seed_fixed": False,
     "controller": "poker-contact-feedback-v2",
     "success_rule": "contact; supported flat card >=40% overhang and >=50mm robotward travel; opposed lift >=20mm above tabletop; head/robot face cosines>=.8, head-front reference error<=30mm, linear speed<.02m/s angular<.2rad/s for .1s",
-    "guard_failures_counted_as_failures": True,
+    "guard_failures_counted_as_failures": args.guard_mode == "strict",
     "infrastructure_failures_excluded": True,
     "retry": False,
     "source_hashes": frozen,
@@ -257,6 +272,8 @@ def main():
       str(args.execute_steps),
       "--max-sim-seconds",
       str(args.max_sim_seconds),
+      "--guard-mode",
+      args.guard_mode,
       "--evaluate",
       "--no-save-first-request",
       "--output-dir",
@@ -304,8 +321,8 @@ def main():
       "action_dim": deployment["action_dim"],
       "execute_steps": args.execute_steps,
       "control_hz": 30,
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_metrics_valid": not args.disable_penetration_guard,
+      "guard_mode": args.guard_mode,
+      "diagnostic_only": bool(args.disable_penetration_guard) or args.guard_mode == "observe",
       "penetration_guard_enabled": not args.disable_penetration_guard,
     }
     identity_errors = {
@@ -317,8 +334,11 @@ def main():
       raise RuntimeError(
         f"seed {seed}: trial identity mismatch: {identity_errors}"
       )
-    if trial_index < args.video_count:
-      review = trial / "review"
+    has_record_error = any(
+      value for key, value in summary.items() if key.endswith("record_error")
+    )
+    if trial_index < args.video_count and not has_record_error:
+      review = evaluation_artifact_directory(trial)
       missing_review = [name for name in REVIEW_FILES if not (review / name).is_file()]
       if missing_review:
         raise RuntimeError(
@@ -332,32 +352,42 @@ def main():
         expected_model_views.append("right_wrist")
       if review_metadata.get("model_input_cameras_displayed") != expected_model_views:
         raise RuntimeError(f"seed {seed}: review omitted a model camera")
-      if review_metadata.get("diagnostic_only") is not bool(
-        args.disable_penetration_guard
+      if review_metadata.get("diagnostic_only") is not (
+        bool(args.disable_penetration_guard) or args.guard_mode == "observe"
       ):
         raise RuntimeError(f"seed {seed}: review diagnostic-mode mismatch")
     reason, valid = classify(summary)
+    valid = valid and code == 0
     evaluation = summary.get("evaluation", {})
     row = {
       "seed": seed,
       "success": reason == "success",
+      "task_success": bool(summary.get("task_success", False)),
       "valid_trial": valid,
       "termination": reason,
       "returncode": code,
       "wall_seconds": time.monotonic() - wall,
       "sim_seconds": summary.get("sim_seconds"),
       "error": summary.get("error"),
+      "record_error": summary.get("record_error"),
       "requests": summary.get("stats", {}).get("requests", 0),
       "action_steps": summary.get("stats", {}).get("action_steps", 0),
       "evaluation": evaluation,
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_result_valid": not args.disable_penetration_guard,
+      "guard_mode": summary.get("guard_mode"),
+      "guard_events": summary.get("guard_events", []),
+      "stop_reason": summary.get("stop_reason"),
+      "physics_valid": summary.get("physics_valid"),
+      "diagnostic_only": summary.get("diagnostic_only"),
+      "formal_result_valid": summary.get("formal_metrics_valid"),
       "penetration_diagnostics": summary.get("penetration_diagnostics", {}),
       "summary": str(summary_path.relative_to(output)),
     }
     results.append(row)
     valid_count = sum(r["valid_trial"] for r in results)
     successes = sum(r["success"] for r in results)
+    task_successes = sum(
+      bool(r.get("task_success", r["success"])) for r in results
+    )
     aggregate = {
       "deployment_id": deployment["deployment_id"],
       "checkpoint_path": deployment["checkpoint_path"],
@@ -368,8 +398,9 @@ def main():
       "execute_steps": args.execute_steps,
       "control_hz": 30,
       "replan_period_s": args.execute_steps / 30,
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_metrics_valid": not args.disable_penetration_guard,
+      "guard_mode": args.guard_mode,
+      "diagnostic_only": bool(args.disable_penetration_guard) or args.guard_mode == "observe",
+      "formal_metrics_valid": not args.disable_penetration_guard and args.guard_mode == "strict",
       "penetration_guard_enabled": not args.disable_penetration_guard,
       "penetration_guard_threshold_m": 0.0006,
       "max_sim_seconds": args.max_sim_seconds,
@@ -377,10 +408,17 @@ def main():
       "attempted": len(results),
       "valid_trials": valid_count,
       "successes": successes,
+      "task_successes": task_successes,
       "success_rate": successes / valid_count if valid_count else None,
       "infrastructure_errors": len(results) - valid_count,
       "complete": len(results) == len(args.seeds) and valid_count == len(args.seeds),
       "termination_counts": dict(Counter(r["termination"] for r in results)),
+      "stop_reason_counts": dict(Counter(r["stop_reason"] for r in results)),
+      "guard_event_counts": dict(Counter(
+        event.get("kind")
+        for row in results for event in row.get("guard_events", [])
+        if event.get("kind")
+      )),
       "failure_stage_counts": dict(
         Counter(
           r["evaluation"].get("failure_stage")

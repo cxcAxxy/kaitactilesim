@@ -4,6 +4,14 @@ These thresholds are initial simulation task parameters, not calibrated material
 properties. Normal force is the total pad/board load; tangent load, speed and
 friction power must be measured locally for each ink patch. Power is dissipated
 contact power in watts, not a Coulomb friction bound or commanded motion.
+
+The 8 N value is an evaluation safety/out-of-distribution guard, not an erasure
+efficacy ceiling. Real loaded sliding does not stop removing ink merely because
+normal load crosses that threshold, so this accumulator deliberately has no
+upper normal-force gate. Formal evaluation may still terminate at 8 N, while an
+explicit diagnostic evaluation can continue and retain modelled cleaning
+progress. This simple model does not represent pad or board damage caused by
+excessive pressure.
 """
 
 import operator
@@ -11,7 +19,7 @@ import operator
 import numpy as np
 
 MIN_NORMAL_FORCE_N = 1.5
-MAX_NORMAL_FORCE_N = 8.0
+BOARD_NORMAL_FORCE_GUARD_N = 8.0
 MIN_TANGENT_LOAD_N = 0.02
 MIN_SLIDING_SPEED_M_S = 0.005
 MAX_SLIDING_SPEED_M_S = 0.15
@@ -88,7 +96,7 @@ class CleaningProgress:
     speed = self._patch_array(per_patch_speed_m_s, "per_patch_speed_m_s")
     power = self._patch_array(per_patch_power_w, "per_patch_power_w")
 
-    if not MIN_NORMAL_FORCE_N <= normal_force_n <= MAX_NORMAL_FORCE_N:
+    if normal_force_n < MIN_NORMAL_FORCE_N:
       return
     active = (
       (self.remaining > 0)

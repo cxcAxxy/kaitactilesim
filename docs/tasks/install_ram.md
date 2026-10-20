@@ -1,28 +1,30 @@
 # 内存条安装任务
 
+当前原生“真实到底 + 连续稳定”数值门槛、专家松手/退让的额外检查，见
+[RAM 成功判定](success_criteria.md#install-ram)。原生模型成功本身不强制松手或回 home。
+
 `install-ram` 是独立的 DDR4 台式机 DIMM 安装场景。模块长约 133.35 mm、高 31.25 mm，PCB 厚 1.40 mm，采用黑色 PCB 和散热马甲外观，包含两面芯片、金手指和偏心定位缺口。卡槽具有真正开放的插入口、对应定位键、两侧壁与底部止挡；主板安装在共享桌面上。尺寸来源及模型近似见 [尺寸说明](install_ram_dimensions.md)。
 
 场景通过 MJCF include 直接引用 `shared/mjcf/robot.xml` 和 `shared/mjcf/control.xml`。机械臂、左右手、相机安装参数和触觉垫沿用 shared；任务只新增内存条、卡槽、主板、上料支架和检查用近景相机 `ram_closeup`。采集使用共享的 `head`、`left_wrist` 和 `right_wrist`，近景相机不替代任何共享相机。
 
 ```bash
 # 查看场景
-pixi run view-install-ram
+pixi run --as-is view-install-ram
 
 # 执行夹持、提升、移到卡槽、插入、释放和终态检查
-pixi run run-install-ram
-pixi run run-install-ram -- --headless
+pixi run --as-is run-install-ram
+pixi run --as-is run-install-ram -- --headless
 
 # 只检查场景启动
-pixi run check-install-ram
+pixi run --as-is check-install-ram
 
-# 按 USB 的 raw/review/curves 布局生成示例
-pixi run record-install-ram-example -- --compact
+# 日常复现到新目录，不覆盖旧样例
+pixi run --as-is record-install-ram-example -- --compact --output-dir datasets/install_ram_example_new
 
 # 用户明确允许覆盖时：验证成功后替换旧例，不保留历史数据
-pixi run record-install-ram-example -- --compact --replace-existing
+pixi run --as-is record-install-ram-example -- --compact --replace-existing
 
-# 在新目录复现，已有示例不会被覆盖
-pixi run record-install-ram-example -- --output-dir datasets/install_ram_example_new
+# 仅检查场景和完整专家，不写录制样例：使用上述 check/run 命令
 ```
 
 若环境已安装，也可以直接使用 `.pixi/envs/default/bin/python scripts/workcell/view_install_ram.py --headless --run-task`。无窗口录制需要设置 `MUJOCO_GL=egl`；默认 Pixi 录制命令已设置该变量、单线程物理计算和四线程软件渲染参数。
@@ -68,10 +70,11 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
 
 黑色 PCB 和阳极氧化散热马甲带倒角、顶边棱线、金属刻线及文字；主板增加 ATX 插座、供电器件、芯片引脚、贴片元件和安装螺钉。目标插槽的槽口四周增加银色镶边，便于在黑色主板上辨认插入口，镶边不侵入插入通道。新增外观几何不参与接触、质量为零，原有单槽、金手指碰撞形状、物体质量和插入阻力参数保留。装饰壳体是现有薄板/芯片包络的视觉近似，不额外模拟散热马甲的弹性。
 
-按 USB 示例的简洁布局生成，用户明确允许替换时运行：
+按 USB 示例的简洁布局生成。下面是**明确允许替换维护中开发样例**时才执行的命令，
+不是日常评估命令，不触及既有 H50 报告；新实验应使用上方的新输出目录：
 
 ```bash
-pixi run record-install-ram-example -- --compact --replace-existing --output-dir datasets/install_ram_example
+pixi run --as-is record-install-ram-example -- --compact --replace-existing --output-dir datasets/install_ram_example
 ```
 
 新一轮完整验证后才覆盖目标，交付仅含 `raw`（HDF5、校验和结果 JSON）、`review`（相机与触觉合成、机器人全局两个 MP4）、`curves`（五指法向/切向力 PNG）。不保存旧示例或版本子目录；验证细节嵌入新的结果 JSON。

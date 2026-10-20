@@ -26,6 +26,18 @@ from kaihand_tactile_env.shared.egosteer_client import (
   EgoSteerPolicyClient,
   ObservationHistory,
 )
+from kaihand_tactile_env.shared.evaluation_guards import (
+  FatalSimulationError,
+  configure_evaluation_guards,
+  ensure_evaluation_physics,
+  evaluation_guard_report,
+  is_observe_mode,
+  mark_physics_invalid,
+  record_guard_event,
+  recover_nonfinite_action,
+  task_guard,
+)
+from kaihand_tactile_env.shared.physics_integrity import PhysicsIntegrityError
 from kaihand_tactile_env.shared.policy_cameras import (
   include_model_right_wrist_panel,
 )
@@ -76,7 +88,10 @@ def parse_args(argv=None):
   parser.add_argument("--seed", type=int, default=90903)
   parser.add_argument("--execute-steps", type=int, default=5)
   parser.add_argument("--max-requests", type=int, default=0)
-  parser.add_argument("--max-sim-seconds", type=float, default=50.0)
+  parser.add_argument("--max-sim-seconds", type=float, default=90.0)
+  parser.add_argument(
+    "--guard-mode", choices=("observe", "strict"), default="observe"
+  )
   parser.add_argument(
     "--disable-penetration-guard",
     action="store_true",
@@ -242,8 +257,13 @@ async def run(args):
     "instruction": INSTRUCTION,
     "execute_steps": args.execute_steps,
     "max_sim_seconds": args.max_sim_seconds,
-    "diagnostic_only": bool(args.disable_penetration_guard),
-    "formal_metrics_valid": not args.disable_penetration_guard,
+    "guard_mode": args.guard_mode,
+    "guard_events": [],
+    "stop_reason": None,
+    "physics_valid": False,
+    "diagnostic_only": bool(args.disable_penetration_guard) or args.guard_mode == "observe",
+    "formal_metrics_valid": not args.disable_penetration_guard and args.guard_mode == "strict",
+    "task_success": False,
     "penetration_guard_enabled": not args.disable_penetration_guard,
     "penetration_guard_threshold_m": PENETRATION_GUARD_THRESHOLD_M,
     "render_shadows": False,
@@ -266,11 +286,17 @@ async def run(args):
   review_metrics = None
   audit_log = None
   control_tick = 0
+  rollout_error = None
+  record_failure = None
   monitor = PokerOutcomeMonitor() if args.evaluate else None
   try:
     # Handshake before allocating a robot or renderer.
     async with EgoSteerPolicyClient(
-      args.server, response_timeout=args.response_timeout
+      args.server,
+      response_timeout=args.response_timeout,
+      # The server handshake intentionally precedes simulator allocation.
+      # This is equivalent to is_observe_mode(sim) after guard configuration.
+      allow_nonfinite_actions=args.guard_mode == "observe",
     ) as client:
       prediction_horizon = validate_server(
         client.metadata or {},
@@ -286,10 +312,12 @@ async def run(args):
         f"[policy] connected: {client.metadata}; controller={CONTROLLER}", flush=True
       )
       with middle_force_simulation(default_model_path("poker-draw")) as (sim, contact):
+        configure_evaluation_guards(sim, args.guard_mode)
         report["contact_model"] = contact
         report["initial_card_randomization"] = reset_randomized_card(
           sim, seed=args.seed, xy_jitter_m=0.004, yaw_jitter_rad=float(np.deg2rad(0.5))
         )
+        ensure_evaluation_physics(sim)
         report["initial_card_pose"] = sim.object_pose("card").tolist()
         review_metrics = PokerReviewMetrics(
           report["initial_card_pose"][0], outcome_monitor=monitor
@@ -344,7 +372,7 @@ async def run(args):
 
             recorder = PokerPolicyVideo(
               sim,
-              output / "review",
+              output,
               fps=args.record_fps,
               width=args.review_width,
               height=args.review_height,
@@ -375,8 +403,9 @@ async def run(args):
                 "control_hz": 30,
                 "replan_period_s": args.execute_steps / 30,
                 "max_sim_seconds": args.max_sim_seconds,
-                "diagnostic_only": bool(args.disable_penetration_guard),
-                "formal_metrics_valid": not args.disable_penetration_guard,
+                "guard_mode": args.guard_mode,
+                "diagnostic_only": bool(args.disable_penetration_guard) or args.guard_mode == "observe",
+                "formal_metrics_valid": not args.disable_penetration_guard and args.guard_mode == "strict",
                 "penetration_guard_enabled": not args.disable_penetration_guard,
                 "penetration_guard_threshold_m": PENETRATION_GUARD_THRESHOLD_M,
                 "observation_contract": report.get("observation_contract"),
@@ -414,15 +443,24 @@ async def run(args):
                 jpeg_quality=95,
               )
               stats.requests += 1
-              predicted_actions = _validated_prediction(
-                response.pred_actions,
-                horizon=prediction_horizon,
-                action_dim=48,
-              )
-              decoded = decode_action_targets(
-                sim,
-                relative_to_absolute(states[-1], predicted_actions),
-                camera_from_world,
+              try:
+                predicted_actions = _validated_prediction(
+                  response.pred_actions,
+                  horizon=prediction_horizon,
+                  action_dim=48,
+                )
+              except Exception as error:
+                if not recover_nonfinite_action(sim, error):
+                  raise
+                predicted_actions = None
+              decoded = (
+                None
+                if predicted_actions is None
+                else decode_action_targets(
+                  sim,
+                  relative_to_absolute(states[-1], predicted_actions),
+                  camera_from_world,
+                )
               )
               row = {
                 "request": stats.requests,
@@ -433,7 +471,11 @@ async def run(args):
                 "right_wrist_current_world": sim.current_pose_matrix("right")[
                   0
                 ].tolist(),
-                "right_wrist_targets_world": decoded.right.site_positions_world.tolist(),
+                "right_wrist_targets_world": (
+                  None
+                  if decoded is None
+                  else decoded.right.site_positions_world.tolist()
+                ),
               }
               log.write(json.dumps(row) + "\n")
               log.flush()
@@ -463,18 +505,105 @@ async def run(args):
                 f"round_trip={row['round_trip_s']:.2f}s",
                 flush=True,
               )
-              for index in range(args.execute_steps):
+              action_count = 1 if decoded is None else args.execute_steps
+              for index in range(action_count):
                 if sim.data.time >= args.max_sim_seconds:
                   break
                 if viewer is not None and not viewer.is_running():
                   raise ViewerClosed("native viewer closed")
                 tick_start = time.monotonic()
-                controller.before_command()
-                _command_action_step(sim, decoded, index, args, stats)
-                controller.after_command(decoded.right, index)
+                pre_policy_hand_targets = None
+                if decoded is not None:
+                  # Clearing the previous pressure residual is part of the
+                  # policy-command transaction.  If arm/hand IK rejects the
+                  # waypoint, restore the exact command that was active before
+                  # this call rather than the controller's residual-free base.
+                  pre_policy_hand_targets = sim._hand_targets["right"].copy()
+                  try:
+                    controller.before_command()
+                    _command_action_step(sim, decoded, index, args, stats)
+                  except BaseException:
+                    sim._hand_targets["right"].clear()
+                    sim._hand_targets["right"].update(pre_policy_hand_targets)
+                    raise
+                action_rejected = decoded is None or bool(
+                  getattr(sim, "_evaluation_action_rejected", False)
+                )
+                if action_rejected and pre_policy_hand_targets is not None:
+                  sim._hand_targets["right"].clear()
+                  sim._hand_targets["right"].update(pre_policy_hand_targets)
+                if not action_rejected:
+                  controller.after_command(decoded.right, index)
                 control_tick += 1
-                while sim.data.time < control_tick / 30.0 - 1e-12:
-                  sim.step()
+                while (
+                  sim.data.time < control_tick / 30.0 - 1e-12
+                  and sim.data.time < args.max_sim_seconds - 1e-12
+                ):
+                  before_time = float(sim.data.time)
+                  try:
+                    sim.step()
+                    ensure_evaluation_physics(sim, before_time=before_time)
+                  except PhysicsIntegrityError as error:
+                    mark_physics_invalid(sim)
+                    record_guard_event(
+                      sim,
+                      "physics_invalid",
+                      "poker physics integrity check failed",
+                      recovery="stop",
+                      details={"error": str(error), **error.details},
+                    )
+                    raise
+                  except RuntimeError as error:
+                    message = str(error)
+                    servo_guard = next((
+                      fragment for fragment in (
+                      "arm Jacobian is singular or too ill-conditioned",
+                      "force-budget control would exceed original joint command limits",
+                      "force-budget torque would exceed original actuator limits",
+                      "actual arm servo Fx exceeded requested budget",
+                      ) if fragment in message
+                    ), None)
+                    if servo_guard is None or not is_observe_mode(sim):
+                      raise
+                    advanced = float(sim.data.time) > before_time + 1.0e-12
+                    handover = sim.end_cartesian_drive()
+                    controller._press_controller_active = False
+                    if controller.mode == "slide":
+                      controller._transition(
+                        "manipulate", "bounded Cartesian servo safety fallback"
+                      )
+                    record_guard_event(
+                      sim,
+                      "cartesian_servo_safety",
+                      servo_guard,
+                      recovery="fall_back_to_joint_position_servo",
+                      details={"error": message, "handover": handover},
+                    )
+                    if not advanced:
+                      fallback_before = float(sim.data.time)
+                      try:
+                        sim.step()
+                      except PhysicsIntegrityError as physics_error:
+                        mark_physics_invalid(sim)
+                        record_guard_event(
+                          sim,
+                          "physics_invalid",
+                          "poker physics integrity check failed",
+                          recovery="stop",
+                          details={
+                            "error": str(physics_error),
+                            **physics_error.details,
+                          },
+                        )
+                        raise FatalSimulationError(
+                          "poker physics integrity check failed during "
+                          "Cartesian-servo fallback"
+                        ) from physics_error
+                      ensure_evaluation_physics(
+                        sim, before_time=fallback_before
+                      )
+                    else:
+                      ensure_evaluation_physics(sim, before_time=before_time)
                   controller.after_step()
                   review_metrics.update(sim)
                   if monitor is not None:
@@ -483,12 +612,15 @@ async def run(args):
                     )
                     if monitor.success:
                       break
-                  if not np.all(np.isfinite(sim.data.qpos)) or not np.all(
-                    np.isfinite(sim.data.qvel)
-                  ):
-                    raise RuntimeError("nonfinite simulation state")
-                  if sim.object_pose("card")[2] < 0.5:
-                    raise RuntimeError("card fell below work surface")
+                  task_guard(
+                    sim,
+                    sim.object_pose("card")[2] < 0.5,
+                    "card_drop",
+                    "card fell below work surface",
+                    measured=float(sim.object_pose("card")[2]),
+                    threshold=0.5,
+                    recovery="continue_recording_without_state_repair",
+                  )
                 stats.action_steps += 1
                 stats.maximum_object_height = max(
                   stats.maximum_object_height, float(sim.object_pose("card")[2])
@@ -496,7 +628,7 @@ async def run(args):
                 calibrations = _append_model_observations(
                   sim, renderer, model_cameras, histories
                 )
-                if audit_log is not None:
+                if audit_log is not None and decoded is not None:
                   from kaihand_tactile_env.tasks.poker_draw.execution_audit import (
                     execution_sample,
                   )
@@ -521,6 +653,8 @@ async def run(args):
                 if monitor is not None and monitor.success:
                   stats.stable_success = True
                   break
+                if action_rejected:
+                  break
             report["sim_seconds"] = float(sim.data.time)
             report["final_card_pose"] = sim.object_pose("card").tolist()
             report["last_drive_state"] = sim.drive_state()
@@ -532,18 +666,41 @@ async def run(args):
   except ViewerClosed as error:
     report.update(status="viewer_closed", error=str(error))
   except Exception as error:
+    rollout_error = error
     report.update(status="error", error=f"{type(error).__name__}: {error}")
     raise
   finally:
     if audit_log is not None:
       audit_log.close()
     if sim is not None:
-      report["sim_seconds"] = float(sim.data.time)
-      report["final_card_pose"] = sim.object_pose("card").tolist()
-      report["last_drive_state"] = sim.drive_state()
+      guard_report = evaluation_guard_report(
+        sim, status=report.get("status"), error=report.get("error")
+      )
+      report.update(guard_report)
+      sim_time = float(sim.data.time)
+      report["sim_seconds"] = sim_time if np.isfinite(sim_time) else None
+      if guard_report["physics_valid"]:
+        report["final_card_pose"] = sim.object_pose("card").tolist()
+        report["last_drive_state"] = sim.drive_state()
+      else:
+        report["final_card_pose"] = None
+        report["last_drive_state"] = None
+      if (
+        report.get("status") == "task_not_completed"
+        and args.max_requests
+        and stats.requests >= args.max_requests
+        and report["sim_seconds"] is not None
+        and report["sim_seconds"] < args.max_sim_seconds
+      ):
+        report["stop_reason"] = "request_limit"
+      if args.disable_penetration_guard:
+        report.update(diagnostic_only=True, formal_metrics_valid=False)
     if controller is not None:
       report["controller_report"] = controller.report()
-      report["terminal_metrics"] = controller.terminal_metrics()
+      report["terminal_metrics"] = (
+        controller.terminal_metrics()
+        if report.get("physics_valid") else None
+      )
     report["penetration_diagnostics"] = {
       "guard_enabled": not args.disable_penetration_guard,
       "threshold_m": PENETRATION_GUARD_THRESHOLD_M,
@@ -558,12 +715,20 @@ async def run(args):
     }
     if monitor is not None:
       report["evaluation"] = monitor.report()
+    report["task_success"] = bool(
+      report.get("evaluation", {}).get("success", stats.stable_success)
+    )
     report.update(stats=asdict(stats), wall_seconds=time.monotonic() - started)
     if recorder is not None:
       try:
-        recorder.capture(control_tick, controller.mode, force=True)
+        if not getattr(sim, "_evaluation_physics_invalid", False):
+          recorder.capture(control_tick, controller.mode, force=True)
       except Exception as error:
-        report["record_error"] = str(error)
+        record_failure = error
+        report["record_error"] = f"{type(error).__name__}: {error}"
+        report.update(stop_reason="fatal_error", formal_metrics_valid=False)
+        if rollout_error is None:
+          report.update(status="error", error=report["record_error"])
       try:
         report["video"] = recorder.finish(
           status=report.get("status", "error"),
@@ -573,6 +738,7 @@ async def run(args):
         report["video"].update(
           seed=args.seed,
           success=bool(report.get("evaluation", {}).get("success", False)),
+          task_success=report["task_success"],
           inference_requests=stats.requests,
           simulation_time_s=report.get("sim_seconds"),
           wall_time_s=report["wall_seconds"],
@@ -584,8 +750,12 @@ async def run(args):
           execute_steps=args.execute_steps,
           control_hz=30,
           replan_period_s=args.execute_steps / 30,
-          diagnostic_only=bool(args.disable_penetration_guard),
-          formal_metrics_valid=not args.disable_penetration_guard,
+          guard_mode=report.get("guard_mode"),
+          guard_events=report.get("guard_events", []),
+          stop_reason=report.get("stop_reason"),
+          physics_valid=report.get("physics_valid"),
+          diagnostic_only=report.get("diagnostic_only"),
+          formal_metrics_valid=report.get("formal_metrics_valid"),
           penetration_guard_enabled=not args.disable_penetration_guard,
           penetration_guard_threshold_m=PENETRATION_GUARD_THRESHOLD_M,
           maximum_supported_table_penetration_m=(
@@ -595,18 +765,24 @@ async def run(args):
             report["penetration_diagnostics"]["first_limit_exceeded_sim_time_s"]
           ),
         )
-        (output / "review" / "review.json").write_text(
+        (output / "review.json").write_text(
           json.dumps(report["video"], ensure_ascii=False, indent=2),
           encoding="utf-8",
         )
       except Exception as error:
-        report["record_error"] = str(error)
+        record_failure = record_failure or error
+        report["record_error"] = f"{type(error).__name__}: {error}"
+        report.update(stop_reason="fatal_error", formal_metrics_valid=False)
+        if rollout_error is None:
+          report.update(status="error", error=report["record_error"])
     with (output / "summary.json").open("x") as file:
       json.dump(report, file, indent=2)
     print(
       f"[report] {output / 'summary.json'}; action_steps={stats.action_steps}",
       flush=True,
     )
+    if record_failure is not None and rollout_error is None:
+      raise RuntimeError(report["record_error"]) from record_failure
 
 
 def main():

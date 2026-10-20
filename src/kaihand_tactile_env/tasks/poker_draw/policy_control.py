@@ -11,6 +11,7 @@ from __future__ import annotations
 import mujoco
 import numpy as np
 
+from ...shared.evaluation_guards import task_guard
 from .mid_full import MID_FORCE_PER_FINGER_N, MID_FORCE_SETTINGS
 from .pressure_window import PressureWindowForceController
 from .task import PokerDrawExecutor
@@ -188,11 +189,16 @@ class PokerPolicyController:
       and self.first_penetration_limit_exceeded_s is None
     ):
       self.first_penetration_limit_exceeded_s = float(self.sim.data.time)
-    if (
+    task_guard(
+      self.sim,
       self.penetration_guard_enabled
-      and supported_penetration_m > PENETRATION_GUARD_THRESHOLD_M
-    ):
-      raise RuntimeError("card penetrated supported tabletop beyond 0.6 mm")
+      and supported_penetration_m > PENETRATION_GUARD_THRESHOLD_M,
+      "supported_table_penetration",
+      "card penetrated supported tabletop beyond 0.6 mm",
+      measured=supported_penetration_m,
+      threshold=PENETRATION_GUARD_THRESHOLD_M,
+      recovery="continue_recording_without_state_repair",
+    )
     if self.base is None:
       return
     if self.mode == "approach":
@@ -227,10 +233,26 @@ class PokerPolicyController:
           else 0.0
         )
         self.max_low_load_s = max(self.max_low_load_s, self.loss_time)
-        if self.loss_time >= 0.30 - 1e-10:
-          raise RuntimeError("multiple draw fingers below load for 0.30 s")
-      elif float(self.sim.data.time) - self.transitions[-1]["time"] > 12.0:
-        raise RuntimeError("policy press failed to establish four-finger load in 12 s")
+        task_guard(
+          self.sim,
+          self.loss_time >= 0.30 - 1e-10,
+          "draw_contact_loss",
+          "multiple draw fingers below load for 0.30 s",
+          measured=float(np.count_nonzero(fn >= 0.125)),
+          threshold=3.0,
+          recovery="continue_recording_with_policy_and_force_controller",
+        )
+      else:
+        press_elapsed = float(self.sim.data.time) - self.transitions[-1]["time"]
+        task_guard(
+          self.sim,
+          press_elapsed > 12.0,
+          "press_timeout",
+          "policy press failed to establish four-finger load in 12 s",
+          measured=press_elapsed,
+          threshold=12.0,
+          recovery="continue_recording_with_policy_and_force_controller",
+        )
     opposed = bool(
       top and "thumb" in bottom and sum(fn) >= 0.05 and forces["thumb"] >= 0.05
     )

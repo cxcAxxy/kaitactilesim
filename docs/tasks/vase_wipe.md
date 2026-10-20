@@ -1,5 +1,8 @@
 # 软海绵擦拭花瓶内壁
 
+原生模型 `task_success` 只检查物理污渍残留，专家完整结果还检查抓取、视觉复查与正常流程；
+两者准确条件见[花瓶成功判定](success_criteria.md#vase-wipe)，不能把下文专家验收套给模型原生标签。
+
 独立任务 `vase-wipe`：右手先从桌面抓起整体软海绵，再擦拭**远离机器人的花瓶内侧壁**。头部相机先观察污渍，海绵贴壁时遮挡该区域，机器人用触觉调节贴壁；抬手后用相机复查，仍有污渍则继续擦。运行生成的视频、复查图像、力曲线和共享 Raw 位于调用者指定的新输出目录，不随源码仓库提交。
 
 ## 观察、承力擦拭、抬手复查
@@ -47,11 +50,14 @@
 
 每个接触的有效功率为 `max(0, -F_t · v_t)`。以 13 mm 空间核分配给相邻污渍单元，分配权重总和不超过 1，不重复记账。每块分别累计：
 
-- 摩擦功 `W`，要求 0.35 mJ；
-- 有效滑动距离 `L`，要求 8 mm；
-- 有效承力擦动时间 `T`，要求 0.25 s。
+- 摩擦功 `W`，基准要求 0.045 mJ；
+- 有效滑动距离 `L`，基准要求 1.6 mm；
+- 有效承力擦动时间 `T`，要求 0.14 s。
 
-进度为 `min(W / 0.35 mJ, L / 8 mm, T / 0.25 s, 1)`。很短的高力冲击不能绕过距离和持续时间要求。
+默认面积下进度为 `min(W / 0.045 mJ, L / 1.6 mm, T / 0.14 s, 1)`；
+单元面积缩放时，功门槛乘 `area_scale`，行程门槛乘 `sqrt(area_scale)`。
+很短的高力冲击不能绕过距离和持续时间要求。
+旧的 0.35 mJ / 8 mm / 0.25 s 是历史参数，不是当前模型的清洁门槛。
 
 保留远侧上段的位置和三个高度，将污渍布局从 3×9 调整为 3×7 个单元；为适配 62 mm 宽面的稳定承力区域，列角间距收窄为 0.015 rad，中心角为 0.14 rad。每块至少需要 0.045 mJ 摩擦功、1.6 mm 有载滑动和 0.14 s 持续接触，并同时满足全局及局部力阈值；单纯触碰不会擦除。第一次完整扫描后若相机仍看到残留，执行 3.8 s 的短补擦。仍逐块累计，不能用中心擦净代替边缘清洁。视频按真实仿真时间以 10 fps 保存，缩短任务不依赖加速播放或剪掉失败片段。
 
@@ -59,7 +65,7 @@
 
 ## 清洁验收
 
-成功需要同时满足：
+**专家完整流程成功**需要同时满足（不同于模型 adapter 的原生 `task_success`）：
 
 1. 平均污渍残留 ≤5%；
 2. **每块**污渍残留 ≤10%，避免平均数掩盖局部漏擦；
@@ -67,6 +73,9 @@
 4. 正常完成离壁与退出，没有掉落或求解器警告。
 
 `result.json` 保留每块的残留、摩擦功、有效行程、有效时间和所有门槛。触觉用于控制承力接触，视觉用于复查可见残留；独立维护的物理清洁状态用于验收，避免视觉误判直接产生成功标签。
+
+模型原生成功仅为第 1、2 项物理清洁条件的合取，不另外要求视觉复查、离壁退出或终态 hold。
+专家结果还要求抓取报告成功；流程异常不会产生正常完成结果。
 
 ## 海绵与握持
 
@@ -131,10 +140,10 @@ vase_wipe_example/
 ## 运行与修改
 
 ```bash
-pixi run view-vase-wipe
-pixi run run-vase-wipe
-pixi run run-vase-wipe --camera right_wrist
-MUJOCO_GL=egl pixi run run-vase-wipe --headless --output-dir datasets/vase_wipe_new
+pixi run --as-is view-vase-wipe
+pixi run --as-is run-vase-wipe
+pixi run --as-is run-vase-wipe --camera right_wrist
+MUJOCO_GL=egl pixi run --as-is run-vase-wipe --headless --output-dir datasets/vase_wipe_new
 ```
 
 输出目录必须不存在。打开其 `index.html` 查看视频、视觉复查与曲线。代码与资产位于 `tasks/vase_wipe/`，入口为 `scripts/workcell/view_vase_wipe.py`；不修改其他环境的机器人、相机、接触参数或示例数据。
@@ -142,7 +151,7 @@ MUJOCO_GL=egl pixi run run-vase-wipe --headless --output-dir datasets/vase_wipe_
 修改轮廓、海绵网格或材料后重建本任务资产，再重新执行生成数据：
 
 ```bash
-pixi run python -m kaihand_tactile_env.tasks.vase_wipe.geometry
+pixi run --as-is python -m kaihand_tactile_env.tasks.vase_wipe.geometry
 ```
 
 清洁阈值和显色参数在 `config.py`，轨迹与传感器反馈在 `task.py`，视觉复查在 `vision.py`，软体和接触斑近似在 `sponge.py`。

@@ -17,6 +17,63 @@ from kaihand_tactile_env.tasks.poker_draw.review_metrics import PokerReviewMetri
 from PIL import Image
 
 
+@pytest.mark.parametrize("source,target,turns,label", (
+  ("clockwise_turns", "clockwise_angle_deg", 100 / 360, "screw in=100.0°"),
+  ("turns_removed", "angle_removed_deg", 131.5 / 360, "screw out=131.5°"),
+  ("rotation_from_initial_turns", "rotation_from_initial_deg", -10 / 360, "from start=-10.0°"),
+))
+def test_bulb_video_displays_degrees_for_legacy_and_current_metrics(source, target, turns, label):
+  legacy = {"success": False, source: turns}
+  before = dict(legacy)
+  assert evaluation_video._metrics_text(legacy).startswith(label)
+  assert legacy == before
+  current = {**legacy, target: turns * 360}
+  text = evaluation_video._metrics_text(current)
+  assert text.startswith(label)
+  assert source not in text and target not in text
+  assert text.count("°") == 1
+
+
+def test_missing_bulb_angle_is_not_displayed_as_zero():
+  assert evaluation_video._metrics_text({"clockwise_turns": None}) == ""
+  assert evaluation_video._metrics_text({"clockwise_turns": 0.0}) == "screw in=0.0°"
+
+
+def test_artifact_directory_defaults_to_flat_and_preserves_legacy(tmp_path):
+  trial = tmp_path / "seed_001"
+  assert evaluation_video.evaluation_artifact_directory(trial) == trial
+  trial.mkdir()
+  (trial / "summary.json").write_text("{}", encoding="utf-8")
+  assert evaluation_video.evaluation_artifact_directory(trial) == trial
+  legacy = trial / "review"
+  legacy.mkdir()
+  (legacy / "review.json").write_text("{}", encoding="utf-8")
+  assert evaluation_video.evaluation_artifact_directory(trial) == legacy
+  assert (legacy / "review.json").read_text() == "{}"
+
+
+@pytest.mark.parametrize("artifact", evaluation_video._EVALUATION_ARTIFACT_NAMES)
+def test_flat_artifacts_take_priority_and_cannot_be_overwritten(tmp_path, artifact):
+  trial = tmp_path / "seed_001"
+  (trial / "review").mkdir(parents=True)
+  existing = trial / artifact
+  existing.write_bytes(b"original")
+  assert evaluation_video.evaluation_artifact_directory(trial) == trial
+  with pytest.raises(FileExistsError, match="evaluation artifact already exists"):
+    evaluation_video.EvaluationVideo(SimpleNamespace(), trial)
+  assert existing.read_bytes() == b"original"
+
+
+def test_recorder_refuses_broken_artifact_symlink(tmp_path):
+  (tmp_path / "review").mkdir()
+  artifact = tmp_path / "review.mp4"
+  artifact.symlink_to(tmp_path / "missing")
+  assert evaluation_video.evaluation_artifact_directory(tmp_path) == tmp_path
+  with pytest.raises(FileExistsError, match="evaluation artifact already exists"):
+    evaluation_video.EvaluationVideo(SimpleNamespace(), tmp_path)
+  assert artifact.is_symlink()
+
+
 def test_compositor_is_1080p_and_accepts_legacy_signed_force_history():
   rgb = np.zeros((480, 640, 3), dtype=np.uint8)
   normal = np.zeros((10, 7, 5))
@@ -149,6 +206,7 @@ def test_comparison_samples_every_control_tick_even_when_video_skips(tmp_path, m
   composed = []
   comparison_instances = []
   provider_reads = []
+  writer_paths = []
 
   class FakeRenderer:
     def __init__(self, model, *, height, width):
@@ -167,6 +225,7 @@ def test_comparison_samples_every_control_tick_even_when_video_skips(tmp_path, m
   class FakeWriter:
     def __init__(self, path, *, fps, width, height):
       self.frames = []
+      writer_paths.append(path)
 
     def write(self, frame):
       self.frames.append(frame)
@@ -229,7 +288,10 @@ def test_comparison_samples_every_control_tick_even_when_video_skips(tmp_path, m
   simulation = SimpleNamespace(
     model=object(), data=SimpleNamespace(time=0.0), scene="test"
   )
-  output = tmp_path / "review"
+  output = tmp_path / "seed_001"
+  output.mkdir()
+  (output / "summary.json").write_text("{}", encoding="utf-8")
+  (output / "requests.jsonl").write_text("policy log\n", encoding="utf-8")
   recorder = evaluation_video.EvaluationVideo(
     simulation,
     output,
@@ -268,6 +330,13 @@ def test_comparison_samples_every_control_tick_even_when_video_skips(tmp_path, m
   assert result["right_wrist_camera_role"] == "review_only"
   assert result["comparison_plots"]["rollout"]["samples"] == 5
   assert json.loads((output / "review.json").read_text())["comparison_plots"]["status"] == "ok"
+  assert writer_paths[0] == output / "review.mp4"
+  assert (output / "frames.jsonl").is_file()
+  assert (output / "first_frame.png").is_file()
+  assert (output / "last_frame.png").is_file()
+  assert not (output / "review").exists()
+  assert (output / "summary.json").read_text() == "{}"
+  assert (output / "requests.jsonl").read_text() == "policy log\n"
 
   camera_cases = (
     ("global", True, {"observation_contract": {"cameras": ["head", "right_wrist"]}}),

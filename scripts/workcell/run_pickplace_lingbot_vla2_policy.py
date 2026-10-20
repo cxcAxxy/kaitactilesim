@@ -14,6 +14,12 @@ from pathlib import Path
 
 import numpy as np
 from kaihand_tactile_env.shared.config import CameraConfig
+from kaihand_tactile_env.shared.evaluation_guards import (
+  configure_evaluation_guards,
+  ensure_evaluation_physics,
+  evaluation_guard_report,
+  recover_nonfinite_action,
+)
 from kaihand_tactile_env.shared.policy_cameras import (
   image_shape_hwc,
   policy_camera_names,
@@ -58,6 +64,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
   parser.add_argument("--seed", required=True, type=int)
   parser.add_argument("--execute-steps", required=True, type=int)
   parser.add_argument("--max-sim-seconds", type=float, default=90.0)
+  parser.add_argument(
+    "--guard-mode", choices=("observe", "strict"), default="observe"
+  )
   parser.add_argument("--object-xy-jitter", type=float, default=0.01)
   parser.add_argument("--object-yaw-jitter", type=float, default=0.05)
   parser.add_argument("--record", action=argparse.BooleanOptionalAction, default=True)
@@ -193,8 +202,12 @@ def validated_actions(response: dict, *, horizon: int) -> np.ndarray:
     if key not in response:
       raise RuntimeError(f"LingBot server response is missing {key}")
     value = np.asarray(response[key], dtype=np.float64)
-    if value.shape != (horizon, dimension) or not np.isfinite(value).all():
-      raise RuntimeError(f"{key} must have finite shape {(horizon, dimension)}, got {value.shape}")
+    if value.shape != (horizon, dimension):
+      raise RuntimeError(
+        f"{key} must have finite shape {(horizon, dimension)}, got {value.shape}"
+      )
+    if not np.isfinite(value).all():
+      raise RuntimeError("policy actions contain nonfinite values")
     values.append(value)
   return np.concatenate(values, axis=1)
 
@@ -279,10 +292,16 @@ def run(args: argparse.Namespace) -> dict:
     "reference_episode_index": reference_episode_index,
     "initial_randomization": {"object_xy_jitter_m": args.object_xy_jitter, "object_yaw_jitter_rad": args.object_yaw_jitter},
     "grasp_aids": {"auto_grasp_stabilizer": True, "adaptive_free_close_force": True},
-    "diagnostic_only": False,
-    "formal_metrics_valid": True,
+    "guard_mode": args.guard_mode,
+    "guard_events": [],
+    "stop_reason": None,
+    "physics_valid": False,
+    "diagnostic_only": args.guard_mode == "observe",
+    "formal_metrics_valid": args.guard_mode == "strict",
+    "task_success": False,
   }
-  client = simulation = recorder = stabilizer = free_close_force = comparison_trace = reference = None
+  client = simulation = recorder = stabilizer = free_close_force = detector = None
+  comparison_trace = reference = None
   requests = action_steps = clipped_values = control_tick = 0
   run_error = None
   artifact_error = None
@@ -298,6 +317,8 @@ def run(args: argparse.Namespace) -> dict:
       object_yaw_jitter=args.object_yaw_jitter,
       randomized_objects=("cylinder",),
     )
+    configure_evaluation_guards(simulation, args.guard_mode)
+    ensure_evaluation_physics(simulation)
     report["initial_cylinder_pose"] = simulation.object_pose("cylinder").tolist()
     names = list(RIGHT_JOINT_NAMES)
     lower, upper = joint_limits(simulation, names)
@@ -320,7 +341,7 @@ def run(args: argparse.Namespace) -> dict:
       reference = load_pickplace_reference(reference_dataset, output_episode_index=reference_episode_index)
       if args.record:
         recorder = EvaluationVideo(
-          simulation, output / "review", fps=args.record_fps,
+          simulation, output, fps=args.record_fps,
           width=args.review_width, height=args.review_height, second_camera="global",
           include_model_wrist=True, comparison=False,
           reference_dataset=reference_dataset,
@@ -350,8 +371,30 @@ def run(args: argparse.Namespace) -> dict:
         state = right_joint_state(simulation, names)
         request_start = time.monotonic()
         response = client.infer(make_observation(images, state, deployment["instruction"]))
-        actions = validated_actions(response, horizon=horizon)
         requests += 1
+        try:
+          actions = validated_actions(response, horizon=horizon)
+        except Exception as error:
+          if not recover_nonfinite_action(simulation, error):
+            raise
+          control_tick += 1
+          target_time = control_tick / CONTROL_HZ
+          while (
+            simulation.data.time < target_time - 1.0e-12
+            and simulation.data.time < args.max_sim_seconds - 1.0e-12
+          ):
+            free_close_force.before_physics_step(
+              closure=stabilizer.closure(), grasp_active=stabilizer.active
+            )
+            before_time = float(simulation.data.time)
+            simulation.step()
+            ensure_evaluation_physics(simulation, before_time=before_time)
+            stabilizer.after_physics_step()
+          action_steps += 1
+          if recorder is not None:
+            recorder.capture(control_tick, "policy_guard_hold")
+          comparison_trace.capture(simulation)
+          continue
         log.write(json.dumps({
           "request": requests,
           "sim_time": float(simulation.data.time),
@@ -376,9 +419,14 @@ def run(args: argparse.Namespace) -> dict:
           stabilizer.after_command()
           control_tick += 1
           target_time = control_tick / CONTROL_HZ
-          while simulation.data.time < target_time - 1.0e-12:
+          while (
+            simulation.data.time < target_time - 1.0e-12
+            and simulation.data.time < args.max_sim_seconds - 1.0e-12
+          ):
             free_close_force.before_physics_step(closure=stabilizer.closure(), grasp_active=stabilizer.active)
+            before_time = float(simulation.data.time)
             simulation.step()
+            ensure_evaluation_physics(simulation, before_time=before_time)
             stabilizer.after_physics_step()
             twist = simulation.object_twist("cylinder")
             detector.update(
@@ -387,8 +435,6 @@ def run(args: argparse.Namespace) -> dict:
               placed_in_box=cylinder_is_in_box(simulation),
               grasp_active=stabilizer.active,
             )
-            if not np.isfinite(simulation.data.qpos).all() or not np.isfinite(simulation.data.qvel).all():
-              raise RuntimeError("nonfinite simulation state")
             if detector.succeeded:
               break
           action_steps += 1
@@ -415,9 +461,26 @@ def run(args: argparse.Namespace) -> dict:
     if stabilizer is not None:
       stabilizer.close()
     if simulation is not None:
-      report["sim_seconds"] = float(simulation.data.time)
-      report["final_cylinder_pose"] = simulation.object_pose("cylinder").tolist()
+      guard_report = evaluation_guard_report(
+        simulation, status=report.get("status"), error=run_error
+      )
+      report.update(guard_report)
+      sim_time = float(simulation.data.time)
+      report["sim_seconds"] = sim_time if np.isfinite(sim_time) else None
+      if guard_report["physics_valid"]:
+        report["final_cylinder_pose"] = simulation.object_pose(
+          "cylinder"
+        ).tolist()
+      else:
+        report["final_cylinder_pose"] = None
+        report["evaluation"] = {
+          "success": bool(detector is not None and detector.succeeded),
+          "placed_in_box": None,
+        }
     report["wall_seconds"] = time.monotonic() - started
+    report["task_success"] = bool(
+      report.get("evaluation", {}).get("success", False)
+    )
     report["stats"] = {
       "requests": requests,
       "action_steps": action_steps,
@@ -426,16 +489,20 @@ def run(args: argparse.Namespace) -> dict:
     review = None
     if recorder is not None:
       try:
-        recorder.capture(control_tick, "terminal", force=True)
+        if not getattr(simulation, "_evaluation_physics_invalid", False):
+          recorder.capture(control_tick, "terminal", force=True)
         review = recorder.finish(status=report.get("status", "error"), evaluation=report.get("evaluation"), error=run_error)
       except Exception as error:
         artifact_error = error
         report["record_error"] = f"{type(error).__name__}: {error}"
-    if comparison_trace is not None:
+    if (
+      comparison_trace is not None
+      and not getattr(simulation, "_evaluation_physics_invalid", False)
+    ):
       try:
         comparison_trace.capture(simulation)
         assert reference is not None
-        trace_summary = finish_comparison(comparison_trace, reference, output / "review")
+        trace_summary = finish_comparison(comparison_trace, reference, output)
         report["comparison_plots"] = trace_summary
         if review is not None:
           review["comparison_requested"] = True
@@ -451,14 +518,23 @@ def run(args: argparse.Namespace) -> dict:
         execute_steps=args.execute_steps, control_hz=CONTROL_HZ,
         replan_period_s=args.execute_steps / CONTROL_HZ,
         seed=args.seed, success=report.get("evaluation", {}).get("success", False),
+        task_success=report["task_success"],
         inference_requests=requests, simulation_time_s=report.get("sim_seconds"),
-        wall_time_s=report["wall_seconds"], diagnostic_only=False,
-        formal_metrics_valid=artifact_error is None and run_error is None,
+        wall_time_s=report["wall_seconds"],
+        guard_mode=report.get("guard_mode"),
+        guard_events=report.get("guard_events", []),
+        stop_reason=report.get("stop_reason"),
+        physics_valid=report.get("physics_valid"),
+        diagnostic_only=report.get("diagnostic_only"),
+        formal_metrics_valid=(
+          report.get("formal_metrics_valid", False)
+          and artifact_error is None and run_error is None
+        ),
       )
-      (output / "review/review.json").write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
+      (output / "review.json").write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
       report["video"] = review
     if artifact_error is not None:
-      report["formal_metrics_valid"] = False
+      report.update(stop_reason="fatal_error", formal_metrics_valid=False)
       if run_error is None:
         report.update(status="error", error=f"evaluation artifact failed: {type(artifact_error).__name__}: {artifact_error}")
     (output / "summary.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

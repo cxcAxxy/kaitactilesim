@@ -5,12 +5,18 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import h5py
 import numpy as np
+import pytest
 
 WORKCELL = Path(__file__).parents[1] / "scripts" / "workcell"
 sys.path.insert(0, str(WORKCELL))
 
 import fast_pi05_conversion as fast  # noqa: E402
+
+
+def test_fast_manifest_schema_requires_explicit_action_contract() -> None:
+  assert fast.SCHEMA == "kaihand_fast_pi05_video_v2"
 
 
 class _Converter:
@@ -74,9 +80,7 @@ def test_episode_arrays_preserve_openpi_alignment() -> None:
   np.testing.assert_array_equal(arrays["action"], actions[1:])
   np.testing.assert_array_equal(arrays["index"], [50, 51, 52])
   np.testing.assert_array_equal(arrays["episode_index"], [7, 7, 7])
-  np.testing.assert_array_equal(
-    arrays["provenance.source_episode_index"], [42, 42, 42]
-  )
+  np.testing.assert_array_equal(arrays["provenance.source_episode_index"], [42, 42, 42])
   np.testing.assert_array_equal(
     arrays["provenance.action_source_state_index"], [20, 30, 40]
   )
@@ -105,6 +109,7 @@ def test_source_manifest_rows_preserve_raw_hdf5_mapping() -> None:
     camera_names=("head", "right_wrist"),
     instruction="screw the bulb",
     repo_id="test/bulb",
+    action_contract="recorded-controller-target-v1",
   )
   plan = SimpleNamespace(source=source, exported_frames=1252)
 
@@ -120,9 +125,151 @@ def test_source_manifest_rows_preserve_raw_hdf5_mapping() -> None:
       "source_sidecar": "/raw/bulb.json",
       "source_hash_verification": "recomputed",
       "task": "bulb-screw",
+      "action_contract": "recorded-controller-target-v1",
       "exported_frames_30hz": 1252,
     }
   ]
+
+
+def test_fast_manifest_uses_openpi_action_contract_authority() -> None:
+  contract = "recorded-controller-target-v1"
+  converter = _Converter()
+  converter._action_contract_manifest = lambda value: {
+    "id": value,
+    "legacy": False,
+    "evaluation_execution": {"physical_substep_interpolation_required": "linear"},
+  }
+  fast.install_fast_conversion(converter)
+  recorded = _plan()
+  recorded.source.action_contract = contract
+
+  manifest = fast._conversion_action_contract((recorded,))
+
+  assert manifest["id"] == contract
+  assert manifest["legacy"] is False
+  assert (
+    manifest["evaluation_execution"]["physical_substep_interpolation_required"]
+    == "linear"
+  )
+  legacy = _plan()
+  with pytest.raises(ValueError, match="mixes action contracts"):
+    fast._conversion_action_contract((recorded, legacy))
+
+
+def test_fast_manifest_legacy_fallback_is_explicit_and_rejects_new_contract() -> None:
+  converter = _Converter()
+  fast.install_fast_conversion(converter)
+  legacy = _plan()
+
+  manifest = fast._conversion_action_contract((legacy,))
+
+  assert manifest["id"] == fast.LEGACY_ACTION_CONTRACT
+  assert manifest["legacy"] is True
+  recorded = _plan()
+  recorded.source.action_contract = "recorded-controller-target-v1"
+  with pytest.raises(ValueError, match="requires an OpenPI manifest authority"):
+    fast._conversion_action_contract((recorded,))
+
+
+@pytest.mark.parametrize("task", ["bulb-screw", "whiteboard-wipe-horizontal-line"])
+def test_source_environment_requires_one_bound_mechanics_identity(
+  tmp_path: Path, task: str,
+) -> None:
+  source_path = tmp_path / "source.h5"
+  with h5py.File(source_path, "w") as file:
+    file.attrs["model_fingerprint"] = "a" * 64
+  plan = SimpleNamespace(
+    source=SimpleNamespace(
+      task=task,
+      hdf5=SimpleNamespace(path=source_path),
+      metadata={"mechanics_version": "mechanics-v1"},
+    )
+  )
+
+  assert fast._source_environment((plan,)) == {
+    "mechanics_version": "mechanics-v1",
+    "model_fingerprint": "a" * 64,
+  }
+
+  second_path = tmp_path / "second.h5"
+  with h5py.File(second_path, "w") as file:
+    file.attrs["model_fingerprint"] = "b" * 64
+  second = SimpleNamespace(
+    source=SimpleNamespace(
+      task=task,
+      hdf5=SimpleNamespace(path=second_path),
+      metadata={"mechanics_version": "mechanics-v1"},
+    )
+  )
+  with pytest.raises(ValueError, match="mix mechanics/model identities"):
+    fast._source_environment((plan, second))
+
+  non_bulb = SimpleNamespace(
+    source=SimpleNamespace(task="sponge-grasp", metadata={})
+  )
+  assert fast._source_environment((non_bulb,)) is None
+
+
+def _usb_environment_plan(tmp_path: Path, name: str, protocol: object = ...) -> SimpleNamespace:
+  from kaihand_tactile_env.tasks.usb_unplug import config
+
+  source_path = tmp_path / f"{name}.h5"
+  with h5py.File(source_path, "w") as file:
+    file.attrs["model_fingerprint"] = "a" * 64
+  metadata = {"mechanics_version": config.MECHANICS_VERSION}
+  if protocol is not ...:
+    metadata["completion_protocol"] = protocol
+  return SimpleNamespace(source=SimpleNamespace(
+    task="usb-unplug", hdf5=SimpleNamespace(path=source_path), metadata=metadata,
+  ))
+
+
+def test_usb_source_environment_freezes_current_recorded_completion_protocol(tmp_path: Path):
+  from kaihand_tactile_env.tasks.usb_unplug import config
+
+  plan = _usb_environment_plan(tmp_path, "current", config.COMPLETION_PROTOCOL)
+  identity = fast._source_environment((plan,))
+  assert identity == {
+    "mechanics_version": config.MECHANICS_VERSION,
+    "model_fingerprint": "a" * 64,
+    "completion_protocol": config.COMPLETION_PROTOCOL,
+  }
+  # The returned frozen identity must not alias a mutable raw metadata object.
+  plan.source.metadata["completion_protocol"] = "usb-unplug-legacy-return-release"
+  assert identity["completion_protocol"] == config.COMPLETION_PROTOCOL
+  with pytest.raises(ValueError, match="completion_protocol"):
+    fast._source_environment((plan,))
+
+
+@pytest.mark.parametrize("protocol", [..., None, "", "usb-unplug-legacy-return-release", True, 2])
+def test_usb_source_environment_rejects_legacy_missing_or_unknown_protocol(
+  tmp_path: Path, protocol: object,
+):
+  plan = _usb_environment_plan(tmp_path, "invalid", protocol)
+  with pytest.raises(ValueError, match="completion_protocol"):
+    fast._source_environment((plan,))
+
+
+@pytest.mark.parametrize("current_first", [False, True])
+def test_usb_source_environment_rejects_mixed_old_and_current_episodes(
+  tmp_path: Path, current_first: bool,
+):
+  from kaihand_tactile_env.tasks.usb_unplug import config
+
+  current = _usb_environment_plan(tmp_path, "current", config.COMPLETION_PROTOCOL)
+  legacy = _usb_environment_plan(tmp_path, "legacy")
+  plans = (current, legacy) if current_first else (legacy, current)
+  with pytest.raises(ValueError, match="legacy or mixed"):
+    fast._source_environment(plans)
+
+
+def test_usb_source_environment_detects_runtime_protocol_drift(tmp_path: Path, monkeypatch):
+  from kaihand_tactile_env.tasks.usb_unplug import config
+
+  plan = _usb_environment_plan(tmp_path, "current", config.COMPLETION_PROTOCOL)
+  monkeypatch.setattr(config, "COMPLETION_PROTOCOL", "usb-unplug-future-protocol")
+  with pytest.raises(ValueError, match="current completion_protocol"):
+    fast._source_environment((plan,))
 
 
 def test_resume_rehashes_committed_episode_artifacts(tmp_path: Path) -> None:
@@ -142,16 +289,20 @@ def test_resume_rehashes_committed_episode_artifacts(tmp_path: Path) -> None:
     camera_names=("head",),
   )
   plan = SimpleNamespace(source=source, exported_frames=3)
-  (episode / "done.json").write_text(json.dumps({
-    "schema": fast.SCHEMA,
-    "plan_fingerprint": "plan",
-    "output_episode_index": 0,
-    "source_episode_index": 42,
-    "source_hdf5_sha256": "source-hash",
-    "exported_frames": 3,
-    "global_start_index": 0,
-    "artifacts": artifacts,
-  }))
+  (episode / "done.json").write_text(
+    json.dumps(
+      {
+        "schema": fast.SCHEMA,
+        "plan_fingerprint": "plan",
+        "output_episode_index": 0,
+        "source_episode_index": 42,
+        "source_hdf5_sha256": "source-hash",
+        "exported_frames": 3,
+        "global_start_index": 0,
+        "artifacts": artifacts,
+      }
+    )
+  )
   kwargs = dict(
     plan=plan, output_index=0, global_start_index=0, plan_fingerprint="plan"
   )

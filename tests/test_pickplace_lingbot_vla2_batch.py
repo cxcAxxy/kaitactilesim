@@ -61,7 +61,7 @@ def _manifest(tmp_path, monkeypatch, **overrides):
 
 
 def _write_comparison(review: Path, reference: Path) -> None:
-  review.mkdir()
+  review.mkdir(exist_ok=True)
   np.savez_compressed(
     review / "evaluation_rollout_trace.npz",
     simulation_time_s=np.arange(3, dtype=np.float64) / 30.0,
@@ -193,8 +193,9 @@ def test_lingbot_batch_rejects_nonmatching_deployment(
     module["load_manifest"](path)
 
 
+@pytest.mark.parametrize("layout", ["flat", "legacy"])
 def test_lingbot_batch_aggregates_trials_without_recording(
-  tmp_path, monkeypatch
+  tmp_path, monkeypatch, layout
 ):
   path, payload = _manifest(tmp_path, monkeypatch)
   module = _module(monkeypatch)
@@ -226,13 +227,19 @@ def test_lingbot_batch_aggregates_trials_without_recording(
       "action_representation": payload["action_representation"],
       "reference_dataset": str((tmp_path / "training_reference").resolve()),
       "reference_episode_index": 0,
-      "diagnostic_only": False,
-      "formal_metrics_valid": True,
+      "guard_mode": "observe",
+      "guard_events": [],
+      "stop_reason": "success" if success else "time_limit",
+      "physics_valid": True,
+      "diagnostic_only": True,
+      "formal_metrics_valid": False,
+      "task_success": success,
       "status": "success" if success else "task_not_completed",
       "evaluation": {"success": success},
       "stats": {"requests": 2, "action_steps": 50},
     }), encoding="utf-8")
-    _write_comparison(trial / "review", (tmp_path / "training_reference").resolve())
+    artifact_dir = trial if layout == "flat" else trial / "review"
+    _write_comparison(artifact_dir, (tmp_path / "training_reference").resolve())
     return SimpleNamespace(returncode=0)
 
   monkeypatch.setattr(namespace["subprocess"], "run", fake_run)
@@ -246,8 +253,12 @@ def test_lingbot_batch_aggregates_trials_without_recording(
   ]) == 0
   assert len(commands) == 2
   assert all("--no-record" in command for command in commands)
-  assert all(not (output / f"seed_{seed:03d}" / "review/review.mp4").exists() for seed in (0, 1))
-  assert all((output / f"seed_{seed:03d}" / "review/evaluation_rollout_trace.npz").is_file() for seed in (0, 1))
+  for seed in (0, 1):
+    trial = output / f"seed_{seed:03d}"
+    artifact_dir = trial if layout == "flat" else trial / "review"
+    assert not (artifact_dir / "review.mp4").exists()
+    assert (artifact_dir / "evaluation_rollout_trace.npz").is_file()
+    assert (trial / "review").exists() == (layout == "legacy")
   protocol = json.loads((output / "protocol.json").read_text(encoding="utf-8"))
   summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
   assert protocol["source_hashes"] == {"source": "frozen"}
@@ -255,6 +266,8 @@ def test_lingbot_batch_aggregates_trials_without_recording(
   assert summary["planned"] == 2
   assert summary["valid_trials"] == 2
   assert summary["successes"] == 1
+  assert summary["task_successes"] == 1
+  assert [row["task_success"] for row in summary["trials"]] == [True, False]
   assert summary["success_rate"] == 0.5
   assert summary["complete"] is True
 

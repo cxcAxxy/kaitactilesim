@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -14,6 +15,7 @@ from collections import Counter
 from pathlib import Path
 
 from kaihand_tactile_env.shared.config import default_model_path, model_fingerprint
+from kaihand_tactile_env.shared.evaluation_video import evaluation_artifact_directory
 from kaihand_tactile_env.tasks.poker_draw.mid_full import CONTACT_MODEL_VERSION
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -64,6 +66,8 @@ def fingerprints(openpi_root: Path) -> dict:
     ROOT / "src/kaihand_tactile_env/tasks/poker_draw/rollout_eval.py",
     ROOT / "src/kaihand_tactile_env/tasks/poker_draw/review_metrics.py",
     ROOT / "src/kaihand_tactile_env/shared/simulation.py",
+    ROOT / "src/kaihand_tactile_env/shared/evaluation_guards.py",
+    ROOT / "src/kaihand_tactile_env/shared/physics_integrity.py",
     ROOT / "src/kaihand_tactile_env/shared/rendering.py",
     ROOT / "src/kaihand_tactile_env/shared/evaluation_video.py",
     ROOT / "src/kaihand_tactile_env/shared/policy_video.py",
@@ -85,6 +89,10 @@ def fingerprints(openpi_root: Path) -> dict:
 
 
 def classify(report: dict) -> tuple[str, bool]:
+  if any(
+    value for key, value in report.items() if key.endswith("record_error")
+  ):
+    return "infrastructure_or_contract_error", False
   if (
     report.get("status") == "success"
     and report.get("evaluation", {}).get("success") is True
@@ -115,7 +123,10 @@ def main() -> None:
   parser.add_argument("--tactile-refine-every", type=int, default=5)
   parser.add_argument("--seeds", nargs="+", type=int, default=list(range(20)))
   parser.add_argument("--trial-wall-limit", type=float, default=1800.0)
-  parser.add_argument("--max-sim-seconds", type=float, default=50.0)
+  parser.add_argument("--max-sim-seconds", type=float, default=90.0)
+  parser.add_argument(
+    "--guard-mode", choices=("observe", "strict"), default="observe"
+  )
   parser.add_argument("--success-hold-seconds", type=float, default=0.10)
   parser.add_argument("--full-duration-evaluation", action="store_true")
   parser.add_argument("--video-count", type=int, default=3)
@@ -150,8 +161,11 @@ def main() -> None:
     parser.error("video-count must be between zero and number of seeds")
   if args.execute_steps <= 0 or args.tactile_refine_every <= 0:
     parser.error("execute-steps and tactile-refine-every must be positive")
-  if args.max_sim_seconds <= 0 or args.trial_wall_limit <= 0:
-    parser.error("time limits must be positive")
+  if any(
+    not math.isfinite(value) or value <= 0
+    for value in (args.max_sim_seconds, args.trial_wall_limit)
+  ):
+    parser.error("time limits must be finite and positive")
   if not 0 <= args.xy_jitter_mm <= 5.0 or not 0 <= args.yaw_jitter_deg <= 1.0:
     parser.error("poker randomization is limited to 5 mm XY and 1 degree yaw")
   if not EGL_VENDOR.is_file():
@@ -191,8 +205,9 @@ def main() -> None:
     "replan_period_s": args.execute_steps / 30,
     "success_hold_seconds": args.success_hold_seconds,
     "full_duration_evaluation": args.full_duration_evaluation,
-    "diagnostic_only": bool(args.disable_penetration_guard),
-    "formal_metrics_valid": not args.disable_penetration_guard,
+    "guard_mode": args.guard_mode,
+    "diagnostic_only": bool(args.disable_penetration_guard) or args.guard_mode == "observe",
+    "formal_metrics_valid": not args.disable_penetration_guard and args.guard_mode == "strict",
     "penetration_guard": {
       "enabled": not args.disable_penetration_guard,
       "threshold_m": 0.0006,
@@ -286,6 +301,8 @@ def main() -> None:
       str(args.execute_steps),
       "--max-sim-seconds",
       str(args.max_sim_seconds),
+      "--guard-mode",
+      args.guard_mode,
       "--success-hold-seconds",
       str(args.success_hold_seconds),
       "--output-dir",
@@ -346,8 +363,8 @@ def main() -> None:
       "full_duration_evaluation": args.full_duration_evaluation,
       "tactile_refine_every": args.tactile_refine_every,
       "control_hz": 30,
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_metrics_valid": not args.disable_penetration_guard,
+      "guard_mode": args.guard_mode,
+      "diagnostic_only": bool(args.disable_penetration_guard) or args.guard_mode == "observe",
       "penetration_guard_enabled": not args.disable_penetration_guard,
     }
     identity_errors = {
@@ -358,6 +375,10 @@ def main() -> None:
     if identity_errors:
       raise RuntimeError(f"seed {seed}: trial identity mismatch: {identity_errors}")
     reason, valid = classify(summary)
+    valid = valid and returncode == 0
+    has_record_error = any(
+      value for key, value in summary.items() if key.endswith("record_error")
+    )
     if args.save_raw and valid:
       missing_raw = [name for name in RAW_FILES if not (trial / name).is_file()]
       if missing_raw or summary.get("raw", {}).get("validated") is not True:
@@ -365,8 +386,8 @@ def main() -> None:
           f"seed {seed}: incomplete Raw/force artifacts: {missing_raw}; "
           f"error={summary.get('raw_record_error')}"
         )
-    if record:
-      review = trial / "review"
+    if record and not has_record_error:
+      review = evaluation_artifact_directory(trial)
       missing = [name for name in REVIEW_FILES if not (review / name).is_file()]
       if missing:
         if not valid:
@@ -385,27 +406,34 @@ def main() -> None:
         "right_wrist",
       ]:
         raise RuntimeError(f"seed {seed}: review omitted a model camera")
-      if review_metadata.get("diagnostic_only") is not bool(
-        args.disable_penetration_guard
+      if review_metadata.get("diagnostic_only") is not (
+        bool(args.disable_penetration_guard) or args.guard_mode == "observe"
       ):
         raise RuntimeError(f"seed {seed}: review diagnostic-mode mismatch")
 
     row = {
       "seed": seed,
       "success": reason == "success",
+      "task_success": bool(summary.get("task_success", False)),
       "valid_trial": valid,
       "termination": reason,
       "returncode": returncode,
       "wall_seconds": time.monotonic() - trial_started,
       "sim_seconds": summary.get("sim_seconds"),
       "error": summary.get("error"),
+      "record_error": summary.get("record_error"),
+      "raw_record_error": summary.get("raw_record_error"),
       "requests": summary.get("stats", {}).get("requests", 0),
       "tactile_refinements": summary.get("stats", {}).get("tactile_refinements", 0),
       "tactile_updates": summary.get("stats", {}).get("tactile_updates", 0),
       "action_steps": summary.get("stats", {}).get("action_steps", 0),
       "evaluation": summary.get("evaluation", {}),
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_result_valid": not args.disable_penetration_guard,
+      "guard_mode": summary.get("guard_mode"),
+      "guard_events": summary.get("guard_events", []),
+      "stop_reason": summary.get("stop_reason"),
+      "physics_valid": summary.get("physics_valid"),
+      "diagnostic_only": summary.get("diagnostic_only"),
+      "formal_result_valid": summary.get("formal_metrics_valid"),
       "penetration_diagnostics": summary.get("penetration_diagnostics", {}),
       "summary": str(summary_path.relative_to(output)),
       "raw": summary.get("raw"),
@@ -413,6 +441,9 @@ def main() -> None:
     results.append(row)
     valid_count = sum(result["valid_trial"] for result in results)
     successes = sum(result["success"] for result in results)
+    task_successes = sum(
+      bool(result.get("task_success", result["success"])) for result in results
+    )
     aggregate = {
       "task": "poker-draw",
       "base_deployment_id": deployment["deployment_id"],
@@ -429,8 +460,9 @@ def main() -> None:
       "tactile_refine_every": args.tactile_refine_every,
       "control_hz": 30,
       "replan_period_s": args.execute_steps / 30,
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_metrics_valid": not args.disable_penetration_guard,
+      "guard_mode": args.guard_mode,
+      "diagnostic_only": bool(args.disable_penetration_guard) or args.guard_mode == "observe",
+      "formal_metrics_valid": not args.disable_penetration_guard and args.guard_mode == "strict",
       "penetration_guard_enabled": not args.disable_penetration_guard,
       "penetration_guard_threshold_m": 0.0006,
       "max_sim_seconds": args.max_sim_seconds,
@@ -439,10 +471,17 @@ def main() -> None:
       "attempted": len(results),
       "valid_trials": valid_count,
       "successes": successes,
+      "task_successes": task_successes,
       "success_rate": successes / valid_count if valid_count else None,
       "infrastructure_errors": len(results) - valid_count,
       "complete": len(results) == len(args.seeds) and valid_count == len(args.seeds),
       "termination_counts": dict(Counter(row["termination"] for row in results)),
+      "stop_reason_counts": dict(Counter(row["stop_reason"] for row in results)),
+      "guard_event_counts": dict(Counter(
+        event.get("kind")
+        for row in results for event in row.get("guard_events", [])
+        if event.get("kind")
+      )),
       "failure_stage_counts": dict(
         Counter(
           row["evaluation"].get("failure_stage")

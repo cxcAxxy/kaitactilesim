@@ -25,6 +25,20 @@ def load_runner():
     sys.path.remove(str(workcell))
 
 
+def load_trex_runner():
+  workcell = ROOT / "scripts/workcell"
+  sys.path.insert(0, str(workcell))
+  try:
+    path = workcell / "run_poker_pi05_trex.py"
+    spec = importlib.util.spec_from_file_location("run_poker_pi05_trex", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+  finally:
+    sys.path.remove(str(workcell))
+
+
 def deployment():
   return {
     "deployment_id": "d" * 64,
@@ -127,7 +141,14 @@ def test_penetration_guard_can_be_disabled_without_disabling_other_guards():
   runner = load_runner()
 
   simulation = SimpleNamespace(
-    data=SimpleNamespace(qpos=np.zeros(1), qvel=np.zeros(1)),
+    data=SimpleNamespace(
+      time=0.0,
+      qpos=np.zeros(1),
+      qvel=np.zeros(1),
+      qacc=np.zeros(1),
+      ctrl=np.zeros(1),
+      warning=(),
+    ),
     object_pose=lambda _name: np.array([0.0, 0.0, 0.84, 1.0, 0.0, 0.0, 0.0]),
   )
   observer = SimpleNamespace(
@@ -145,3 +166,13 @@ def test_penetration_guard_can_be_disabled_without_disabling_other_guards():
   simulation.data.qpos[0] = np.nan
   with pytest.raises(RuntimeError, match="nonfinite simulation state"):
     runner.guard_poker_state(observer, penetration_guard_enabled=False)
+
+
+def test_tactile_wrong_shape_is_not_recoverable_as_nonfinite_action():
+  runner = load_trex_runner()
+  with pytest.raises(RuntimeError, match="action shape") as caught:
+    runner.validate_tactile_physical_actions(np.zeros((29, 27)))
+
+  simulation = SimpleNamespace(data=SimpleNamespace(time=0.0))
+  runner.configure_evaluation_guards(simulation, "observe")
+  assert runner.recover_nonfinite_action(simulation, caught.value) is False

@@ -105,7 +105,7 @@ def trial(args, process, metadata, seed):
         report['render_backend'] = renderer.backend_info
         recorder = PokerPolicyVideo(
           sim,
-          output/'review',
+          output,
           fps=args.record_fps,
           width=args.review_width,
           height=args.review_height,

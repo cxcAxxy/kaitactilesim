@@ -1,0 +1,14 @@
+.kai-eval .ke-load-banner{border:1px solid #a8cdd7;border-left:4px solid #087e94;background:#edf7f9;border-radius:9px;padding:15px 18px;margin-bottom:22px;color:#234758}
+.kai-eval .ke-load-banner>strong{font-size:16px}.kai-eval .ke-load-banner p{font-size:12px;line-height:1.7;margin:7px 0}
+.kai-eval .ke-load-nav{display:flex;align-items:center;flex-wrap:wrap;gap:14px;font-size:12px}.kai-eval .ke-load-nav a{color:#087e94;text-underline-offset:3px}
+.kai-eval .ke-load-clarification{background:#f0f6f8;padding:9px 11px;border-radius:5px}
+.kai-eval .ke-load-panel{scroll-margin-top:16px}.kai-eval .ke-load-chart{display:block;width:100%;height:250px;cursor:crosshair}
+.kai-eval .ke-load-chart:focus-visible{outline:3px solid #df982a;outline-offset:3px}
+.kai-eval .ke-load-reading{display:flex;flex-wrap:wrap;gap:7px 16px;align-items:center;padding:12px 0 5px;font-size:12px;font-variant-numeric:tabular-nums}
+.kai-eval .ke-load-reading>span{color:#6e8292}.kai-eval .ke-load-reading strong{font-weight:650}
+.kai-eval .ke-load-hover{min-height:35px;color:#728597;font-size:11px;line-height:1.7;overflow-wrap:anywhere;padding:5px 0}
+.kai-eval .ke-load-fingers{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.kai-eval .ke-load-fingers label{display:flex;align-items:center;gap:5px;border:1px solid #dce5ed;background:#fafcfd;padding:6px 8px;border-radius:6px;font-size:12px;cursor:pointer}
+.kai-eval .ke-load-fingers input{accent-color:#087e94}.kai-eval .ke-load-fingers strong{font-size:11px;font-variant-numeric:tabular-nums;font-weight:500;color:#697f8f}
+.ke-load-error{border:1px solid #b97138;background:#fff8ed;padding:18px;margin:18px;font:14px/1.6 system-ui}
+@media(max-width:520px){.kai-eval .ke-load-chart{height:230px}.kai-eval .ke-load-banner{padding:12px}.kai-eval .ke-load-banner>strong{font-size:14px}.kai-eval .ke-load-nav{gap:8px}.kai-eval .ke-load-reading{font-size:11px}.kai-eval .ke-load-fingers label{font-size:11px}.kai-eval .ke-load-panel .ke-section-title{display:block}.kai-eval .ke-load-panel .ke-section-title h2{margin-bottom:5px}}

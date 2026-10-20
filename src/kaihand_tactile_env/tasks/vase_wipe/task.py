@@ -10,6 +10,13 @@ from dataclasses import asdict, dataclass
 import mujoco
 import numpy as np
 
+from kaihand_tactile_env.shared.evaluation_guards import (
+  FatalSimulationError,
+  is_observe_mode,
+  mark_physics_invalid,
+  record_guard_event,
+  task_guard,
+)
 from kaihand_tactile_env.shared.simulation import HAND_JOINT_NAMES, ArmHandSimulation
 
 from . import config
@@ -306,8 +313,18 @@ class VaseWipeSimulation(ArmHandSimulation):
       np.min(np.linalg.det(tetrahedra[:, 1:] - tetrahedra[:, :1]) / self._rest_volumes)
     )
     self.minimum_element_volume_ratio = min(self.minimum_element_volume_ratio, ratio)
-    if ratio <= 0:
-      raise RuntimeError(f"Sponge element inverted at {self.data.time:.4f}s")
+    inverted = ratio <= 0
+    if inverted and not is_observe_mode(self):
+      record_guard_event(
+        self,
+        "sponge_integrity_guard",
+        "Sponge element inverted",
+        measured=ratio,
+        threshold=0.0,
+        recovery="stop_invalid_physics",
+      )
+      mark_physics_invalid(self)
+      raise FatalSimulationError("Sponge element inverted")
     rigid = np.flatnonzero(np.all(contacts.geom >= 0, axis=1))
     pairs = contacts.geom[rigid]
     relevant = np.any(self._audit_hand_geoms[pairs], axis=1) & np.any(
@@ -322,41 +339,76 @@ class VaseWipeSimulation(ArmHandSimulation):
         self.minimum_hand_environment_distance_m = distance
       if distance < 0:
         self.penetration_count += 1
-        raise RuntimeError(f"Hand/environment penetration at {self.data.time:.4f}s")
+      task_guard(
+        self,
+        distance < 0,
+        "penetration_guard",
+        "Hand/environment penetration",
+        measured=distance,
+        threshold=0.0,
+        recovery="continue_physics",
+      )
       wrench = np.zeros(6)
       load = 0.0
       for contact_id in rigid[relevant]:
         mujoco.mj_contactForce(self.model, self.data, int(contact_id), wrench)
         load += max(0.0, float(wrench[0]))
       self.peak_hand_environment_force_n = max(self.peak_hand_environment_force_n, load)
-      if load > 2.0:
-        raise RuntimeError(f"Hand struck vase/table at {self.data.time:.4f}s")
+      task_guard(
+        self,
+        load > 2.0,
+        "collision_guard",
+        "Hand struck vase/table",
+        measured=load,
+        threshold=2.0,
+        recovery="continue_physics",
+      )
     ids = np.flatnonzero(np.any(contacts.flex == self._flex_id, axis=1))
     if len(ids):
       ids = ids[_external_flex_contact_mask(contacts.geom[ids], contacts.elem[ids])]
-    if not len(ids):
-      return
-    i = int(ids[np.argmin(contacts.dist[ids])])
-    contact = contacts[i]
-    distance = float(contact.dist)
-    if (
-      self.minimum_sponge_contact_distance_m is None
-      or distance < self.minimum_sponge_contact_distance_m
-    ):
-      self.minimum_sponge_contact_distance_m = distance
-      self.closest_sponge_contact = {
-        "time_s": float(self.data.time),
-        "phase": getattr(self, "phase", "tabletop_ready"),
-        "geom_ids": contact.geom.tolist(),
-        "element_ids": contact.elem.tolist(),
-      }
-    if distance < 0:
-      self.penetration_count += 1
-      raise RuntimeError(
-        f"Sponge penetration at {self.data.time:.4f}s: {distance * 1000:.6f} mm; "
-        f"geom={contact.geom.tolist()}, flex={contact.flex.tolist()}, "
-        f"elem={contact.elem.tolist()}, vert={contact.vert.tolist()}"
+    if len(ids):
+      i = int(ids[np.argmin(contacts.dist[ids])])
+      contact = contacts[i]
+      distance = float(contact.dist)
+      if (
+        self.minimum_sponge_contact_distance_m is None
+        or distance < self.minimum_sponge_contact_distance_m
+      ):
+        self.minimum_sponge_contact_distance_m = distance
+        self.closest_sponge_contact = {
+          "time_s": float(self.data.time),
+          "phase": getattr(self, "phase", "tabletop_ready"),
+          "geom_ids": contact.geom.tolist(),
+          "element_ids": contact.elem.tolist(),
+        }
+      if distance < 0:
+        self.penetration_count += 1
+      task_guard(
+        self,
+        distance < 0,
+        "penetration_guard",
+        "Sponge penetration",
+        measured=distance,
+        threshold=0.0,
+        recovery="continue_physics",
+        details={
+          "geom": contact.geom.tolist(),
+          "flex": contact.flex.tolist(),
+          "elem": contact.elem.tolist(),
+          "vert": contact.vert.tolist(),
+        },
       )
+    if inverted:
+      record_guard_event(
+        self,
+        "sponge_integrity_guard",
+        "Sponge element inverted",
+        measured=ratio,
+        threshold=0.0,
+        recovery="stop_invalid_physics",
+      )
+      mark_physics_invalid(self)
+      raise FatalSimulationError("Sponge element inverted")
 
   def contact_integrity_report(self):
     return {

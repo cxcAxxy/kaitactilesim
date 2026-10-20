@@ -15,23 +15,35 @@ import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-TASKS = (
-  "pick-place",
-  "poker-draw",
-  "usb-insert",
-  "bulb-screw",
-  "vase-wipe",
-  "install-ram",
-  "whiteboard-wipe",
-  "sponge-grasp",
+from kaihand_tactile_env.pipeline.collection import (
+  COLLECTION_CAMERA_HZ as COLLECTION_CAMERA_HZ,
 )
+from kaihand_tactile_env.pipeline.collection import (
+  COLLECTION_CAMERAS as COLLECTION_CAMERAS,
+)
+from kaihand_tactile_env.pipeline.collection import (
+  DEFAULT_PROFILE,
+  PROFILE_NAMES,
+  TASKS,
+  build_collection_command,
+  canonical_profile,
+  collection_catalog,
+  describe_collection_task,
+  recorded_runtime_contracts,
+  resolved_collection_profile,
+  validate_collection_outcome,
+)
+from kaihand_tactile_env.pipeline.collection import (
+  POKER_ACCEPTANCE_POLICY as POKER_ACCEPTANCE_POLICY,
+)
+
+ROOT = Path(__file__).resolve().parents[2]
 TERMINAL = {"success", "failed", "timeout"}
-COLLECTION_CAMERAS = ("head", "left_wrist", "right_wrist")
-COLLECTION_CAMERA_HZ = 30
-POKER_ACCEPTANCE_POLICY = "task-completion-v1"
 DEFAULT_STAGING_ROOT = Path("/cpfs_infra/user/chenxianchi/.capture_staging")
 PUBLISH_POLICY = "cpfs-stage-verified-copy-nas-atomic-v1"
+PROFILE_CONTRACT_FIELDS = frozenset(
+  {"profile", "resolved_profiles", "production_commands"}
+)
 
 
 def save(path, value):
@@ -50,7 +62,12 @@ def summary_record(record):
   return {
     key: value
     for key, value in record.items()
-    if key not in ("artifact_bytes", "artifact_sha256", "command")
+    if key not in (
+      "artifact_bytes",
+      "artifact_sha256",
+      "command",
+      "runtime_contracts",
+    )
   }
 
 
@@ -112,174 +129,22 @@ def environment(backend):
   return env
 
 
-def command(task, output, seed, fixed_stains=False):
-  base = [sys.executable]
-  scripts = ROOT / "scripts/workcell"
-  if task in ("pick-place", "poker-draw"):
-    cmd = base + [
-      str(scripts / "record_dataset.py"),
-      "--scene",
-      task,
-      "--output-dir",
-      str(output),
-      "--episodes",
-      "1",
-      "--workers",
-      "1",
-      "--seed",
-      str(seed),
-      "--camera-hz",
-      str(COLLECTION_CAMERA_HZ),
-      "--cameras",
-      *COLLECTION_CAMERAS,
-      "--rgb-only",
-    ]
-    if task == "pick-place":
-      cmd += ["--object", "cylinder", "--side", "right"]
-    else:
-      cmd += [
-        "--preset",
-        "middle-force-precontact-v1",
-        "--tactile-links",
-        "right",
-        "--acceptance-policy",
-        POKER_ACCEPTANCE_POLICY,
-      ]
-    return cmd
-  if task == "usb-insert":
-    return base + [
-      str(scripts / "record_usb_dataset.py"),
-      "--output-dir",
-      str(output),
-      "--episodes",
-      "1",
-      "--workers",
-      "1",
-      "--seed",
-      str(seed),
-      "--motion-profile",
-      "fast",
-      "--camera-hz",
-      str(COLLECTION_CAMERA_HZ),
-      "--cameras",
-      *COLLECTION_CAMERAS,
-      "--xy-jitter-mm",
-      "10",
-      "--yaw-jitter-deg",
-      "5",
-      "--precontact-noise-mm",
-      "0.5",
-    ]
-  if task == "bulb-screw":
-    return base + [
-      str(scripts / "refresh_light_bulb_example.py"),
-      "--position-seed",
-      str(seed),
-      "--camera-hz",
-      str(COLLECTION_CAMERA_HZ),
-      "--buffer-rows",
-      "128",
-      "--cameras",
-      *COLLECTION_CAMERAS,
-      "--raw-only",
-      "--output",
-      str(output),
-    ]
-  if task == "install-ram":
-    return base + [
-      str(scripts / "record_install_ram_example.py"),
-      "--position-seed",
-      str(seed),
-      "--camera-hz",
-      str(COLLECTION_CAMERA_HZ),
-      "--buffer-rows",
-      "64",
-      "--cameras",
-      *COLLECTION_CAMERAS,
-      "--raw-only",
-      "--output-dir",
-      str(output),
-    ]
-  if task == "whiteboard-wipe":
-    cmd = base + [
-      str(scripts / "record_whiteboard_example.py"),
-      "--output-dir",
-      str(output),
-      "--camera-hz",
-      str(COLLECTION_CAMERA_HZ),
-      "--buffer-rows",
-      "128",
-      "--cameras",
-      *COLLECTION_CAMERAS,
-      "--raw-only",
-    ]
-    return cmd if fixed_stains else cmd + ["--ink-seed", str(seed)]
-  if task == "vase-wipe":
-    cmd = base + [
-      str(scripts / "view_vase_wipe.py"),
-      "--headless",
-      "--run-task",
-      "--output-dir",
-      str(output),
-      "--camera-hz",
-      str(COLLECTION_CAMERA_HZ),
-      "--buffer-rows",
-      "128",
-      "--cameras",
-      *COLLECTION_CAMERAS,
-      "--raw-only",
-    ]
-    return cmd if fixed_stains else cmd + ["--stain-seed", str(seed)]
-  if task == "sponge-grasp":
-    return base + [
-      str(scripts / "record_sponge_grasp.py"),
-      "--output-dir",
-      str(output),
-      "--seed",
-      str(seed),
-      "--camera-hz",
-      str(COLLECTION_CAMERA_HZ),
-      "--buffer-rows",
-      "128",
-      "--raw-only",
-      "--cameras",
-      *COLLECTION_CAMERAS,
-    ]
-  raise ValueError(task)
+def command(task, output, seed, fixed_stains=False, profile=DEFAULT_PROFILE):
+  """Compatibility proxy for callers that imported this script directly."""
+  return build_collection_command(
+    task,
+    ROOT,
+    sys.executable,
+    output,
+    seed,
+    fixed_stains=fixed_stains,
+    profile=profile,
+  )
 
 
 def outcome(task, output):
-  """Require the recorder's actual outcome and a published raw file."""
-  if not any(output.rglob("*.h5")):
-    return False
-  if task in ("pick-place", "poker-draw"):
-    manifests = [p.with_suffix(".json") for p in output.glob("*.h5")]
-    return len(manifests) == 1 and read(manifests[0])["outcome"].get("success") is True
-  if task == "sponge-grasp":
-    raw = output / "raw/sponge_grasp_000000.h5"
-    result = read(raw.with_suffix(".result.json"))
-    manifest = read(raw.with_suffix(".json"))
-    return (
-      raw.is_file()
-      and result.get("success") is True
-      and manifest.get("validation", {}).get("valid") is True
-      and manifest.get("task_audit_passed") is True
-    )
-  if task == "vase-wipe":
-    result = read(output / "result.json")
-    validation = read(output / "raw/episode.json").get("validation", {})
-    return result.get("success") is True and validation.get("valid") is True
-  if task == "whiteboard-wipe":
-    result = read(output / "result.json")
-    validation = read(output / "raw/episode.json").get("validation", {})
-    return result.get("success") is True and validation.get("valid") is True
-  if task == "usb-insert":
-    report = read(output / "summary.json")
-    return report.get("complete") is True and report.get("successful_episodes") == 1
-  raw = next(output.glob("raw/*.h5"))
-  result = read(raw.with_suffix(".result.json"))
-  validation = read(raw.with_suffix(".json")).get("validation", {})
-  return result.get("success") is True and validation.get("valid") is True
+  """Compatibility proxy for the recorder-owned success gates."""
+  return validate_collection_outcome(task, output)
 
 
 def source_hashes():
@@ -500,6 +365,7 @@ def collect_episode(task, index, output, args, env, stop_event=None):
         hashes, sizes = publish_staged_data(staged_data, published_data)
         record.update(
           status="success",
+          runtime_contracts=recorded_runtime_contracts(staged_data),
           artifact_sha256=hashes,
           artifact_bytes=sizes,
           hdf5=[
@@ -535,12 +401,16 @@ def collect_episode(task, index, output, args, env, stop_event=None):
   seed = episode_seed(args.seed, task, index)
   data = directory / "data"
   staged_data = staging_attempt / "data"
-  cmd = command(task, staged_data, seed, args.fixed_stains)
+  cmd = command(task, staged_data, seed, args.fixed_stains, args.profile)
   record = {
     "task": task,
     "episode_index": index,
     "attempt_index": attempt_index,
     "seed": seed,
+    "profile": canonical_profile(args.profile),
+    "resolved_profile": resolved_collection_profile(
+      task, profile=args.profile, fixed_stains=args.fixed_stains
+    ),
     "command": cmd,
     "data_dir": str(data.relative_to(output)),
     "staging_dir": str(staged_data),
@@ -560,6 +430,7 @@ def collect_episode(task, index, output, args, env, stop_event=None):
       record.update(status="failed", outcome_error=str(error))
   if record["status"] == "success":
     try:
+      record["runtime_contracts"] = recorded_runtime_contracts(staged_data)
       hashes, sizes = publish_staged_data(staged_data, data)
       record["hdf5"] = [
         str(path.relative_to(output)) for path in sorted(data.rglob("*.h5"))
@@ -576,9 +447,30 @@ def collect_episode(task, index, output, args, env, stop_event=None):
   return summary_record(record)
 
 
-def main():
+def parse_args(argv=None):
   parser = argparse.ArgumentParser(description=__doc__)
-  parser.add_argument("--task", nargs="+", choices=(*TASKS, "all"), required=True)
+  inspect = parser.add_mutually_exclusive_group()
+  inspect.add_argument(
+    "--list-support",
+    action="store_true",
+    help="print all task collection profiles and exit without starting MuJoCo",
+  )
+  inspect.add_argument(
+    "--describe",
+    choices=TASKS,
+    metavar="TASK",
+    help="print one task's resolved collection profile and exit",
+  )
+  parser.add_argument(
+    "--profile",
+    choices=PROFILE_NAMES,
+    default=DEFAULT_PROFILE,
+    help=(
+      "collection profile; legacy-compatible is an alias of production-v1 "
+      f"(default: {DEFAULT_PROFILE})"
+    ),
+  )
+  parser.add_argument("--task", nargs="+", choices=(*TASKS, "all"))
   parser.add_argument("--output-dir", type=Path)
   count = parser.add_mutually_exclusive_group()
   count.add_argument(
@@ -625,9 +517,11 @@ def main():
   parser.add_argument(
     "--check", action="store_true", help="Compile and render chosen scenes only"
   )
-  args = parser.parse_args()
+  args = parser.parse_args(argv)
   import math
 
+  if not (args.list_support or args.describe) and args.task is None:
+    parser.error("--task is required unless --list-support or --describe is used")
   if args.episodes is None and args.target_successes is None:
     args.episodes = 1
   if args.target_successes is not None and args.max_attempts is None:
@@ -650,13 +544,104 @@ def main():
       "counts and seed must be nonnegative; attempt/target/timeout counts must "
       "be positive; max-attempts must cover target-successes; workers must be 1..8"
     )
+  if not (args.list_support or args.describe or args.check) and args.output_dir is None:
+    parser.error("--output-dir is required unless inspecting support or using --check")
+  return args
+
+
+def collection_contract(args, tasks, output, *, source_sha256=None):
+  """Resolve the immutable batch contract, including concrete first commands."""
+  profile = canonical_profile(args.profile)
+  production_commands = {}
+  for task in tasks:
+    index = args.start_index
+    seed = episode_seed(args.seed, task, index)
+    staged_data = (
+      staging_episode_directory(args.staging_root, output, task, index)
+      / "attempt_001/data"
+    )
+    production_commands[task] = {
+      "episode_index": index,
+      "seed": seed,
+      "command": command(
+        task,
+        staged_data,
+        seed,
+        args.fixed_stains,
+        profile,
+      ),
+    }
+  return {
+    "schema": "task_collection_v2",
+    "tasks": tasks,
+    "collection_mode": (
+      "target-successes" if args.target_successes is not None else "attempts"
+    ),
+    "target_successes": args.target_successes,
+    "seed": args.seed,
+    "start_index": args.start_index,
+    "render_backend": args.render_backend,
+    "fixed_stains": args.fixed_stains,
+    "staging_root": str(args.staging_root),
+    "publish_policy": PUBLISH_POLICY,
+    "profile": profile,
+    "resolved_profiles": {
+      task: resolved_collection_profile(
+        task, profile=profile, fixed_stains=args.fixed_stains
+      )
+      for task in tasks
+    },
+    "production_commands": production_commands,
+    "source_sha256": source_hashes() if source_sha256 is None else source_sha256,
+  }
+
+
+def collection_contracts_compatible(existing, expected):
+  """Accept the legacy manifest shape without weakening its source hash."""
+  if existing == expected:
+    return True
+  if not PROFILE_CONTRACT_FIELDS.isdisjoint(existing):
+    return False
+  legacy_expected = {
+    key: value for key, value in expected.items() if key not in PROFILE_CONTRACT_FIELDS
+  }
+  return existing == legacy_expected
+
+
+def _argument_error(message):
+  argparse.ArgumentParser(description=__doc__).error(message)
+
+
+def main(argv=None):
+  args = parse_args(argv)
+  if args.list_support:
+    print(
+      json.dumps(
+        collection_catalog(
+          profile=args.profile, fixed_stains=args.fixed_stains
+        ),
+        indent=2,
+      )
+    )
+    return 0
+  if args.describe:
+    print(
+      json.dumps(
+        describe_collection_task(
+          args.describe,
+          profile=args.profile,
+          fixed_stains=args.fixed_stains,
+        ),
+        indent=2,
+      )
+    )
+    return 0
+
   attempt_limit = args.episodes if args.episodes is not None else args.max_attempts
   tasks = list(TASKS) if "all" in args.task else list(dict.fromkeys(args.task))
   if args.check:
     print(json.dumps(check(tasks, args.render_backend), indent=2))
     return 0
-  if args.output_dir is None:
-    parser.error("--output-dir is required unless --check")
   output = args.output_dir.resolve()
   args.staging_root = args.staging_root.expanduser().resolve()
   if args.dry_run:
@@ -665,12 +650,21 @@ def main():
       print(
         json.dumps(
           {
+            "schema": "kaihand_collection_plan_v1",
+            "schema_version": 1,
+            "stage": "collect",
             "task": task,
             "episodes": args.episodes,
             "target_successes": args.target_successes,
             "max_attempts": args.max_attempts,
             "workers": args.workers,
             "staging_root": str(args.staging_root),
+            "profile": canonical_profile(args.profile),
+            "resolved_profile": resolved_collection_profile(
+              task,
+              profile=args.profile,
+              fixed_stains=args.fixed_stains,
+            ),
             "first_command": command(
               task,
               staging_episode_directory(
@@ -678,6 +672,7 @@ def main():
               ) / "attempt_001/data",
               episode_seed(args.seed, task, index),
               args.fixed_stains,
+              args.profile,
             ),
           }
         )
@@ -689,30 +684,18 @@ def main():
     try:
       fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-      parser.error("another collector holds this output directory")
-    contract = {
-      "schema": "task_collection_v2",
-      "tasks": tasks,
-      "collection_mode": (
-        "target-successes" if args.target_successes is not None else "attempts"
-      ),
-      "target_successes": args.target_successes,
-      "seed": args.seed,
-      "start_index": args.start_index,
-      "render_backend": args.render_backend,
-      "fixed_stains": args.fixed_stains,
-      "staging_root": str(args.staging_root),
-      "publish_policy": PUBLISH_POLICY,
-      "source_sha256": source_hashes(),
-    }
+      _argument_error("another collector holds this output directory")
+    contract = collection_contract(args, tasks, output)
     manifest = output / "collection.json"
     if manifest.exists():
-      if not args.resume or read(manifest) != contract:
-        parser.error(
+      if not args.resume or not collection_contracts_compatible(
+        read(manifest), contract
+      ):
+        _argument_error(
           "existing collection requires --resume and identical code/settings; otherwise use a new directory"
         )
     elif args.resume or any(p.name != ".collection.lock" for p in output.iterdir()):
-      parser.error(
+      _argument_error(
         "cannot resume an unknown directory or initialize a nonempty directory"
       )
     else:

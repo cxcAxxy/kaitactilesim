@@ -57,13 +57,15 @@ def test_usb_defaults_match_training_randomization(module):
   assert args.execute_steps == 5
   assert args.xy_jitter_mm == 10.0
   assert args.yaw_jitter_deg == 5.0
+  assert args.max_sim_seconds == 90.0
+  assert args.guard_mode == "observe"
   assert args.record
   assert args.disable_penetration_guard is False
   assert (args.review_width, args.review_height) == (1920, 1080)
   assert "USB plug" in module["INSTRUCTION"]
 
 
-def test_penetration_guard_is_optional_but_load_guard_remains(module):
+def test_task_guards_observe_by_default_but_strict_mode_stops(module):
   args = module["parse_args"](
     [
       "--deployment-manifest", "/manifest.json",
@@ -81,8 +83,22 @@ def test_penetration_guard_is_optional_but_load_guard_remains(module):
   outcome = SimpleNamespace(state=state)
   simulation = SimpleNamespace(
     object_pose=lambda _name: np.array([0.0, 0.0, 0.8]),
-    data=SimpleNamespace(qpos=np.zeros(1), qvel=np.zeros(1)),
+    data=SimpleNamespace(
+      time=0.0,
+      qpos=np.zeros(1),
+      qvel=np.zeros(1),
+      qacc=np.zeros(1),
+      ctrl=np.zeros(1),
+      warning=(),
+    ),
   )
+  module["configure_evaluation_guards"](simulation, "observe")
+  module["_guard_usb_state"](outcome, simulation)
+  guard_report = module["evaluation_guard_report"](simulation)
+  assert guard_report["guard_events"][0]["kind"] == "usb_socket_penetration"
+  assert guard_report["guard_events"][0]["recovery"] == "continue"
+
+  module["configure_evaluation_guards"](simulation, "strict")
   with pytest.raises(RuntimeError, match="socket penetration"):
     module["_guard_usb_state"](outcome, simulation)
   module["_guard_usb_state"](
@@ -95,6 +111,75 @@ def test_penetration_guard_is_optional_but_load_guard_remains(module):
     module["_guard_usb_state"](
       outcome, simulation, penetration_guard_enabled=False
     )
+
+
+def test_nonfinite_simulation_is_fatal_even_in_observe_mode(module):
+  state = SimpleNamespace(
+    socket_normal_load_n=0.0,
+    axial_resistance_n=0.0,
+    wall_normal_load_n=0.0,
+    maximum_socket_penetration_m=0.0,
+  )
+  simulation = SimpleNamespace(
+    object_pose=lambda _name: np.array([0.0, 0.0, 0.8]),
+    data=SimpleNamespace(
+      time=0.0,
+      qpos=np.array([np.nan]),
+      qvel=np.zeros(1),
+      qacc=np.zeros(1),
+      ctrl=np.zeros(1),
+      warning=(),
+    ),
+  )
+  module["configure_evaluation_guards"](simulation, "observe")
+
+  with pytest.raises(RuntimeError, match="nonfinite simulation state"):
+    module["_guard_usb_state"](SimpleNamespace(state=state), simulation)
+
+  report = module["evaluation_guard_report"](simulation, status="error")
+  assert report["physics_valid"] is False
+  assert report["stop_reason"] == "fatal_error"
+
+
+def test_nonfinite_prediction_holds_only_in_observe_and_shape_errors_stay_fatal(
+  module,
+):
+  simulation = SimpleNamespace(data=SimpleNamespace(time=1.25))
+  actions = np.zeros((32, 48), dtype=np.float32)
+  actions[3, 7] = np.nan
+  module["configure_evaluation_guards"](simulation, "observe")
+
+  assert module["_validated_or_rejected_prediction"](
+    simulation, actions, horizon=32, action_dim=48
+  ) is None
+  assert simulation._evaluation_action_rejected is True
+  event = module["evaluation_guard_report"](simulation)["guard_events"][0]
+  assert event["kind"] == "nonfinite_action"
+  assert event["recovery"] == "hold_last_valid_command_and_replan"
+
+  with pytest.raises(RuntimeError, match="shape"):
+    module["_validated_or_rejected_prediction"](
+      simulation, np.zeros((31, 48)), horizon=32, action_dim=48
+    )
+
+  module["configure_evaluation_guards"](simulation, "strict")
+  with pytest.raises(RuntimeError, match="nonfinite"):
+    module["_validated_or_rejected_prediction"](
+      simulation, actions, horizon=32, action_dim=48
+    )
+
+
+def test_recording_error_invalidates_formal_metrics_without_physics_relabel(module):
+  report = {
+    "physics_valid": True,
+    "formal_metrics_valid": True,
+    "stop_reason": "success",
+  }
+  module["_mark_record_error"](report, RuntimeError("encoder failed"))
+  assert report["physics_valid"] is True
+  assert report["formal_metrics_valid"] is False
+  assert report["stop_reason"] == "fatal_error"
+  assert report["record_error"] == "RuntimeError: encoder failed"
 
 
 @pytest.mark.parametrize(

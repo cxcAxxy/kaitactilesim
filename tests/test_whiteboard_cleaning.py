@@ -2,7 +2,10 @@
 
 import numpy as np
 import pytest
-from kaihand_tactile_env.tasks.whiteboard_wipe.cleaning import CleaningProgress
+from kaihand_tactile_env.tasks.whiteboard_wipe.cleaning import (
+  BOARD_NORMAL_FORCE_GUARD_N,
+  CleaningProgress,
+)
 
 
 @pytest.mark.parametrize(
@@ -10,14 +13,13 @@ from kaihand_tactile_env.tasks.whiteboard_wipe.cleaning import CleaningProgress
   [
     (0.0, 0.1, 0.06, 0.006),  # The tool moves above the board.
     (1.49, 0.1, 0.06, 0.006),  # A light brush does not meet the load gate.
-    (8.01, 0.1, 0.06, 0.006),  # Excessive pressing is not valid wiping.
-    (2.0, 0.1, 0.0, 0.006),  # Static loading does not erase ink.
-    (2.0, 0.1, 0.0049, 0.006),  # Sub-threshold slip is not a wiping stroke.
-    (2.0, 0.1, 0.151, 0.006),  # Fast impact motion is rejected.
-    (2.0, 0.0, 0.06, 0.006),  # No real tangential contact load.
-    (2.0, 0.0199, 0.06, 0.006),
-    (2.0, 0.1, 0.06, 0.0),  # No dissipated friction work.
-    (2.0, 0.1, 0.06, -0.006),  # A signed driving power cannot clean.
+    (80.0, 0.1, 0.0, 0.006),  # High static loading does not erase ink.
+    (80.0, 0.1, 0.0049, 0.006),  # High load cannot bypass the slip gate.
+    (80.0, 0.1, 0.151, 0.006),  # Fast impact motion is rejected.
+    (80.0, 0.0, 0.06, 0.006),  # No real tangential contact load.
+    (80.0, 0.0199, 0.06, 0.006),
+    (80.0, 0.1, 0.06, 0.0),  # No dissipated friction work.
+    (80.0, 0.1, 0.06, -0.006),  # A signed driving power cannot clean.
   ],
 )
 def test_non_wiping_contacts_leave_all_ink(normal, tangent, speed, power):
@@ -30,10 +32,28 @@ def test_non_wiping_contacts_leave_all_ink(normal, tangent, speed, power):
   np.testing.assert_array_equal(cleaning.loaded_time_s, 0)
 
 
+@pytest.mark.parametrize("normal_force_n", [1.5, 7.999, 8.0, 8.001, 80.0])
+def test_loaded_sliding_accumulates_across_evaluation_force_guard(normal_force_n):
+  cleaning = CleaningProgress(1)
+
+  cleaning.update(0.1, normal_force_n, [0.1], [0.06], [0.006])
+
+  np.testing.assert_allclose(cleaning.work_j, [0.0006])
+  np.testing.assert_allclose(cleaning.stroke_m, [0.006])
+  np.testing.assert_allclose(cleaning.loaded_time_s, [0.1])
+  np.testing.assert_allclose(cleaning.remaining, [0.8])
+
+
 def test_short_high_work_contact_cannot_immediately_erase_ink():
   cleaning = CleaningProgress(1)
-  # Even more than the required work cannot replace a sustained stroke.
-  cleaning.update(0.01, 8.0, [1.0], [0.15], [0.15])
+  # Even above the evaluation guard, high work cannot replace a sustained stroke.
+  cleaning.update(
+    0.01,
+    BOARD_NORMAL_FORCE_GUARD_N * 10,
+    [1.0],
+    [0.15],
+    [0.15],
+  )
   assert cleaning.work_j[0] > 0.001
   assert cleaning.remaining[0] == pytest.approx(0.96)
 

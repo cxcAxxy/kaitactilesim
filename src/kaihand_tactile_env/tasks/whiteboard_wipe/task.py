@@ -13,10 +13,11 @@ from .cleaning import CleaningProgress
 
 
 class WhiteboardWipeSimulation(ArmHandSimulation):
-  def __init__(self, *, ink_seed=None, **kwargs):
+  def __init__(self, *, ink_seed=None, task_config=C, **kwargs):
+    self.task_config = task_config
     self.ink_seed = ink_seed
     kwargs.setdefault("ik_damping", 0.006)
-    super().__init__(scene=C.SCENE_NAME, **kwargs)
+    super().__init__(scene=self.task_config.SCENE_NAME, **kwargs)
     self.model.opt.timestep = self.timestep = 0.001
     # Harder friction constraints reduce soft-contact creep without changing mu.
     self.model.opt.impratio = 10.0
@@ -25,8 +26,12 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
     self.model.opt.ccd_tolerance = 1e-10
     self.model.opt.ccd_iterations = 100
     right_actuators = list(self._hand_actuators["right"].values())
-    self.model.actuator_gainprm[right_actuators, 0] = C.HAND_VELOCITY_GAIN
-    self.model.actuator_biasprm[right_actuators, 2] = -C.HAND_VELOCITY_GAIN
+    self.model.actuator_gainprm[right_actuators, 0] = (
+      self.task_config.HAND_VELOCITY_GAIN
+    )
+    self.model.actuator_biasprm[
+      right_actuators, 2
+    ] = -self.task_config.HAND_VELOCITY_GAIN
     self.forces = SolverDistributedTactileProvider(
       self.model, target_geom_names=("eraser_handle", "eraser_pad")
     )
@@ -36,7 +41,7 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
     self.ink_seed = kwargs.pop("ink_seed", self.ink_seed)
     super().reset(**kwargs)
     self.ink_ids = np.array(
-      [self.model.geom(f"ink_{i}").id for i in range(C.INK_COUNT)]
+      [self.model.geom(f"ink_{i}").id for i in range(self.task_config.INK_COUNT)]
     )
     if not hasattr(self, "_initial_ink_positions"):
       self._initial_ink_positions = self.model.geom_pos[self.ink_ids].copy()
@@ -44,17 +49,18 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
       np.zeros(2)
       if self.ink_seed is None
       else np.random.default_rng(self.ink_seed).uniform(
-        -C.INK_CENTER_RANGE_M, C.INK_CENTER_RANGE_M
+        -self.task_config.INK_CENTER_RANGE_M, self.task_config.INK_CENTER_RANGE_M
       )
     )
     positions = self._initial_ink_positions.copy()
     positions[:, :2] += offset
     self.set_ink_layout(positions, seed=self.ink_seed)
-    self.cleaning = CleaningProgress(C.INK_COUNT)
+    self.cleaning = CleaningProgress(self.task_config.INK_COUNT)
     self.remaining = self.cleaning.remaining
     self.sliding_distance = self.cleaning.stroke_m
     self.phase = "observe"
     self.physics_observer = None
+    self.evaluation_contact_observer = None
     self.board_tangent_force = 0.0
     self.peak_board_tangent_force = 0.0
     self.direct_hand_board_force = 0.0
@@ -64,9 +70,9 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
       for i in range(self.model.ngeom)
       if self.model.body(int(self.model.geom_bodyid[i])).name.startswith("hand_r_")
     }
-    self.patch_tangent_load = np.zeros(C.INK_COUNT)
-    self.patch_speed = np.zeros(C.INK_COUNT)
-    self.patch_power = np.zeros(C.INK_COUNT)
+    self.patch_tangent_load = np.zeros(self.task_config.INK_COUNT)
+    self.patch_speed = np.zeros(self.task_config.INK_COUNT)
+    self.patch_power = np.zeros(self.task_config.INK_COUNT)
     self.model.geom_rgba[self.ink_ids, 3] = 1
     self.board_force = self.table_force = self.peak_board_force = 0.0
     self.board_contact_center = np.zeros(3)
@@ -82,13 +88,17 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
     self.grip = grasp.CLOSED_HAND.copy()
     self.spread_grip = grasp.SPREAD_HAND.copy()
     self.open_grip = grasp.OPEN_HAND.copy()
-    self.pickup_rotation = C.INITIAL_ERASER_ROTATION @ grasp.WRIST_ROTATION
-    self.wrist_offset = C.INITIAL_ERASER_ROTATION @ (
+    self.pickup_rotation = (
+      self.task_config.INITIAL_ERASER_ROTATION @ grasp.WRIST_ROTATION
+    )
+    self.wrist_offset = self.task_config.INITIAL_ERASER_ROTATION @ (
       grasp.WRIST_POSITION - np.array([0.43, -0.40, 0.6955])
     )
     result = self.solve_ik(
       "right",
-      self.pickup_center + [0, 0, C.PICKUP_CLEARANCE_M] + self.wrist_offset,
+      self.pickup_center
+      + [0, 0, self.task_config.PICKUP_CLEARANCE_M]
+      + self.wrist_offset,
       self.pickup_rotation,
       # This is an IK branch seed, not the reset posture.
       seed=grasp.APPROACH_ARM_SEED,
@@ -120,22 +130,30 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
   def set_ink_layout(self, positions, *, seed=None):
     """Set board-local ink geometry before execution, also used for replay."""
     positions = np.asarray(positions, dtype=float)
-    if positions.shape != (C.INK_COUNT, 3) or not np.isfinite(positions).all():
-      raise ValueError("ink positions must be a finite [25, 3] array")
+    if (
+      positions.shape != (self.task_config.INK_COUNT, 3)
+      or not np.isfinite(positions).all()
+    ):
+      raise ValueError(
+        f"ink positions must be a finite [{self.task_config.INK_COUNT}, 3] array"
+      )
     if not np.allclose(positions[:, 2], self._initial_ink_positions[:, 2]):
       raise ValueError("ink must remain on the board surface")
     offset = (positions - self._initial_ink_positions).mean(axis=0)
-    if np.any(np.abs(offset[:2]) > C.INK_CENTER_RANGE_M + 1e-10):
+    if np.any(np.abs(offset[:2]) > self.task_config.INK_CENTER_RANGE_M + 1e-10):
       raise ValueError("ink center is outside the supported randomization region")
     if not np.allclose(positions - self._initial_ink_positions, offset):
       raise ValueError("only translation of the original ink patch is supported")
     self.model.geom_pos[self.ink_ids] = positions
-    self.ink_surface_center = C.BOARD_SURFACE + C.BOARD_ROTATION @ offset
+    self.ink_surface_center = (
+      self.task_config.BOARD_SURFACE + self.task_config.BOARD_ROTATION @ offset
+    )
     self.ink_randomization = {
+      "pattern": self.task_config.INK_PATTERN,
       "enabled": seed is not None or bool(np.any(offset)),
       "seed": seed,
       "center_offset_board_m": offset[:2].tolist(),
-      "center_range_board_m": C.INK_CENTER_RANGE_M.tolist(),
+      "center_range_board_m": self.task_config.INK_CENTER_RANGE_M.tolist(),
       "geom_positions_board_m": positions.tolist(),
       "planning_source": "known simulation ink center; no image recognition",
     }
@@ -155,7 +173,10 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
     # a small position jump in 1 ms and holding it for the other 9 ms.
     for side, (start_time, start, target) in self._arm_segments.items():
       u = np.clip(
-        (self.data.time + self.timestep - start_time) / C.CONTROL_PERIOD_S, 0, 1
+        (self.data.time + self.timestep - start_time)
+        / self.task_config.CONTROL_PERIOD_S,
+        0,
+        1,
       )
       desired = start + u * (target - start)
       command = self._interpolated_arm_command[side]
@@ -165,7 +186,10 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
       self._arm_command[side][:] = command
     for side, (start_time, start, target) in self._hand_segments.items():
       u = np.clip(
-        (self.data.time + self.timestep - start_time) / C.CONTROL_PERIOD_S, 0, 1
+        (self.data.time + self.timestep - start_time)
+        / self.task_config.CONTROL_PERIOD_S,
+        0,
+        1,
       )
       command = start + u * (target - start)
       self._interpolated_hand_command[side][:] = command
@@ -214,10 +238,15 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
   def step(self, steps=1):
     force_sum = 0.0
     for _ in range(steps):
+      before_time = float(self.data.time)
       super().step()
       # mj_step leaves the contact solution used by this integration step.
       # Its position/velocity caches are from the beginning of that step.
       self._update_cleaning()
+      if self.evaluation_contact_observer is not None:
+        # Cache the integrated solver forces before mj_forward replaces them.
+        # The policy adapter commits this sample only after physics validation.
+        self.evaluation_contact_observer(self, before_time)
       force_sum += self.board_force
       # Refresh geometry for the next Cartesian control update, only after
       # consuming the actual integrated contact wrench for cleaning.
@@ -247,7 +276,7 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
     covered = (
       (abs(local[:, 0]) + extent[:, 0] < 0.053)
       & (abs(local[:, 1]) + extent[:, 1] < 0.024)
-      & (abs(local[:, 2] - C.PAD_BOTTOM[2]) < 0.002)
+      & (abs(local[:, 2] - self.task_config.PAD_BOTTOM[2]) < 0.002)
     )
     velocity = np.zeros(6)
     mujoco.mj_objectVelocity(
@@ -282,8 +311,8 @@ class WhiteboardWipeSimulation(ArmHandSimulation):
       point_velocity = velocity[3:] + np.cross(
         velocity[:3], contact.pos - self.data.xipos[self.eraser_body]
       )
-      tangential_velocity = point_velocity - C.BOARD_NORMAL * (
-        point_velocity @ C.BOARD_NORMAL
+      tangential_velocity = point_velocity - self.task_config.BOARD_NORMAL * (
+        point_velocity @ self.task_config.BOARD_NORMAL
       )
       speed = float(np.linalg.norm(tangential_velocity))
       power = max(0.0, -float(tangential_force @ tangential_velocity))

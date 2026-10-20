@@ -5,15 +5,20 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import hashlib
 import json
 import math
 import os
 import re
 import secrets
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
 import webbrowser
-from datetime import UTC, datetime
+from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
@@ -21,7 +26,6 @@ from typing import Any, BinaryIO
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import h5py
-
 
 EPISODE_PATTERN = re.compile(r"^episode_(\d+)\.hdf5$")
 CAMERA_PATTERN = re.compile(r"^[^/\\\x00]+$")
@@ -146,7 +150,10 @@ def _select_video_frames(timestamps: list[int], fps: int) -> list[int]:
 
   if not timestamps:
     raise ValueError("timestamp_ros_nsec must be non-empty")
-  if any(current <= previous for previous, current in zip(timestamps, timestamps[1:])):
+  if any(
+    current <= previous
+    for previous, current in zip(timestamps, timestamps[1:], strict=False)
+  ):
     raise ValueError("timestamp_ros_nsec must be strictly increasing")
   first = timestamps[0]
   duration = timestamps[-1] - first
@@ -515,7 +522,10 @@ class EpisodeStore:
     timestamps = [int(value) for value in dataset[:]]
     if not timestamps:
       raise ValueError("timestamp_ros_nsec must be non-empty")
-    if any(current <= previous for previous, current in zip(timestamps, timestamps[1:])):
+    if any(
+      current <= previous
+      for previous, current in zip(timestamps, timestamps[1:], strict=False)
+    ):
       raise ValueError("timestamp_ros_nsec must be strictly increasing")
     return timestamps
 
@@ -531,7 +541,10 @@ class EpisodeStore:
     if data_dataset.shape[0] != stamp_dataset.shape[0] or not stamp_dataset.shape[0]:
       raise ValueError(f"{side} tactile timestamps and samples must be non-empty and aligned")
     stamps = [int(value) for value in stamp_dataset[:]]
-    if any(current < previous for previous, current in zip(stamps, stamps[1:])):
+    if any(
+      current < previous
+      for previous, current in zip(stamps, stamps[1:], strict=False)
+    ):
       raise ValueError(f"{side} tactile timestamps must be nondecreasing")
     return stamps, data_dataset[:]
 
@@ -581,7 +594,7 @@ class EpisodeStore:
         "token": token,
         "episode": expected,
         "identifier": identifier,
-        "created_at": datetime.now(UTC).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "state": "moving",
         "files": relative_paths,
       }
@@ -631,7 +644,10 @@ class EpisodeStore:
       manifest = self._read_manifest(entry, token)
       identifier = _identifier(manifest.get("identifier", ""))
       episode = f"episode_{identifier}"
-      if manifest.get("episode") != episode or manifest.get("state") != "deleted":
+      if manifest.get("episode") != episode or manifest.get("state") not in {
+        "moving",
+        "deleted",
+      }:
         raise ApiError(HTTPStatus.CONFLICT, "invalid_manifest", "Trash entry is incomplete")
       relative_paths = self._validated_manifest_paths(manifest, identifier)
       moves: list[tuple[Path, Path]] = []
@@ -639,17 +655,29 @@ class EpisodeStore:
       for relative in relative_paths:
         source = entry / "files" / PurePosixPath(relative)
         destination = self.root / PurePosixPath(relative)
-        if source.is_symlink() or not source.is_file():
+        self._validate_restore_parent(destination.parent)
+        source_present = source.exists() or source.is_symlink()
+        destination_present = destination.exists() or destination.is_symlink()
+        if source_present and (source.is_symlink() or not source.is_file()):
           raise ApiError(
             HTTPStatus.CONFLICT,
             "incomplete_trash",
-            f"Trash entry is missing {relative}",
+            f"Trash entry contains an invalid {relative}",
           )
-        if not _is_within(source.resolve(strict=True), resolved_entry):
+        if source_present and not _is_within(source.resolve(strict=True), resolved_entry):
           raise ApiError(HTTPStatus.FORBIDDEN, "unsafe_path", "Unsafe trash file path")
-        if destination.exists() or destination.is_symlink():
+        if source_present and destination_present:
           conflicts.append(relative)
-        moves.append((source, destination))
+        elif source_present:
+          moves.append((source, destination))
+        elif not destination_present:
+          raise ApiError(
+            HTTPStatus.CONFLICT,
+            "incomplete_trash",
+            f"Trash entry and dataset are both missing {relative}",
+          )
+        elif destination.is_symlink() or not destination.is_file():
+          conflicts.append(relative)
       if conflicts:
         raise ApiError(
           HTTPStatus.CONFLICT,
@@ -660,7 +688,6 @@ class EpisodeStore:
       moved: list[tuple[Path, Path]] = []
       try:
         for source, destination in moves:
-          self._validate_restore_parent(destination.parent)
           destination.parent.mkdir(parents=True, exist_ok=True)
           if destination.exists() or destination.is_symlink():
             raise FileExistsError(destination)
@@ -675,12 +702,20 @@ class EpisodeStore:
           f"Could not restore {episode}; restored files were moved back to trash",
           details={"errors": rollback_errors} if rollback_errors else None,
         ) from error
-      self._cleanup_entry(entry)
+      cleanup_pending = False
+      try:
+        self._cleanup_entry(entry)
+      except OSError:
+        # The source files are already restored.  Treat leftover manifest or
+        # empty directories as recoverable bookkeeping instead of reporting a
+        # false restore failure to the user.
+        cleanup_pending = True
       return {
         "restored": True,
         "token": token,
         "episode": episode,
         "files": relative_paths,
+        "trash_cleanup_pending": cleanup_pending,
       }
 
   def _ensure_trash_root(self) -> Path:
@@ -833,6 +868,93 @@ def _valid_manifest_camera(value: str) -> bool:
   return value not in {".", ".."} and CAMERA_PATTERN.fullmatch(value) is not None
 
 
+class PlaybackCache:
+  """Generate seekable H.264 copies without changing the AV1 originals."""
+
+  def __init__(self, store: EpisodeStore, root: str | Path | None = None) -> None:
+    self.store = store
+    self.root = Path(root or Path(tempfile.gettempdir()) / "kaihand-episode-playback").resolve()
+    self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="episode-h264")
+    self.lock = threading.Lock()
+    self.jobs: dict[str, Future] = {}
+
+  def close(self) -> None:
+    self.executor.shutdown(wait=False, cancel_futures=True)
+
+  def _target(self, source: Path) -> Path:
+    stat = source.stat()
+    identity = f"h264-v1:{source}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ino}"
+    return self.root / (hashlib.sha256(identity.encode()).hexdigest() + ".mp4")
+
+  def prepare(self, identifier: str) -> dict[str, Any]:
+    with self.store.lock:
+      self.store._episode_path(identifier)
+      sources = self.store._video_files(identifier)
+      if not sources:
+        raise ApiError(404, "media_not_found", "This episode has no camera videos")
+      targets = [(camera, source, self._target(source)) for camera, source in sources]
+    ready = 0
+    videos = {}
+    with self.lock:
+      for camera, source, target in targets:
+        key = target.stem
+        if target.is_file() and target.stat().st_size > 0:
+          ready += 1
+          videos[camera] = f"/media/{identifier}/{quote(camera, safe='')}/h264"
+          self.jobs.pop(key, None)
+          continue
+        job = self.jobs.get(key)
+        if job is not None and job.done():
+          failure = job.exception()
+          if failure is not None:
+            self.jobs.pop(key, None)
+            raise ApiError(422, "playback_failed", f"播放副本准备失败：{failure}")
+        if job is None:
+          self.jobs[key] = self.executor.submit(self._convert, source, target)
+    return {
+      "state": "ready" if ready == len(targets) else "preparing",
+      "completed": ready,
+      "total": len(targets),
+      "codec": "h264",
+      "videos": videos,
+    }
+
+  def _convert(self, source: Path, target: Path) -> None:
+    executable = shutil.which("ffmpeg")
+    if not executable:
+      raise RuntimeError("服务器缺少 ffmpeg，无法生成兼容视频")
+    self.root.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(f"{target.stem}.{secrets.token_hex(6)}.partial.mp4")
+    try:
+      result = subprocess.run(
+        [executable, "-hide_banner", "-loglevel", "error", "-nostdin",
+         "-threads", "2", "-i", str(source), "-map", "0:v:0", "-an", "-sn", "-dn",
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+         "-pix_fmt", "yuv420p", "-g", "30", "-threads", "2",
+         "-movflags", "+faststart", "-f", "mp4", str(partial)],
+        capture_output=True, text=True, timeout=300, check=False,
+      )
+      if result.returncode or not partial.is_file() or partial.stat().st_size == 0:
+        raise RuntimeError(result.stderr.strip()[-600:] or "ffmpeg 没有生成视频")
+      if self._target(source) != target:
+        raise RuntimeError("原视频在准备期间发生变化，请重新选择数据")
+      os.replace(partial, target)
+    finally:
+      partial.unlink(missing_ok=True)
+
+  def open_media(self, identifier: str, camera: str) -> tuple[BinaryIO, int]:
+    with self.store.lock:
+      self.store._episode_path(identifier)
+      source = dict(self.store._video_files(identifier)).get(_camera(camera))
+      if source is None:
+        raise ApiError(404, "media_not_found", "Camera video not found")
+      target = self._target(source)
+      if not target.is_file():
+        raise ApiError(409, "playback_not_ready", "播放副本尚未准备完成")
+      stream = target.open("rb")
+      return stream, os.fstat(stream.fileno()).st_size
+
+
 class EpisodeBrowserServer(ThreadingHTTPServer):
   """Threaded HTTP server carrying immutable roots and a synchronized store."""
 
@@ -843,11 +965,17 @@ class EpisodeBrowserServer(ThreadingHTTPServer):
     address: tuple[str, int],
     dataset_root: str | Path,
     static_root: str | Path | None = None,
+    cache_root: str | Path | None = None,
   ) -> None:
     self.store = EpisodeStore(dataset_root)
     default_static = Path(__file__).with_name("episode_browser_web")
     self.static_root = Path(static_root or default_static).expanduser().resolve()
     super().__init__(address, EpisodeBrowserHandler)
+    self.playback = PlaybackCache(self.store, cache_root)
+
+  def server_close(self) -> None:
+    super().server_close()
+    self.playback.close()
 
 
 class EpisodeBrowserHandler(BaseHTTPRequestHandler):
@@ -931,6 +1059,15 @@ class EpisodeBrowserHandler(BaseHTTPRequestHandler):
         raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_query", "Unexpected query string")
       self._send_json(HTTPStatus.OK, self.browser_server.store.detail(match.group(1)))
       return
+    match = re.fullmatch(r"/api/episodes/(\d{1,64})/playback", path)
+    if match is not None:
+      if head:
+        self._method_not_allowed(allow="GET")
+      if query:
+        raise ApiError(400, "invalid_query", "Unexpected query string")
+      payload = self.browser_server.playback.prepare(match.group(1))
+      self._send_json(200 if payload["state"] == "ready" else 202, payload)
+      return
     match = re.fullmatch(r"/api/episodes/(\d{1,64})/telemetry", path)
     if match is not None:
       if head:
@@ -948,11 +1085,11 @@ class EpisodeBrowserHandler(BaseHTTPRequestHandler):
         self.browser_server.store.telemetry(match.group(1), fps),
       )
       return
-    match = re.fullmatch(r"/media/(\d{1,64})/([^/]+)", path)
+    match = re.fullmatch(r"/media/(\d{1,64})/([^/]+)(/h264)?", path)
     if match is not None:
       if query:
         raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_query", "Unexpected query string")
-      self._send_media(match.group(1), match.group(2), head=head)
+      self._send_media(match.group(1), match.group(2), head=head, compatible=bool(match.group(3)))
       return
     raise ApiError(HTTPStatus.NOT_FOUND, "not_found", "Route not found")
 
@@ -1040,8 +1177,11 @@ class EpisodeBrowserHandler(BaseHTTPRequestHandler):
     if not head:
       self.wfile.write(content)
 
-  def _send_media(self, identifier: str, camera: str, *, head: bool) -> None:
-    stream, size = self.browser_server.store.open_media(identifier, camera)
+  def _send_media(
+    self, identifier: str, camera: str, *, head: bool, compatible: bool = False,
+  ) -> None:
+    provider = self.browser_server.playback if compatible else self.browser_server.store
+    stream, size = provider.open_media(identifier, camera)
     with stream:
       ranges = self.headers.get_all("Range", failobj=[])
       if len(ranges) > 1:
@@ -1123,8 +1263,9 @@ def create_server(
   port: int = 8000,
   *,
   static_root: str | Path | None = None,
+  cache_root: str | Path | None = None,
 ) -> EpisodeBrowserServer:
-  return EpisodeBrowserServer((host, port), dataset_root, static_root)
+  return EpisodeBrowserServer((host, port), dataset_root, static_root, cache_root)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -1135,6 +1276,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
   parser.add_argument("--host", default="127.0.0.1")
   parser.add_argument("--port", type=int, default=8000)
   parser.add_argument("--no-browser", action="store_true", help="Do not open a browser tab")
+  parser.add_argument("--cache-dir", type=Path, help="H.264 playback cache (default: /tmp/kaihand-episode-playback)")
   args = parser.parse_args(argv)
   if not 0 <= args.port <= 65535:
     parser.error("--port must be between 0 and 65535")
@@ -1151,7 +1293,7 @@ def _browser_url(host: str, port: int) -> str:
 def main(argv: list[str] | None = None) -> None:
   args = _parse_args(argv)
   try:
-    server = create_server(args.dataset, args.host, args.port)
+    server = create_server(args.dataset, args.host, args.port, cache_root=args.cache_dir)
   except (OSError, ValueError) as error:
     raise SystemExit(str(error)) from error
   host, port = server.server_address[:2]

@@ -29,6 +29,11 @@ def test_reset_bounds_and_grasp_follow_object(cls, name, grasp_fn):
   collision = sim.model.geom_contype.copy()
   hand_home = sim.data.qpos[sim._arm_qpos["right"]].copy()
   nominal_grasp = grasp_fn(sim)
+  support_name = {
+    "bulb": "bulb_pickup_cradle",
+    "ram": "ram_presentation_stand",
+  }[name]
+  support = sim.model.body(support_name).id
   for seed in range(50):
     sim.position_seed = seed
     sim.reset()
@@ -37,12 +42,10 @@ def test_reset_bounds_and_grasp_follow_object(cls, name, grasp_fn):
     np.testing.assert_array_equal(sim.object_pose(name)[2:], pose[2:])
     np.testing.assert_array_equal(sim.data.qpos[sim._arm_qpos["right"]], hand_home)
     expected_bodies = body_pos.copy()
-    if name == "ram":
-      stand = sim.model.body("ram_presentation_stand").id
-      expected_bodies[stand] += offset
-      # Preserve the complete RAM/support contact geometry after translation.
-      relative = sim.data.xpos[sim.model.body("ram").id] - sim.data.xpos[stand]
-      np.testing.assert_allclose(relative, pose[:3] - body_pos[stand], atol=1e-12)
+    expected_bodies[support] += offset
+    # Preserve the complete object/support contact geometry after translation.
+    relative = sim.data.xpos[sim.model.body(name).id] - sim.data.xpos[support]
+    np.testing.assert_allclose(relative, pose[:3] - body_pos[support], atol=1e-12)
     np.testing.assert_allclose(sim.model.body_pos, expected_bodies, atol=1e-15)
     if seed in (0, 3, 5, 8):
       target = grasp_fn(sim)
@@ -94,6 +97,14 @@ def test_seeded_position_is_archived_in_hdf5(tmp_path, monkeypatch, name):
     assert layout == sim.initial_position_randomization
     np.testing.assert_array_equal(layout["initial_pose_xyz_wxyz"], initial)
     assert layout["seed"] == 5
+    assert (
+      layout["support_body"]
+      == {
+        "bulb": "bulb_pickup_cradle",
+        "ram": "ram_presentation_stand",
+      }[name]
+    )
+    assert layout["support_body_position_m"] is not None
     assert file.attrs["hdf5_buffer_rows"] == (128 if name == "bulb" else 64)
     assert "taskspace_capture_source_sha256" in file.attrs
     assert "commands/actuator_control" in file

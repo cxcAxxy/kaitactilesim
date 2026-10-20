@@ -1,0 +1,35 @@
+/* Additive presentation for the original KaiTactileSim research workbench. */
+#kai-suite .ks-counts{grid-template-columns:repeat(4,minmax(0,1fr));gap:18px 25px}
+.ks-comparison-panel{margin:23px 0 20px;background:var(--ks-panel);border:1px solid var(--ks-line);border-radius:12px;padding:20px 21px;min-width:0}
+.ks-comparison-panel h2{font-size:19px;color:#294e62;margin-bottom:6px}
+.ks-summary-note,#ks-summary-note{font-size:12px;line-height:1.85;color:var(--ks-muted);margin:8px 0 13px;max-width:1200px}
+.ks-comparison-panel .ks-group-scroll{width:100%;max-width:100%;max-height:440px;overflow:auto;border-top:1px solid #e9eff2;overscroll-behavior:contain}
+.ks-comparison-panel table{border-collapse:collapse;width:100%;min-width:1250px;text-align:left;font-size:13px}
+.ks-comparison-panel th,.ks-comparison-panel td{padding:13px 12px;border-bottom:1px solid #e9eff2;vertical-align:top}
+.ks-comparison-panel th{position:sticky;top:0;z-index:1;font-weight:600;color:#5f7787;background:#f8fafb;white-space:nowrap;box-shadow:0 1px 0 #e9eff2}
+.ks-comparison-panel th:first-child,.ks-comparison-panel td:first-child{padding-left:4px}
+.ks-comparison-panel tbody tr:last-child td{border-bottom:0}
+.ks-summary-task{min-width:100px;color:#294e62;font-weight:600}
+.ks-summary-identity{min-width:175px}
+.ks-summary-identity strong{font-weight:650}
+.ks-summary-checkpoint{min-width:105px;max-width:235px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.ks-summary-checkpoint strong{font-weight:650;white-space:nowrap}
+.ks-summary-model{font-size:12px;line-height:1.7;margin:0 0 5px;overflow-wrap:anywhere}
+.ks-summary-mode{display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:13px;color:#526b7b;margin:12px 0}
+.ks-summary-mode select,#ks-summary-mode{font:inherit;border:1px solid #d5e0e6;background:#fff;color:#294c60;padding:7px 10px;border-radius:7px;max-width:100%}
+#ks-summary-total{font-size:12px;line-height:1.9;color:#3d6478;margin:10px 0 0;padding:10px 12px;border-radius:7px;background:#f0f6f8}
+.ks-complete-definition{white-space:normal;min-width:165px;margin:0 0 6px;font-size:12px;line-height:1.7}
+.ks-summary-protocol{max-width:250px;font-size:12px;overflow-wrap:anywhere}
+.ks-summary-n,.ks-rate{font-variant-numeric:tabular-nums;white-space:nowrap}
+.ks-summary-stages{min-width:240px;max-width:440px}
+.ks-summary-stages>p{margin:0 0 5px}
+.ks-small{font-size:11px;color:var(--ks-muted);line-height:1.7;margin:5px 0 0;overflow-wrap:anywhere}
+.ks-summary-metric{font-size:12px;color:#3d6a7d;border-top:1px dashed #e4ecef;padding-top:5px;margin-top:7px!important}
+.ks-native-invalid{color:#806342;background:#f8f2e7}
+.ks-native-unknown{color:#677884;background:#f1f4f6}
+.ks-case-progress .ks-source-warning{overflow-wrap:anywhere}
+.ks-history-links{display:flex;gap:8px 18px;flex-wrap:wrap;font-size:12px;color:var(--ks-muted);margin:14px 0 0}
+.ks-history-links a{border-bottom:1px solid #b9d1d9}
+.ks-filter-row label{max-width:100%}
+@media(max-width:1150px){#kai-suite .ks-counts{column-gap:20px}.ks-comparison-panel{padding:18px}}
+@media(max-width:700px){#kai-suite .ks-counts{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 22px}.ks-comparison-panel{padding:15px 13px;margin:18px 0}.ks-comparison-panel h2{font-size:17px}.ks-comparison-panel table{font-size:12px;min-width:1180px}.ks-comparison-panel .ks-group-scroll{max-height:340px}.ks-summary-note,#ks-summary-note{font-size:11px}.ks-comparison-panel td,.ks-comparison-panel th{padding:11px 9px}.ks-history-links{font-size:11px;gap:8px 13px}.ks-small{font-size:11px}.ks-filter-row select{max-width:100%}}

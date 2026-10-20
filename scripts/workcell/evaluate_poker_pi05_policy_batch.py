@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -14,6 +15,15 @@ from collections import Counter
 from pathlib import Path
 
 from kaihand_tactile_env.shared.config import default_model_path, model_fingerprint
+from kaihand_tactile_env.shared.evaluation_video import evaluation_artifact_directory
+from kaihand_tactile_env.shared.pi05_deployment_integrity import (
+  POKER_DEPLOYMENT_SCHEMA_V1,
+  POKER_DEPLOYMENT_SCHEMA_V2,
+  deployment_diagnostic_reasons,
+  poker_deployment_identity,
+  stable_file_bytes,
+  validate_poker_deployment_semantics,
+)
 from kaihand_tactile_env.tasks.poker_draw.mid_full import CONTACT_MODEL_VERSION
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,8 +50,13 @@ RAW_FILES = (
 def load_manifest(path: Path) -> tuple[Path, dict]:
   resolved = path.expanduser().resolve()
   payload = json.loads(resolved.read_text(encoding="utf-8"))
-  if payload.get("schema") != "poker_pi05_deployment_v1":
-    raise RuntimeError("expected poker_pi05_deployment_v1 manifest")
+  if payload.get("schema") not in {POKER_DEPLOYMENT_SCHEMA_V1, POKER_DEPLOYMENT_SCHEMA_V2}:
+    raise RuntimeError("expected poker_pi05_deployment_v1 or v2 manifest")
+  validate_poker_deployment_semantics(payload)
+  if payload["schema"] == POKER_DEPLOYMENT_SCHEMA_V2:
+    identity = json.dumps(poker_deployment_identity(payload), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    if hashlib.sha256(identity).hexdigest() != payload.get("deployment_id"):
+      raise RuntimeError("deployment_id does not authenticate Poker deployment identity")
   return resolved, payload
 
 
@@ -56,6 +71,8 @@ def fingerprints() -> dict:
     ROOT / "src/kaihand_tactile_env/tasks/poker_draw/rollout_eval.py",
     ROOT / "src/kaihand_tactile_env/tasks/poker_draw/review_metrics.py",
     ROOT / "src/kaihand_tactile_env/shared/simulation.py",
+    ROOT / "src/kaihand_tactile_env/shared/evaluation_guards.py",
+    ROOT / "src/kaihand_tactile_env/shared/physics_integrity.py",
     ROOT / "src/kaihand_tactile_env/shared/rendering.py",
     ROOT / "src/kaihand_tactile_env/shared/evaluation_video.py",
     ROOT / "src/kaihand_tactile_env/shared/policy_video.py",
@@ -72,6 +89,10 @@ def fingerprints() -> dict:
 
 
 def classify(report: dict) -> tuple[str, bool]:
+  if any(
+    value for key, value in report.items() if key.endswith("record_error")
+  ):
+    return "infrastructure_or_contract_error", False
   if (
     report.get("status") == "success"
     and report.get("evaluation", {}).get("success") is True
@@ -98,7 +119,10 @@ def main() -> None:
   parser.add_argument("--deployment-manifest", type=Path, required=True)
   parser.add_argument("--seeds", nargs="+", type=int, default=list(range(20)))
   parser.add_argument("--trial-wall-limit", type=float, default=1800.0)
-  parser.add_argument("--max-sim-seconds", type=float, default=50.0)
+  parser.add_argument("--max-sim-seconds", type=float, default=90.0)
+  parser.add_argument(
+    "--guard-mode", choices=("observe", "strict"), default="observe"
+  )
   parser.add_argument("--success-hold-seconds", type=float, default=0.10)
   parser.add_argument("--full-duration-evaluation", action="store_true")
   parser.add_argument("--video-count", type=int, default=3)
@@ -110,6 +134,8 @@ def main() -> None:
   parser.add_argument("--reference-dataset", type=Path)
   parser.add_argument("--reference-episode-index", type=int, default=0)
   parser.add_argument("--execute-steps", type=int, default=8)
+  parser.add_argument("--staged-evaluation-version", choices=("staged_v1",), default=None)
+  parser.add_argument("--action-interpolation", choices=("linear", "zoh"))
   parser.add_argument(
     "--disable-penetration-guard",
     action="store_true",
@@ -121,6 +147,11 @@ def main() -> None:
   parser.add_argument("--xy-jitter-mm", type=float, default=4.0)
   parser.add_argument("--yaw-jitter-deg", type=float, default=0.5)
   args = parser.parse_args()
+  # Staged trials always observe the full simulation window. Use the effective
+  # setting consistently for child arguments, protocol, and identity checks.
+  args.full_duration_evaluation = bool(
+    args.staged_evaluation_version or args.full_duration_evaluation
+  )
   if args.full_duration_evaluation:
     args.disable_penetration_guard = True
   if not 0 < args.success_hold_seconds <= args.max_sim_seconds:
@@ -133,14 +164,29 @@ def main() -> None:
     parser.error("video-count must be between zero and number of seeds")
   if args.execute_steps <= 0:
     parser.error("execute-steps must be positive")
-  if args.max_sim_seconds <= 0 or args.trial_wall_limit <= 0:
-    parser.error("time limits must be positive")
+  if any(
+    not math.isfinite(value) or value <= 0
+    for value in (args.max_sim_seconds, args.trial_wall_limit)
+  ):
+    parser.error("time limits must be finite and positive")
   if not 0 <= args.xy_jitter_mm <= 5.0 or not 0 <= args.yaw_jitter_deg <= 1.0:
     parser.error("poker randomization is limited to 5 mm XY and 1 degree yaw")
   if not EGL_VENDOR.is_file():
     raise FileNotFoundError(f"NVIDIA EGL vendor configuration is missing: {EGL_VENDOR}")
 
   deployment_path, deployment = load_manifest(args.deployment_manifest)
+  _, manifest_sha256 = stable_file_bytes(deployment_path)
+  interpolation = args.action_interpolation or (
+    "linear" if deployment["schema"] == POKER_DEPLOYMENT_SCHEMA_V2 else "zoh"
+  )
+  if deployment["schema"] == POKER_DEPLOYMENT_SCHEMA_V2 and interpolation != deployment["required_action_interpolation"]:
+    parser.error("checkpoint-bound Poker evaluation requires linear interpolation")
+  diagnostic_reasons = deployment_diagnostic_reasons(deployment, action_interpolation=interpolation)
+  if args.disable_penetration_guard:
+    diagnostic_reasons.append("penetration_guard_disabled")
+  if args.guard_mode == "observe":
+    diagnostic_reasons.append("guard_mode_observe")
+  validity = {"diagnostic_only": bool(diagnostic_reasons), "formal_metrics_valid": not diagnostic_reasons}
   horizon = int(deployment["prediction_horizon"])
   if not 1 <= args.execute_steps <= horizon:
     parser.error(f"execute-steps must be in [1, {horizon}]")
@@ -151,6 +197,7 @@ def main() -> None:
     "task": "poker-draw",
     "deployment_manifest": str(deployment_path),
     "deployment_id": deployment["deployment_id"],
+    "deployment_manifest_sha256": manifest_sha256,
     "checkpoint": deployment["checkpoint_path"],
     "checkpoint_sha256": deployment["checkpoint_sha256"],
     "reference_dataset": (
@@ -169,8 +216,11 @@ def main() -> None:
     "replan_period_s": args.execute_steps / 30,
     "success_hold_seconds": args.success_hold_seconds,
     "full_duration_evaluation": args.full_duration_evaluation,
-    "diagnostic_only": bool(args.disable_penetration_guard),
-    "formal_metrics_valid": not args.disable_penetration_guard,
+    "staged_evaluation_version": args.staged_evaluation_version,
+    "guard_mode": args.guard_mode,
+    **validity,
+    "diagnostic_reasons": diagnostic_reasons,
+    "action_interpolation": interpolation,
     "penetration_guard": {
       "enabled": not args.disable_penetration_guard,
       "threshold_m": 0.0006,
@@ -198,7 +248,7 @@ def main() -> None:
       "online_observation_noise": False,
       "online_action_noise": False,
     },
-    "controller": "direct-30hz-pi05-absolute-joint-v1",
+    "controller": ("pi05-absolute-joint-physics-interpolation-v2" if interpolation == "linear" else "direct-30hz-pi05-absolute-joint-v1"),
     "contact_model": f"{CONTACT_MODEL_VERSION} (same fixed contact preset as source data)",
     "success_rule": (
       "contact; supported flat card >=40% overhang and >=50mm robotward travel; "
@@ -222,7 +272,11 @@ def main() -> None:
     "NO_PROXY": "127.0.0.1,localhost",
     "no_proxy": "127.0.0.1,localhost",
   }
-  pythonpath = [str(ROOT / "src"), str(OPENPI_CLIENT)]
+  client_source = (
+    Path(deployment["model_project_path"]) / "packages/openpi-client/src"
+    if deployment.get("model_project_path") else OPENPI_CLIENT
+  )
+  pythonpath = [str(ROOT / "src"), str(client_source)]
   if environment.get("PYTHONPATH"):
     pythonpath.append(environment["PYTHONPATH"])
   environment["PYTHONPATH"] = os.pathsep.join(pythonpath)
@@ -242,6 +296,8 @@ def main() -> None:
   for trial_index, seed in enumerate(args.seeds):
     if fingerprints() != frozen:
       raise RuntimeError("code/config changed during batch; refusing mixed protocol")
+    if stable_file_bytes(deployment_path)[1] != manifest_sha256:
+      raise RuntimeError("deployment manifest changed during batch; refusing mixed protocol")
     trial = output / f"seed_{seed:03d}"
     record = trial_index < args.video_count
     command = [
@@ -251,6 +307,10 @@ def main() -> None:
       args.server,
       "--deployment-manifest",
       str(deployment_path),
+      "--expected-deployment-manifest-sha256",
+      manifest_sha256,
+      "--action-interpolation",
+      interpolation,
       "--seed",
       str(seed),
       "--xy-jitter-mm",
@@ -261,6 +321,8 @@ def main() -> None:
       str(args.execute_steps),
       "--max-sim-seconds",
       str(args.max_sim_seconds),
+      "--guard-mode",
+      args.guard_mode,
       "--success-hold-seconds",
       str(args.success_hold_seconds),
       "--output-dir",
@@ -287,6 +349,8 @@ def main() -> None:
       command.append("--disable-penetration-guard")
     if args.full_duration_evaluation:
       command.append("--full-duration-evaluation")
+    if args.staged_evaluation_version:
+      command.extend(("--staged-evaluation-version", args.staged_evaluation_version))
     print(f"START {trial_index + 1}/{len(args.seeds)} seed={seed}", flush=True)
     trial_started = time.monotonic()
     with (output / f"seed_{seed:03d}.log").open("x") as log:
@@ -317,8 +381,9 @@ def main() -> None:
       "success_hold_seconds": args.success_hold_seconds,
       "full_duration_evaluation": args.full_duration_evaluation,
       "control_hz": 30,
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_metrics_valid": not args.disable_penetration_guard,
+      "guard_mode": args.guard_mode,
+      "diagnostic_only": validity["diagnostic_only"],
+      "action_interpolation": interpolation,
       "penetration_guard_enabled": not args.disable_penetration_guard,
     }
     identity_errors = {
@@ -329,7 +394,11 @@ def main() -> None:
     if identity_errors:
       raise RuntimeError(f"seed {seed}: trial identity mismatch: {identity_errors}")
     reason, valid = classify(summary)
-    if record and not valid:
+    valid = valid and returncode == 0
+    has_record_error = any(
+      value for key, value in summary.items() if key.endswith("record_error")
+    )
+    if record and not valid and not has_record_error:
       detail = summary.get("error")
       if not detail:
         detail = (
@@ -349,8 +418,8 @@ def main() -> None:
           f"seed {seed}: incomplete Raw/force artifacts: {missing_raw}; "
           f"error={summary.get('raw_record_error')}"
         )
-    if record:
-      review = trial / "review"
+    if record and not has_record_error:
+      review = evaluation_artifact_directory(trial)
       missing = [name for name in REVIEW_FILES if not (review / name).is_file()]
       if missing:
         if not valid:
@@ -375,25 +444,30 @@ def main() -> None:
         "right_wrist",
       ]:
         raise RuntimeError(f"seed {seed}: review omitted a model camera")
-      if review_metadata.get("diagnostic_only") is not bool(
-        args.disable_penetration_guard
-      ):
+      if review_metadata.get("diagnostic_only") is not validity["diagnostic_only"]:
         raise RuntimeError(f"seed {seed}: review diagnostic-mode mismatch")
 
     row = {
       "seed": seed,
       "success": reason == "success",
+      "task_success": bool(summary.get("task_success", False)),
       "valid_trial": valid,
       "termination": reason,
       "returncode": returncode,
       "wall_seconds": time.monotonic() - trial_started,
       "sim_seconds": summary.get("sim_seconds"),
       "error": summary.get("error"),
+      "record_error": summary.get("record_error"),
+      "raw_record_error": summary.get("raw_record_error"),
       "requests": summary.get("stats", {}).get("requests", 0),
       "action_steps": summary.get("stats", {}).get("action_steps", 0),
       "evaluation": summary.get("evaluation", {}),
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_result_valid": not args.disable_penetration_guard,
+      "guard_mode": summary.get("guard_mode"),
+      "guard_events": summary.get("guard_events", []),
+      "stop_reason": summary.get("stop_reason"),
+      "physics_valid": summary.get("physics_valid"),
+      "diagnostic_only": summary.get("diagnostic_only"),
+      "formal_result_valid": summary.get("formal_metrics_valid"),
       "penetration_diagnostics": summary.get("penetration_diagnostics", {}),
       "summary": str(summary_path.relative_to(output)),
       "raw": summary.get("raw"),
@@ -401,6 +475,9 @@ def main() -> None:
     results.append(row)
     valid_count = sum(result["valid_trial"] for result in results)
     successes = sum(result["success"] for result in results)
+    task_successes = sum(
+      bool(result.get("task_success", result["success"])) for result in results
+    )
     aggregate = {
       "task": "poker-draw",
       "deployment_id": deployment["deployment_id"],
@@ -413,20 +490,31 @@ def main() -> None:
       "execute_steps": args.execute_steps,
       "control_hz": 30,
       "replan_period_s": args.execute_steps / 30,
-      "diagnostic_only": bool(args.disable_penetration_guard),
-      "formal_metrics_valid": not args.disable_penetration_guard,
+      "guard_mode": args.guard_mode,
+      **validity,
+      "diagnostic_reasons": diagnostic_reasons,
+      "action_interpolation": interpolation,
       "penetration_guard_enabled": not args.disable_penetration_guard,
       "penetration_guard_threshold_m": 0.0006,
       "max_sim_seconds": args.max_sim_seconds,
+      "full_duration_evaluation": args.full_duration_evaluation,
+      "staged_evaluation_version": args.staged_evaluation_version,
       "save_raw": args.save_raw,
       "planned": len(args.seeds),
       "attempted": len(results),
       "valid_trials": valid_count,
       "successes": successes,
+      "task_successes": task_successes,
       "success_rate": successes / valid_count if valid_count else None,
       "infrastructure_errors": len(results) - valid_count,
       "complete": len(results) == len(args.seeds) and valid_count == len(args.seeds),
       "termination_counts": dict(Counter(row["termination"] for row in results)),
+      "stop_reason_counts": dict(Counter(row["stop_reason"] for row in results)),
+      "guard_event_counts": dict(Counter(
+        event.get("kind")
+        for row in results for event in row.get("guard_events", [])
+        if event.get("kind")
+      )),
       "failure_stage_counts": dict(
         Counter(
           row["evaluation"].get("failure_stage")
@@ -437,6 +525,9 @@ def main() -> None:
       "wall_seconds": time.monotonic() - started,
       "trials": results,
     }
+    from kaihand_tactile_env.shared.staged_recording import add_staged_batch_results
+
+    add_staged_batch_results(aggregate, output, results)
     (output / "summary.json").write_text(
       json.dumps(aggregate, ensure_ascii=False, indent=2), encoding="utf-8"
     )

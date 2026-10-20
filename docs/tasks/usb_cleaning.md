@@ -1,5 +1,9 @@
 # USB 自采数据 Cleaning
 
+这是保存后数据准入/物理证据复核，不是模型 runner 的原生成功定义；
+两者区别见 [USB 插入成功判定](success_criteria.md#usb-insert)。
+当前 V3 与历史 V2 使用各自记录版本的门槛，不能交叉补写或重判历史标签。
+
 首次验收使用 5 条完整 episode，按同一采集代码和设置生成，保留每次尝试的结果。所有采集、测试和离线检查依次执行；采集运行期间不另开仿真或测试进程。已经有同代码、同设置的完整样本时，可以通过 `--start-index` 在新目录补足，避免重复采集。
 
 ## 保存后的自动检查
@@ -9,7 +13,7 @@
 以下命令在项目根目录执行，输出目录必须是尚不存在的新目录。
 
 ```bash
-nice -n 10 pixi run check-usb-cleaning -- \
+nice -n 10 pixi run --as-is check-usb-cleaning -- \
   --input datasets/usb_insert/raw_01/raw/usb_000000.h5 \
   --input datasets/usb_insert/raw_01/raw/usb_000001.h5 \
   --input datasets/usb_insert/raw_01/raw/usb_000002.h5 \
@@ -31,7 +35,7 @@ nice -n 10 pixi run check-usb-cleaning -- \
 
 对于 `contact_model_version=passive_spring_shoes_bottom_out_v2`，报告另列 `pipeline_integrity` 和 `recorded_physics_gate`：前者检查逐步监测流的时间、索引、长度和有限值；后者核对插入深度、速度、底挡受力及成功标记。`bottom_out` 阶段须在松手前出现连续至少 100 ms、底挡轴向反力至少 0.8 N 的真实触底证据，同时保持近底、对准、低穿透和低速条件。50 个相邻的 500 Hz 有效受力样本覆盖 100 ms；重复读取同一物理时间不能增加确认时长。
 
-`bottom_out_confirmed` 保存已观测到的主动触底历史（bottom contact confirmation retained after unloading）。松手后，弹片静摩擦可能承担 USB 的重量，底挡反力可以降为零；只要此前的 0.8 N / 100 ms 确认成立，插深仍在 11.9–12.1 mm、穿透不超过 100 µm、线速度不超过 0.5 mm/s，且姿态、孔内截面和角速度满足条件，仍可保持 `seated`。新启动的监测器不能仅凭这个位置或弹片摩擦宣布触底。离开近底区域、姿态失配、穿透越限、时间倒退、观测缺口或显式 reset 都清除这段历史；恢复到原位置也必须重新获得触底证据。短时运动即使未离开近底区域，也会使 `seated` 和稳定时长失效。
+**下面的 0.8 N / 100 ms 仅指历史 V2**：`bottom_out_confirmed` 保存已观测到的主动触底历史（bottom contact confirmation retained after unloading）。松手后，弹片静摩擦可能承担 USB 的重量，底挡反力可以降为零；只要此前的 0.8 N / 100 ms 确认成立，插深仍在 11.9–12.1 mm、穿透不超过 100 µm、线速度不超过 0.5 mm/s，且姿态、孔内截面和角速度满足条件，仍可保持 `seated`。当前 V3 对应 0.6 N / 150 ms，不能沿用旧数值。新启动的监测器不能仅凭这个位置或弹片摩擦宣布主动触底证书成立。离开近底区域、姿态失配、穿透越限、时间倒退、观测缺口或显式 reset 都清除这段历史；恢复到原位置也必须重新获得触底证据。短时运动即使未离开近底区域，也会使 `seated` 和稳定时长失效。
 
 离线清洗与 T-ICT 源审计从每一步的实际时间、底挡力、几何条件独立重建这段历史，再比较 `bottom_out_confirmed`、`seated` 和连续稳定的 `success`，不直接信任布尔标签。`bottom_out_latch_reconstructed=true` 表示归档锁存序列与独立重建一致。旧源没有该接触模型版本时保留原格式检查，明确标记这项物理验收未执行；时序检查通过不能代替触底模型验收。
 
@@ -62,7 +66,7 @@ PDF 发布格式中的 H50 action 是后续 50 帧的腕/指尖目标位姿标�
 对 5 条样本分别运行以下命令，修改输入编号和新输出目录：
 
 ```bash
-nice -n 10 pixi run review-usb-tactile -- \
+nice -n 10 pixi run --as-is review-usb-tactile -- \
   --input datasets/usb_insert/raw_01/raw/usb_000000.h5 \
   --output-dir datasets/usb_insert/tactile_review_000000
 ```

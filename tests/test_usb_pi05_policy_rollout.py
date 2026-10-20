@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -65,7 +64,16 @@ def test_server_contract_uses_model_horizon():
     runner.validate_server(metadata(), deployment(), 31)
 
 
-def test_penetration_guard_is_optional_but_load_guard_remains():
+def test_defaults_use_observe_guards_and_ninety_seconds():
+  runner = load_runner()
+  args = runner.parse_args(
+    ["--deployment-manifest", "/manifest.json", "--output-dir", "/trial"]
+  )
+  assert args.guard_mode == "observe"
+  assert args.max_sim_seconds == 90.0
+
+
+def test_task_guards_observe_by_default_but_strict_mode_stops():
   runner = load_runner()
   args = runner.parse_args(
     [
@@ -84,8 +92,22 @@ def test_penetration_guard_is_optional_but_load_guard_remains():
   outcome = SimpleNamespace(state=state)
   simulation = SimpleNamespace(
     object_pose=lambda _name: np.array([0.0, 0.0, 0.8]),
-    data=SimpleNamespace(qpos=np.zeros(1), qvel=np.zeros(1)),
+    data=SimpleNamespace(
+      time=0.0,
+      qpos=np.zeros(1),
+      qvel=np.zeros(1),
+      qacc=np.zeros(1),
+      ctrl=np.zeros(1),
+      warning=(),
+    ),
   )
+  runner.configure_evaluation_guards(simulation, "observe")
+  runner.guard_usb_state(outcome, simulation)
+  guard_report = runner.evaluation_guard_report(simulation)
+  assert guard_report["guard_events"][0]["kind"] == "usb_socket_penetration"
+  assert guard_report["guard_events"][0]["recovery"] == "continue"
+
+  runner.configure_evaluation_guards(simulation, "strict")
   with pytest.raises(RuntimeError, match="socket penetration"):
     runner.guard_usb_state(outcome, simulation)
   runner.guard_usb_state(outcome, simulation, penetration_guard_enabled=False)
@@ -94,6 +116,64 @@ def test_penetration_guard_is_optional_but_load_guard_remains():
     runner.guard_usb_state(
       outcome, simulation, penetration_guard_enabled=False
     )
+
+
+def test_nonfinite_simulation_is_fatal_even_in_observe_mode():
+  runner = load_runner()
+  state = SimpleNamespace(
+    socket_normal_load_n=0.0,
+    axial_resistance_n=0.0,
+    wall_normal_load_n=0.0,
+    maximum_socket_penetration_m=0.0,
+  )
+  simulation = SimpleNamespace(
+    object_pose=lambda _name: np.array([0.0, 0.0, 0.8]),
+    data=SimpleNamespace(
+      time=0.0,
+      qpos=np.array([np.nan]),
+      qvel=np.zeros(1),
+      qacc=np.zeros(1),
+      ctrl=np.zeros(1),
+      warning=(),
+    ),
+  )
+  runner.configure_evaluation_guards(simulation, "observe")
+
+  with pytest.raises(RuntimeError, match="nonfinite simulation state"):
+    runner.guard_usb_state(SimpleNamespace(state=state), simulation)
+
+  report = runner.evaluation_guard_report(simulation, status="error")
+  assert report["physics_valid"] is False
+  assert report["stop_reason"] == "fatal_error"
+
+
+def test_recording_error_invalidates_formal_metrics_without_physics_relabel():
+  runner = load_runner()
+  report = {
+    "physics_valid": True,
+    "formal_metrics_valid": True,
+    "stop_reason": "success",
+  }
+  runner._mark_record_error(report, RuntimeError("encoder failed"))
+  assert report["physics_valid"] is True
+  assert report["formal_metrics_valid"] is False
+  assert report["stop_reason"] == "fatal_error"
+  assert report["record_error"] == "RuntimeError: encoder failed"
+
+
+def test_nonfinite_policy_action_is_recoverable_only_in_observe_mode():
+  runner = load_runner()
+  simulation = SimpleNamespace(data=SimpleNamespace(time=2.0))
+  error = RuntimeError("policy actions contain nonfinite values")
+  runner.configure_evaluation_guards(simulation, "observe")
+  assert runner.recover_nonfinite_action(simulation, error) is True
+  assert simulation._evaluation_action_rejected is True
+  event = runner.evaluation_guard_report(simulation)["guard_events"][0]
+  assert event["kind"] == "nonfinite_action"
+  assert event["recovery"] == "hold_last_valid_command_and_replan"
+
+  runner.configure_evaluation_guards(simulation, "strict")
+  assert runner.recover_nonfinite_action(simulation, error) is False
 
 
 def test_server_contract_rejects_wrong_checkpoint():

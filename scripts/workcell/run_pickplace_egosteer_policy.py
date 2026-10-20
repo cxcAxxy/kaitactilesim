@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import sys
 import time
 from dataclasses import asdict
@@ -42,7 +43,10 @@ def main() -> None:
   parser.add_argument("--output-dir", required=True, type=Path)
   parser.add_argument("--seed", required=True, type=int)
   parser.add_argument("--execute-steps", required=True, type=int)
-  parser.add_argument("--max-sim-seconds", type=float, default=50.0)
+  parser.add_argument("--max-sim-seconds", type=float, default=90.0)
+  parser.add_argument(
+    "--guard-mode", choices=("observe", "strict"), default="observe"
+  )
   parser.add_argument("--record-fps", type=int, choices=(5, 10), default=10)
   parser.add_argument("--reference-dataset", type=Path)
   parser.add_argument("--reference-episode-index", type=int, default=0)
@@ -52,6 +56,8 @@ def main() -> None:
     help="Simulation-only diagnostic: accept best-effort IK targets without the wrist/arm/hand reachability abort thresholds",
   )
   args = parser.parse_args()
+  if not math.isfinite(args.max_sim_seconds) or args.max_sim_seconds <= 0.0:
+    parser.error("--max-sim-seconds must be finite and positive")
   path = args.deployment_manifest.resolve(strict=True)
   deployment = json.loads(path.read_text(encoding="utf-8"))
   if deployment.get("schema") != "pickplace_egosteer_deployment_v1":
@@ -67,6 +73,7 @@ def main() -> None:
     "--record-fps", str(args.record_fps), "--review-width", "1920",
     "--review-height", "1080", "--review-second-camera", "global",
     "--max-sim-seconds", str(args.max_sim_seconds),
+    "--guard-mode", args.guard_mode,
     "--execute-steps", str(args.execute_steps), "--no-real-time",
   ]
   if args.reference_dataset is not None:
@@ -88,15 +95,33 @@ def main() -> None:
   started = time.monotonic()
   stats = None
   error_text = None
+  record_error_text = None
   try:
     stats = asyncio.run(base._run(rollout_args))
   except Exception as error:
+    if isinstance(error, base.EvaluationArtifactError):
+      stats = error.stats
+      record_error_text = str(error)
+    else:
+      stats = getattr(error, "evaluation_stats", None)
+      record_error_text = getattr(error, "record_error", None)
     error_text = f"{type(error).__name__}: {error}"
     raise
   finally:
-    review_path = output / "review/review.json"
+    review_path = output / "review.json"
     review = json.loads(review_path.read_text(encoding="utf-8")) if review_path.is_file() else {}
-    if review:
+    if error_text is not None:
+      status = "error"
+      evaluation = review.get("evaluation") or {
+        "success": bool(stats.stable_success) if stats is not None else False
+      }
+      sim_seconds = (
+        review.get("last_pose_time_s")
+        if review else (
+          stats.action_steps / 30.0 if stats is not None else None
+        )
+      )
+    elif review:
       status = review.get("task_status", "error")
       evaluation = review.get("evaluation") or {}
       sim_seconds = review.get("last_pose_time_s")
@@ -108,6 +133,14 @@ def main() -> None:
       status = "error"
       evaluation = {}
       sim_seconds = None
+    if sim_seconds is not None:
+      try:
+        sim_seconds = float(sim_seconds)
+      except (TypeError, ValueError):
+        sim_seconds = None
+      else:
+        if not math.isfinite(sim_seconds):
+          sim_seconds = None
     result = {
       "task": "pick-place", "controller": "egosteer-pickplace-canonical-v1",
       "checkpoint_path": deployment["checkpoint_path"],
@@ -122,15 +155,35 @@ def main() -> None:
       "max_sim_seconds": args.max_sim_seconds,
       "initial_randomization": {"object_xy_jitter_m": 0.01, "object_yaw_jitter_rad": 0.05},
       "grasp_aids": {"auto_grasp_stabilizer": True, "adaptive_free_close_force": True},
-      "diagnostic_only": args.diagnostic_relax_ik,
-      "formal_metrics_valid": not args.diagnostic_relax_ik,
+      "guard_mode": args.guard_mode,
+      "diagnostic_only": args.diagnostic_relax_ik or args.guard_mode == "observe",
+      "formal_metrics_valid": (
+        not args.diagnostic_relax_ik and args.guard_mode == "strict"
+      ),
       "kinematic_reachability_guards_enabled": not args.diagnostic_relax_ik,
       "status": status, "evaluation": evaluation,
+      "task_success": bool(evaluation.get("success", False)),
       "sim_seconds": sim_seconds,
       "wall_seconds": time.monotonic() - started,
       "stats": asdict(stats) if stats is not None else {},
       "error": error_text or review.get("task_error"),
     }
+    if record_error_text is not None:
+      result["record_error"] = record_error_text
+    guard_report = getattr(stats, "guard_report", None) if stats is not None else None
+    if guard_report:
+      result.update(guard_report)
+      if args.diagnostic_relax_ik:
+        result.update(diagnostic_only=True, formal_metrics_valid=False)
+    else:
+      result.update(
+        guard_events=[],
+        stop_reason=("fatal_error" if error_text else "time_limit"),
+        physics_valid=False,
+        formal_metrics_valid=False,
+      )
+    if record_error_text is not None:
+      result.update(stop_reason="fatal_error", formal_metrics_valid=False)
     if review:
       review.update(
         checkpoint_path=deployment["checkpoint_path"], checkpoint_sha256=deployment["checkpoint_sha256"],
@@ -138,9 +191,12 @@ def main() -> None:
         action_dim=deployment["action_dim"], execute_steps=args.execute_steps,
         control_hz=30, replan_period_s=args.execute_steps / 30, seed=args.seed,
         success=bool(evaluation.get("success")), inference_requests=result["stats"].get("requests"),
+        task_success=result["task_success"],
         simulation_time_s=result["sim_seconds"], wall_time_s=result["wall_seconds"],
-        diagnostic_only=args.diagnostic_relax_ik,
-        formal_metrics_valid=not args.diagnostic_relax_ik,
+        guard_mode=result["guard_mode"], guard_events=result["guard_events"],
+        stop_reason=result["stop_reason"], physics_valid=result["physics_valid"],
+        diagnostic_only=result["diagnostic_only"],
+        formal_metrics_valid=result["formal_metrics_valid"],
         kinematic_reachability_guards_enabled=not args.diagnostic_relax_ik,
       )
       review_path.write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")

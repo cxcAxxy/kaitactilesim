@@ -4,11 +4,11 @@
 
 ```bash
 # X/Y 各 ±10 mm，基准朝向附近 yaw ±5°
-pixi run run-usb-insert -- \
+pixi run --as-is run-usb-insert -- \
   --xy-jitter-mm 10 --yaw-jitter-deg 5 --seed 42
 
 # 同时固定接触前控制噪声
-pixi run run-usb-insert -- --headless \
+pixi run --as-is run-usb-insert -- --headless \
   --xy-jitter-mm 10 --yaw-jitter-deg 5 --seed 42 \
   --precontact-noise-mm 0.5 --noise-seed 1 \
   --result-json /path/to/usb_random_seed42.json
@@ -32,7 +32,7 @@ pixi run run-usb-insert -- --headless \
 `check-usb-random` 使用无噪声 API，串行检查固定初态、均匀样本和 X/Y/yaw 边界组合：
 
 ```bash
-nice -n 10 pixi run check-usb-random -- \
+nice -n 10 pixi run --as-is check-usb-random -- \
   --samples 8 --seed 20260909 \
   --output-dir /path/to/new_usb_random_check
 ```

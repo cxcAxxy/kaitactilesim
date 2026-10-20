@@ -25,6 +25,43 @@ CHANNEL_COLORS = ((52, 174, 255), (255, 174, 52), (86, 220, 116))
 NORMAL_TAXEL_MAX_N = 0.10
 TANGENT_TAXEL_MAX_N = 0.02
 CURVE_ABS_MAX_N_PER_TAXEL = 0.12
+_EVALUATION_ARTIFACT_NAMES = (
+  "review.mp4",
+  "review.json",
+  "frames.jsonl",
+  "first_frame.png",
+  "last_frame.png",
+  "evaluation_rollout_trace.npz",
+  "evaluation_comparison.json",
+  "evaluation_right_wrist_state.png",
+  "evaluation_right_hand_actuated_dof.png",
+  "evaluation_right_fingertip_tactile.png",
+  "evaluation_evaluation_plots.json",
+)
+
+
+def evaluation_artifact_directory(trial: Path) -> Path:
+  """Find flat artifacts, falling back to the untouched legacy review directory.
+
+  Prefer even partially written flat artifacts so that an old nested review
+  cannot make an incomplete new recording look valid.
+  """
+  if any(
+    (trial / name).exists() or (trial / name).is_symlink()
+    for name in _EVALUATION_ARTIFACT_NAMES
+  ):
+    return trial
+  legacy = trial / "review"
+  return legacy if legacy.is_dir() else trial
+
+
+def _prepare_evaluation_artifact_directory(output: Path) -> None:
+  """Share the trial directory with policy logs without replacing artifacts."""
+  output.mkdir(parents=True, exist_ok=True)
+  for name in _EVALUATION_ARTIFACT_NAMES:
+    artifact = output / name
+    if artifact.exists() or artifact.is_symlink():
+      raise FileExistsError(f"evaluation artifact already exists: {artifact}")
 
 
 class EvaluationMetrics(Protocol):
@@ -189,7 +226,20 @@ def _draw_curve(
 def _metrics_text(metrics: Mapping[str, Any]) -> str:
   if not metrics:
     return ""
+  angle_fields = {
+    "clockwise_turns": ("clockwise_angle_deg", "screw in"),
+    "turns_removed": ("angle_removed_deg", "screw out"),
+    "rotation_from_initial_turns": ("rotation_from_initial_deg", "from start"),
+  }
+  display = dict(metrics)
+  for source, (target, _label) in angle_fields.items():
+    if source in display:
+      value = display.pop(source)
+      if target not in display and isinstance(value, (int, float)) and not isinstance(value, bool):
+        display[target] = value * 360.0
+  angles = {target: label for target, label in angle_fields.values()}
   labels = {
+    **angles,
     "card_displacement_now_mm": "card now",
     "card_displacement_peak_mm": "peak",
     "edge_threshold_mm": "edge",
@@ -204,11 +254,15 @@ def _metrics_text(metrics: Mapping[str, Any]) -> str:
     "socket_penetration_mm": "penetration",
   }
   parts = []
-  for key, value in metrics.items():
+  # Keep the task's angle visible before the longer contact diagnostics.
+  ordered = (*[key for key in angles if key in display],
+             *[key for key in display if key not in angles])
+  for key in ordered:
+    value = display[key]
     if isinstance(value, bool):
       parts.append(f"{labels.get(key, key)}={'YES' if value else 'NO'}")
     elif isinstance(value, (int, float)):
-      unit = " mm" if key.endswith("_mm") else ""
+      unit = "°" if key in angles else " mm" if key.endswith("_mm") else ""
       parts.append(f"{labels.get(key, key)}={value:.1f}{unit}")
     elif isinstance(value, str):
       parts.append(f"{labels.get(key, key)}={value}")
@@ -366,7 +420,7 @@ class EvaluationVideo:
       raise ValueError("model wrist view would duplicate the second camera")
     if reference_episode_index < 0:
       raise ValueError("reference episode index must be nonnegative")
-    output.mkdir(parents=True, exist_ok=False)
+    _prepare_evaluation_artifact_directory(output)
     self.simulation = simulation
     self.output = output
     self.fps = fps

@@ -46,6 +46,7 @@
     <material name="bulb_ceramic" rgba="0.8 0.83 0.85 1"/>
     <material name="bulb_metal" rgba="0.52 0.48 0.35 1" specular="0.7" shininess="0.6"/>
     <material name="bulb_fixture" rgba="0.12 0.23 0.29 1"/>
+    <material name="bulb_cradle" rgba="0.24 0.30 0.32 1"/>
     <material name="bulb_mark" rgba="0.85 0.22 0.09 1"/>
     <!-- One convex annular sector. Rotated copies form a hollow collision
          funnel; a single annulus mesh would have a solid convex collision hull. -->
@@ -55,6 +56,22 @@
   <worldbody>
     <camera name="bulb_closeup" pos="0.50 0.06 0.95" fovy="45"
             xyaxes="-0.9701425001 -0.2425356250 0.0000000000 0.1547522438 -0.6190089750 0.7699867738"/>
+    <!-- Open-top pickup cradle. Four low, rounded prongs leave 0.9 mm radial
+         clearance around the 16 mm neck and permit an unconstrained lift. -->
+    <body name="bulb_pickup_cradle" pos="0.500 -0.180 0.680">
+      <geom name="bulb_pickup_cradle_prong_00" class="bulb_collision"
+            type="capsule" fromto="0.0199 0 0.003 0.0199 0 0.025" size="0.003"
+            friction="0.12 0.001 0.0001" material="bulb_cradle"/>
+      <geom name="bulb_pickup_cradle_prong_01" class="bulb_collision"
+            type="capsule" fromto="0 0.0199 0.003 0 0.0199 0.025" size="0.003"
+            friction="0.12 0.001 0.0001" material="bulb_cradle"/>
+      <geom name="bulb_pickup_cradle_prong_02" class="bulb_collision"
+            type="capsule" fromto="-0.0199 0 0.003 -0.0199 0 0.025" size="0.003"
+            friction="0.12 0.001 0.0001" material="bulb_cradle"/>
+      <geom name="bulb_pickup_cradle_prong_03" class="bulb_collision"
+            type="capsule" fromto="0 -0.0199 0.003 0 -0.0199 0.025" size="0.003"
+            friction="0.12 0.001 0.0001" material="bulb_cradle"/>
+    </body>
     <body name="bulb_fixture" pos="0.620 -0.180 0.680">
       <!-- Broad, low cylindrical plinth reaches the original socket walls. -->
       <geom name="bulb_fixture_base" class="bulb_collision" type="cylinder"
@@ -306,7 +323,7 @@
       <joint name="bulb_thread_depth" type="slide" axis="0 0 -1"
              range="-0.001 0.0025" damping="0.5" armature="0.001"/>
       <joint name="bulb_thread_angle" type="hinge" axis="0 0 -1"
-             range="-0.2 3.9269908170" damping="0.001" frictionloss="0.006"
+             range="-0.9 3.9269908170" damping="0.001" frictionloss="0.006"
              armature="0.00002"/>
       <inertial pos="0 0 0" mass="0.001" diaginertia="1e-6 1e-6 1e-6"/>
     </body>
@@ -317,6 +334,8 @@
              active="false" castshadow="false" attenuation="1 0 50"
              diffuse="0.65 0.40 0.12" specular="0.15 0.10 0.04"/>
       <freejoint name="bulb_freejoint"/>
+      <!-- Preserve the benchmark's 60 g mass/inertia while changing only the
+           globe clearance; this isolates the pickup-geometry intervention. -->
       <inertial pos="0 0 0.053" mass="0.060" diaginertia="0.000055 0.000055 0.000026"/>
       <site name="bulb_tip" size="0.001" group="3" rgba="1 0.2 0 0.7"/>
       <site name="bulb_grasp" pos="0 0 0.070" size="0.002" group="3" rgba="0 0.5 1 0.7"/>
@@ -329,9 +348,9 @@
       <geom name="bulb_neck" class="bulb_collision" type="cylinder"
             pos="0 0 0.0261111111" size="0.016 0.019" material="bulb_ceramic"/>
       <geom name="bulb_globe" class="bulb_collision" type="ellipsoid"
-            pos="0 0 0.072" size="0.030 0.030 0.034" material="bulb_frosted"/>
+            pos="0 0 0.072" size="0.029 0.029 0.034" material="bulb_frosted"/>
       <geom name="bulb_orientation_mark" class="bulb_visual" type="ellipsoid"
-            pos="0.0298 0 0.072" size="0.0006 0.003 0.012" material="bulb_mark"/>
+            pos="0.0288 0 0.072" size="0.0006 0.003 0.012" material="bulb_mark"/>
       <geom name="bulb_thread_crest_000" class="bulb_thread_collision" type="capsule"
             fromto="0.0128000000 0.0000000000 0.0030000000 0.0125540516 0.0024971561 0.0031250000" size="0.00055" material="bulb_metal"/>
       <geom name="bulb_thread_crest_001" class="bulb_thread_collision" type="capsule"

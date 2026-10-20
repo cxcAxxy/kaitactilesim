@@ -318,7 +318,7 @@ async def run(args) -> dict:
   try:
     with WorkcellRenderer(simulation.model, cameras, visible_geom_groups=(0, 1, 2, 3, 4), shadows=False) as renderer:
       if args.record:
-        recorder = EvaluationVideo(simulation, output / "review", fps=10, width=1920, height=1080,
+        recorder = EvaluationVideo(simulation, output, fps=10, width=1920, height=1080,
                                    render_width=640, render_height=480, second_camera="global",
                                    include_model_wrist=True,
                                    metrics=outcome, heading="USB INSERT OPENWAM EVALUATION",
@@ -391,7 +391,7 @@ async def run(args) -> dict:
     report["wall_seconds"] = time.monotonic() - started
     if comparison is not None and comparison.sample_count:
       try:
-        report["comparison_plots"] = comparison.finish(output / "review")
+        report["comparison_plots"] = comparison.finish(output)
       except BaseException as error:
         record_artifact_error("comparison_plots", error)
     if recorder is not None:

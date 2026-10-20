@@ -25,6 +25,14 @@ from kaihand_tactile_env.shared.egosteer_client import (
   EgoSteerPolicyClient,
   ObservationHistory,
 )
+from kaihand_tactile_env.shared.evaluation_guards import (
+  configure_evaluation_guards,
+  ensure_evaluation_physics,
+  evaluation_guard_report,
+  is_observe_mode,
+  record_guard_event,
+  recover_nonfinite_action,
+)
 from kaihand_tactile_env.shared.inference_dashboard import (
   InferenceSensorDashboard,
 )
@@ -36,7 +44,10 @@ from kaihand_tactile_env.shared.recording import (
 )
 from kaihand_tactile_env.shared.rendering import WorkcellRenderer
 from kaihand_tactile_env.shared.simulation import ArmHandSimulation
-from kaihand_tactile_env.shared.tactile import GenesisProbeTactileProvider
+from kaihand_tactile_env.shared.tactile import (
+  GenesisProbeTactileProvider,
+  load_fingertip_layout,
+)
 from kaihand_tactile_env.tasks.pick_place.task import cylinder_is_in_box
 
 DEFAULT_INSTRUCTION = "Put the red cylinder into the blue box."
@@ -51,10 +62,78 @@ FINGERTIP_LINKS = (
 DEFAULT_FREE_CLOSE_FORCE_LIMIT = 0.82
 DEFAULT_FREE_CLOSE_CUTOFF_M = 0.002
 DEFAULT_FREE_CLOSE_MIN_CLOSURE = 0.35
+# Convert distal-site orientation residuals (radians) into the same weighted
+# least-squares scale as fingertip positions (metres).  This generic default
+# preserves the full pose9 signal; task-specific runners may choose a more
+# selective constraint after task-level contact validation.
+DEFAULT_HAND_IK_ORIENTATION_WEIGHTS = (0.020, 0.010, 0.010, 0.008, 0.006)
+
+
+def _fingertip_pad_normal_axes_local() -> dict[str, np.ndarray]:
+  """Return the accepted tactile-pad normals in each distal site frame."""
+  layout = load_fingertip_layout()
+  body_names = np.asarray(layout.body_names)
+  result: dict[str, np.ndarray] = {}
+  for side in ("left", "right"):
+    axes = []
+    for finger, link in FINGERTIP_LINKS:
+      link_name = f"hand_{side[0]}_{finger}_{link}"
+      indices = np.flatnonzero(body_names == link_name)
+      if len(indices) != 35:
+        raise RuntimeError(
+          f"{link_name}: expected 35 accepted fingertip taxel normals, "
+          f"got {len(indices)}"
+        )
+      normal = np.mean(
+        np.asarray(layout.local_normal[indices], dtype=float), axis=0
+      )
+      norm = float(np.linalg.norm(normal))
+      if not np.isfinite(norm) or norm < 1.0e-10:
+        raise RuntimeError(f"{link_name}: invalid mean tactile-pad normal")
+      axes.append(normal / norm)
+    result[side] = np.asarray(axes)
+  return result
+
+
+FINGERTIP_PAD_NORMAL_AXES_LOCAL = _fingertip_pad_normal_axes_local()
 
 
 class ViewerClosed(RuntimeError):
   """The user closed the native viewer during a policy request."""
+
+
+class EvaluationArtifactError(RuntimeError):
+  """A rollout completed, but its required review artifact did not."""
+
+  def __init__(
+    self,
+    message: str,
+    *,
+    stats: "RolloutStats",
+    guard_report: dict[str, Any],
+  ) -> None:
+    super().__init__(message)
+    self.stats = stats
+    self.guard_report = guard_report
+
+
+class PolicyActionRejected(RuntimeError):
+  """A predicted action was rejected by a kinematic safety guard."""
+
+  def __init__(
+    self,
+    guard: str,
+    message: str,
+    *,
+    measured: float | None = None,
+    threshold: float | None = None,
+    details: dict[str, Any] | None = None,
+  ) -> None:
+    super().__init__(message)
+    self.guard = guard
+    self.measured = measured
+    self.threshold = threshold
+    self.details = details or {}
 
 
 @dataclass
@@ -329,7 +408,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
   parser.add_argument("--overhead-refresh-hz", type=float, default=5.0)
   parser.add_argument("--width", type=int, default=320)
   parser.add_argument("--height", type=int, default=240)
-  parser.add_argument("--max-sim-seconds", type=float, default=8.0)
+  parser.add_argument("--max-sim-seconds", type=float, default=90.0)
+  parser.add_argument(
+    "--guard-mode",
+    choices=("observe", "strict"),
+    default="observe",
+    help=(
+      "observe records recoverable policy/task guards and continues; strict "
+      "preserves fail-fast guard behavior"
+    ),
+  )
   parser.add_argument(
     "--max-requests",
     type=int,
@@ -422,8 +510,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.error("--tactile-max-depth-mm must be positive")
   if args.tactile_refresh_hz <= 0.0 or args.overhead_refresh_hz <= 0.0:
     parser.error("dashboard refresh rates must be positive")
-  if args.max_sim_seconds <= 0.0:
-    parser.error("--max-sim-seconds must be positive")
+  if not np.isfinite(args.max_sim_seconds) or args.max_sim_seconds <= 0.0:
+    parser.error("--max-sim-seconds must be finite and positive")
   if args.max_requests < 0:
     parser.error("--max-requests cannot be negative")
   if args.execute_steps <= 0:
@@ -581,17 +669,18 @@ def _validated_prediction(
   """Reject response tensors that disagree with the advertised model contract."""
   array = np.asarray(actions)
   expected = (horizon, action_dim) if action_dim is not None else None
-  valid = (
+  shape_valid = (
     array.ndim == 2
     and array.shape[0] == horizon
     and (action_dim is None or array.shape[1] == action_dim)
-    and np.all(np.isfinite(array))
   )
-  if not valid:
+  if not shape_valid:
     expectation = f"({horizon}, {action_dim})" if expected else f"({horizon}, action_dim)"
     raise RuntimeError(
-      f"Model prediction must be finite with shape {expectation}, got {array.shape}"
+      f"Model prediction must have shape {expectation}, got {array.shape}"
     )
+  if not np.all(np.isfinite(array)):
+    raise RuntimeError("Model prediction contains nonfinite actions")
   return array
 
 
@@ -621,76 +710,374 @@ async def _infer_while_servicing_viewer(
         await task
 
 
+def _rotation_error_angles(
+  target_rotations: np.ndarray, achieved_rotations: np.ndarray
+) -> np.ndarray:
+  """Return the geodesic SO(3) error for each aligned rotation pair."""
+  relative = target_rotations @ np.swapaxes(achieved_rotations, -1, -2)
+  cosine = np.clip(
+    (np.trace(relative, axis1=-2, axis2=-1) - 1.0) * 0.5,
+    -1.0,
+    1.0,
+  )
+  return np.arccos(cosine)
+
+
+def _hand_ik_diagnostic(
+  simulation: ArmHandSimulation,
+  *,
+  side: str,
+  action_index: int,
+  target_positions: np.ndarray,
+  target_rotations: np.ndarray | None,
+  orientation_weights: np.ndarray | None,
+  arm_result: Any,
+  hand_result: Any,
+  command_applied: bool,
+  hold_last: bool,
+) -> dict[str, Any]:
+  """Describe command-vs-IK-FK residuals without advancing live physics."""
+  site_ids = np.asarray(simulation._fingertip_site_ids[side], dtype=int)
+  achieved_positions = np.asarray(
+    simulation.ik_data.site_xpos[site_ids], dtype=float
+  ).copy()
+  achieved_rotations = np.asarray(
+    simulation.ik_data.site_xmat[site_ids], dtype=float
+  ).reshape(5, 3, 3).copy()
+  position_residuals = target_positions - achieved_positions
+  position_errors = np.linalg.norm(position_residuals, axis=1)
+
+  orientation_errors = None
+  site_z_axis_errors = None
+  pad_normal_axis_errors = None
+  if target_rotations is not None:
+    orientation_errors = _rotation_error_angles(
+      target_rotations, achieved_rotations
+    )
+    z_cosine = np.clip(
+      np.sum(target_rotations[..., :, 2] * achieved_rotations[..., :, 2], axis=1),
+      -1.0,
+      1.0,
+    )
+    site_z_axis_errors = np.arccos(z_cosine)
+    pad_normals_local = FINGERTIP_PAD_NORMAL_AXES_LOCAL[side]
+    target_pad_normals = np.einsum(
+      "fij,fj->fi", target_rotations, pad_normals_local
+    )
+    achieved_pad_normals = np.einsum(
+      "fij,fj->fi", achieved_rotations, pad_normals_local
+    )
+    pad_normal_cosine = np.clip(
+      np.sum(target_pad_normals * achieved_pad_normals, axis=1), -1.0, 1.0
+    )
+    pad_normal_axis_errors = np.arccos(pad_normal_cosine)
+
+  joint_ids = np.array(
+    [simulation.model.joint(name).id for name in hand_result.joint_names],
+    dtype=int,
+  )
+  ranges = np.asarray(simulation.model.jnt_range[joint_ids], dtype=float)
+  limited = np.asarray(simulation.model.jnt_limited[joint_ids], dtype=bool)
+  joint_positions = np.asarray(hand_result.joint_positions, dtype=float)
+  previous_joint_positions = np.array(
+    [simulation._hand_targets[side][name] for name in hand_result.joint_names],
+    dtype=float,
+  )
+  joint_delta = joint_positions - previous_joint_positions
+  limit_rows = []
+  for index, name in enumerate(hand_result.joint_names):
+    row: dict[str, Any] = {
+      "name": name,
+      "position_rad": float(joint_positions[index]),
+      "limited": bool(limited[index]),
+    }
+    if limited[index]:
+      lower, upper = ranges[index]
+      lower_margin = float(joint_positions[index] - lower)
+      upper_margin = float(upper - joint_positions[index])
+      row.update(
+        lower_rad=float(lower),
+        upper_rad=float(upper),
+        lower_margin_rad=lower_margin,
+        upper_margin_rad=upper_margin,
+        at_limit=bool(min(lower_margin, upper_margin) <= 1.0e-6),
+      )
+    limit_rows.append(row)
+
+  fingers = [finger for finger, _link in FINGERTIP_LINKS]
+  return {
+    "side": side,
+    "action_index": int(action_index),
+    "ik_mode": "position_and_orientation" if target_rotations is not None else "position_only",
+    "ik_success": bool(hand_result.success),
+    "ik_iterations": int(hand_result.iterations),
+    "command_applied": bool(command_applied),
+    "hold_last": bool(hold_last),
+    "fk_source": "hand IK returned joint solution with requested arm posture",
+    "arm_ik": {
+      "success": bool(arm_result.success),
+      "iterations": int(arm_result.iterations),
+      "position_error_m": float(arm_result.position_error),
+      "orientation_error_rad": float(arm_result.orientation_error),
+    },
+    "finger_order": fingers,
+    "target_positions_world_m": target_positions.tolist(),
+    "fk_positions_world_m": achieved_positions.tolist(),
+    "position_residual_world_m": position_residuals.tolist(),
+    "position_error_m": position_errors.tolist(),
+    "maximum_position_error_m": float(np.max(position_errors)),
+    "target_rotations_world": (
+      None if target_rotations is None else target_rotations.tolist()
+    ),
+    "fk_rotations_world": achieved_rotations.tolist(),
+    "orientation_weights_m_per_rad": (
+      None if orientation_weights is None else orientation_weights.tolist()
+    ),
+    "orientation_error_rad": (
+      None if orientation_errors is None else orientation_errors.tolist()
+    ),
+    "maximum_orientation_error_rad": (
+      None if orientation_errors is None else float(np.max(orientation_errors))
+    ),
+    "site_z_axis_error_rad": (
+      None if site_z_axis_errors is None else site_z_axis_errors.tolist()
+    ),
+    "pad_normal_axis_error_rad": (
+      None
+      if pad_normal_axis_errors is None
+      else pad_normal_axis_errors.tolist()
+    ),
+    "previous_commanded_joint_positions_rad": previous_joint_positions.tolist(),
+    "joint_delta_rad": joint_delta.tolist(),
+    "maximum_absolute_joint_delta_rad": float(np.max(np.abs(joint_delta))),
+    "joint_limits": limit_rows,
+  }
+
+
 def _command_action_step(
   simulation: ArmHandSimulation,
   decoded: Any,
   action_index: int,
   args: argparse.Namespace,
   stats: RolloutStats,
-) -> None:
+  *,
+  diagnostics: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]] | None:
+  """Command one policy waypoint and return solver/FK diagnostics per side.
+
+  ``SideActionTargets.fingertip_rotations_world`` is optional by design.  A
+  legacy EgoSteer target therefore follows exactly the old XYZ-only solve,
+  while EgoTouch SE(3) targets enable the soft orientation objective.
+  """
   sides = ("left", "right") if args.control_side == "both" else ("right",)
-  for side in sides:
-    targets = decoded.for_side(side)
-    current_position, _ = simulation.current_pose_matrix(side)
-    wrist_jump = float(
-      np.linalg.norm(targets.site_positions_world[action_index] - current_position)
-    )
-    if wrist_jump > args.max_wrist_jump:
-      raise RuntimeError(
-        f"{side} wrist target jump {wrist_jump:.3f}m exceeds "
-        f"--max-wrist-jump={args.max_wrist_jump:.3f}m"
-      )
+  # set_pose_target commits a successful arm solve before the hand solve has
+  # been validated.  Treat a policy waypoint as one transaction so rejecting
+  # either half can never leave a new arm target paired with the previous hand
+  # target.  The snapshots are command state only; no MuJoCo physical state is
+  # rewound.
+  command_snapshot: dict[str, dict[str, Any]] = {}
+  diagnostic_start = 0 if diagnostics is None else len(diagnostics)
 
-    arm_result = simulation.set_pose_target(
-      side,
-      targets.site_positions_world[action_index],
-      targets.site_quaternions_wxyz[action_index],
-    )
-    stats.maximum_arm_position_error = max(
-      stats.maximum_arm_position_error, arm_result.position_error
-    )
-    stats.maximum_arm_orientation_error = max(
-      stats.maximum_arm_orientation_error, arm_result.orientation_error
-    )
-    if not arm_result.success:
-      stats.arm_ik_failures += 1
-      bounded = (
-        arm_result.position_error <= args.max_arm_position_error
-        and arm_result.orientation_error <= args.max_arm_orientation_error
+  def restore_command_snapshot() -> None:
+    for side, snapshot in command_snapshot.items():
+      simulation._arm_goal[side] = snapshot["arm_goal"]
+      simulation._pose_target_position[side] = snapshot["pose_position"]
+      simulation._pose_target_rotation[side] = snapshot["pose_rotation"]
+      simulation._hand_targets[side].clear()
+      simulation._hand_targets[side].update(snapshot["hand_targets"])
+      mocap_id = simulation._target_mocap[side]
+      simulation.data.mocap_pos[mocap_id] = snapshot["mocap_position"]
+      simulation.data.mocap_quat[mocap_id] = snapshot["mocap_quaternion"]
+    # A later side can reject after an earlier side produced a seemingly
+    # accepted diagnostic.  The command is atomic across all requested sides,
+    # so only diagnostics appended by this call must reflect the rollback.
+    if diagnostics is not None:
+      for diagnostic in diagnostics[diagnostic_start:]:
+        diagnostic["command_applied"] = False
+        diagnostic["command_rolled_back"] = True
+
+  simulation._evaluation_action_rejected = False
+  try:
+    # This preflight is mutation-free.  In particular, a wrist rejection does
+    # not require private command state to exist on lightweight test doubles.
+    for side in sides:
+      targets = decoded.for_side(side)
+      current_position, _ = simulation.current_pose_matrix(side)
+      wrist_jump = float(
+        np.linalg.norm(targets.site_positions_world[action_index] - current_position)
       )
-      if args.strict_ik or not bounded:
-        raise RuntimeError(
-          f"{side} arm IK failed: position_error={arm_result.position_error:.4f}m, "
-          f"orientation_error={arm_result.orientation_error:.4f}rad"
+      if wrist_jump > args.max_wrist_jump:
+        raise PolicyActionRejected(
+          "wrist_target_jump",
+          f"{side} wrist target jump {wrist_jump:.3f}m exceeds "
+          f"--max-wrist-jump={args.max_wrist_jump:.3f}m",
+          measured=wrist_jump,
+          threshold=float(args.max_wrist_jump),
+          details={"side": side},
         )
-      simulation.set_arm_joint_goal(side, arm_result.joint_positions)
 
-    hand_result = simulation.solve_hand_ik(
-      side,
-      targets.fingertips_world[action_index],
-      arm_joint_positions=arm_result.joint_positions,
-      position_tolerance=args.hand_ik_tolerance,
+    command_snapshot = {
+      side: {
+        "arm_goal": simulation._arm_goal[side].copy(),
+        "pose_position": simulation._pose_target_position[side].copy(),
+        "pose_rotation": simulation._pose_target_rotation[side].copy(),
+        "hand_targets": dict(simulation._hand_targets[side]),
+        "mocap_position": simulation.data.mocap_pos[
+          simulation._target_mocap[side]
+        ].copy(),
+        "mocap_quaternion": simulation.data.mocap_quat[
+          simulation._target_mocap[side]
+        ].copy(),
+      }
+      for side in sides
+    }
+    for side in sides:
+      targets = decoded.for_side(side)
+      arm_result = simulation.set_pose_target(
+        side,
+        targets.site_positions_world[action_index],
+        targets.site_quaternions_wxyz[action_index],
+      )
+      stats.maximum_arm_position_error = max(
+        stats.maximum_arm_position_error, arm_result.position_error
+      )
+      stats.maximum_arm_orientation_error = max(
+        stats.maximum_arm_orientation_error, arm_result.orientation_error
+      )
+      if not arm_result.success:
+        stats.arm_ik_failures += 1
+        bounded = (
+          arm_result.position_error <= args.max_arm_position_error
+          and arm_result.orientation_error <= args.max_arm_orientation_error
+        )
+        if args.strict_ik or not bounded:
+          raise PolicyActionRejected(
+            "arm_ik",
+            f"{side} arm IK failed: position_error={arm_result.position_error:.4f}m, "
+            f"orientation_error={arm_result.orientation_error:.4f}rad",
+            measured=float(arm_result.position_error),
+            threshold=float(args.max_arm_position_error),
+            details={
+              "side": side,
+              "orientation_error_rad": float(arm_result.orientation_error),
+              "orientation_threshold_rad": float(args.max_arm_orientation_error),
+            },
+          )
+        simulation.set_arm_joint_goal(side, arm_result.joint_positions)
+
+      fingertip_rotations = getattr(targets, "fingertip_rotations_world", None)
+      target_rotations = (
+        None
+        if fingertip_rotations is None
+        else np.asarray(fingertip_rotations[action_index], dtype=float)
+      )
+      orientation_weights = None
+      hand_ik_options: dict[str, Any] = {}
+      if target_rotations is not None:
+        orientation_weights = np.asarray(
+          getattr(
+            args,
+            "hand_ik_orientation_weights",
+            DEFAULT_HAND_IK_ORIENTATION_WEIGHTS,
+          ),
+          dtype=float,
+        )
+        if orientation_weights.shape != (5,) or not np.all(
+          np.isfinite(orientation_weights) & (orientation_weights >= 0.0)
+        ):
+          raise ValueError(
+            "hand_ik_orientation_weights must contain five finite non-negative values"
+          )
+        hand_ik_options = {
+          "target_rotations": target_rotations,
+          "orientation_weights": orientation_weights,
+        }
+      hand_result = simulation.solve_hand_ik(
+        side,
+        targets.fingertips_world[action_index],
+        arm_joint_positions=arm_result.joint_positions,
+        position_tolerance=args.hand_ik_tolerance,
+        **hand_ik_options,
+      )
+      stats.maximum_hand_error = max(stats.maximum_hand_error, hand_result.position_error)
+      if not hand_result.success:
+        stats.hand_ik_failures += 1
+      strict_failure = bool(args.strict_ik and not hand_result.success)
+      reachability_failure = bool(hand_result.position_error > args.max_hand_error)
+      hold_last = bool(
+        not hand_result.success
+        and getattr(args, "hold_failed_hand_ik", False)
+        and not strict_failure
+        and not reachability_failure
+      )
+      if diagnostics is not None:
+        diagnostics.append(
+          _hand_ik_diagnostic(
+            simulation,
+            side=side,
+            action_index=action_index,
+            target_positions=np.asarray(
+              targets.fingertips_world[action_index], dtype=float
+            ),
+            target_rotations=target_rotations,
+            orientation_weights=orientation_weights,
+            arm_result=arm_result,
+            hand_result=hand_result,
+            command_applied=not (
+              strict_failure or reachability_failure or hold_last
+            ),
+            hold_last=hold_last,
+          )
+        )
+      if strict_failure:
+        raise PolicyActionRejected(
+          "hand_ik",
+          f"{side} hand IK failed: maximum fingertip error="
+          f"{hand_result.position_error:.4f}m",
+          measured=float(hand_result.position_error),
+          threshold=float(args.hand_ik_tolerance),
+          details={"side": side},
+        )
+      if reachability_failure:
+        raise PolicyActionRejected(
+          "hand_reachability",
+          f"{side} hand target is too far from the reachable manifold: "
+          f"error={hand_result.position_error:.4f}m > {args.max_hand_error:.4f}m",
+          measured=float(hand_result.position_error),
+          threshold=float(args.max_hand_error),
+          details={"side": side},
+        )
+      if not hold_last:
+        accepted = simulation.set_hand_joint_targets(
+          hand_result.joint_names, hand_result.joint_positions
+        )
+        if accepted != len(hand_result.joint_names):
+          raise RuntimeError(
+            f"{side} hand controller accepted "
+            f"{accepted}/{len(hand_result.joint_names)} targets"
+          )
+  except PolicyActionRejected as error:
+    restore_command_snapshot()
+    if not is_observe_mode(simulation):
+      raise
+    record_guard_event(
+      simulation,
+      error.guard,
+      f"policy action rejected by {error.guard}",
+      measured=error.measured,
+      threshold=error.threshold,
+      recovery="hold_last_valid_command_and_replan",
+      details={
+        **error.details,
+        "action_index": int(action_index),
+        "error": str(error),
+      },
     )
-    stats.maximum_hand_error = max(stats.maximum_hand_error, hand_result.position_error)
-    if not hand_result.success:
-      stats.hand_ik_failures += 1
-    if args.strict_ik and not hand_result.success:
-      raise RuntimeError(
-        f"{side} hand IK failed: maximum fingertip error="
-        f"{hand_result.position_error:.4f}m"
-      )
-    if hand_result.position_error > args.max_hand_error:
-      raise RuntimeError(
-        f"{side} hand target is too far from the reachable manifold: "
-        f"error={hand_result.position_error:.4f}m > {args.max_hand_error:.4f}m"
-      )
-    accepted = simulation.set_hand_joint_targets(
-      hand_result.joint_names, hand_result.joint_positions
-    )
-    if accepted != len(hand_result.joint_names):
-      raise RuntimeError(
-        f"{side} hand controller accepted {accepted}/{len(hand_result.joint_names)} targets"
-      )
+    simulation._evaluation_action_rejected = True
+  except BaseException:
+    restore_command_snapshot()
+    raise
+  return diagnostics
 
 
 def _hold_final_view(
@@ -729,6 +1116,8 @@ async def _run(args: argparse.Namespace) -> RolloutStats:
     object_yaw_jitter=args.object_yaw_jitter,
     randomized_objects=("cylinder",),
   )
+  configure_evaluation_guards(simulation, args.guard_mode)
+  ensure_evaluation_physics(simulation)
   head_camera = CameraConfig(
     "head",
     width=args.width,
@@ -795,6 +1184,7 @@ async def _run(args: argparse.Namespace) -> RolloutStats:
   recorder = None
   run_status = "task_not_completed"
   run_error = None
+  run_exception: BaseException | None = None
 
   try:
     with (
@@ -812,6 +1202,7 @@ async def _run(args: argparse.Namespace) -> RolloutStats:
         args.server,
         open_timeout=args.open_timeout,
         response_timeout=args.response_timeout,
+        allow_nonfinite_actions=is_observe_mode(simulation),
       ) as client:
         metadata = client.metadata or {}
         prediction_horizon = _model_action_horizon(metadata)
@@ -852,7 +1243,7 @@ async def _run(args: argparse.Namespace) -> RolloutStats:
 
           recorder = EvaluationVideo(
             simulation,
-            output / "review",
+            output,
             fps=args.record_fps,
             width=args.review_width,
             height=args.review_height,
@@ -932,15 +1323,24 @@ async def _run(args: argparse.Namespace) -> RolloutStats:
               f"server={infer_label} | round trip={request_wall:.2f}s"
             )
 
-          predicted_actions = _validated_prediction(
-            response.pred_actions, horizon=prediction_horizon
-          )
-          absolute_actions = relative_to_absolute(states[-1], predicted_actions)
-          decoded = decode_action_targets(
-            simulation, absolute_actions, camera_from_world
-          )
+          try:
+            predicted_actions = _validated_prediction(
+              response.pred_actions, horizon=prediction_horizon
+            )
+          except Exception as error:
+            if not recover_nonfinite_action(simulation, error):
+              raise
+            predicted_actions = None
+          if predicted_actions is None:
+            decoded = None
+          else:
+            absolute_actions = relative_to_absolute(states[-1], predicted_actions)
+            decoded = decode_action_targets(
+              simulation, absolute_actions, camera_from_world
+            )
 
-          for action_index in range(args.execute_steps):
+          action_count = 1 if decoded is None else args.execute_steps
+          for action_index in range(action_count):
             if float(simulation.data.time) - episode_start_sim >= args.max_sim_seconds:
               break
             if viewer is not None and not viewer.is_running():
@@ -948,17 +1348,28 @@ async def _run(args: argparse.Namespace) -> RolloutStats:
             if sensor_dashboard is not None and not sensor_dashboard.is_running():
               raise ViewerClosed("sensor dashboard was closed")
             step_wall_start = time.monotonic()
-            _command_action_step(simulation, decoded, action_index, args, stats)
-            stabilizer.after_command()
+            if decoded is not None:
+              _command_action_step(simulation, decoded, action_index, args, stats)
+            action_rejected = decoded is None or bool(
+              getattr(simulation, "_evaluation_action_rejected", False)
+            )
+            if not action_rejected:
+              stabilizer.after_command()
 
             control_tick += 1
             target_sim_time = episode_start_sim + control_tick / CONTROL_HZ
-            while simulation.data.time < target_sim_time - 1.0e-12:
+            while (
+              simulation.data.time < target_sim_time - 1.0e-12
+              and float(simulation.data.time) - episode_start_sim
+              < args.max_sim_seconds - 1.0e-12
+            ):
               free_close_force.before_physics_step(
                 closure=stabilizer.closure(),
                 grasp_active=stabilizer.active,
               )
+              before_time = float(simulation.data.time)
               simulation.step()
+              ensure_evaluation_physics(simulation, before_time=before_time)
               stabilizer.after_physics_step()
               object_twist = simulation.object_twist("cylinder")
               stable_success = placement_detector.update(
@@ -1004,6 +1415,11 @@ async def _run(args: argparse.Namespace) -> RolloutStats:
 
             if stop_requested:
               break
+            if action_rejected:
+              # The rejected waypoint advanced one normal control tick while
+              # holding the last valid command.  Discard the rest of this
+              # chunk so the next observation immediately triggers replanning.
+              break
 
           if stop_requested:
             break
@@ -1016,46 +1432,81 @@ async def _run(args: argparse.Namespace) -> RolloutStats:
     run_error = str(error)
     print(f"[viewer] {error}", flush=True)
   except BaseException as error:
+    run_exception = error
     run_status = "error"
     run_error = f"{type(error).__name__}: {error}"
     raise
   finally:
     try:
+      guard_report = evaluation_guard_report(
+        simulation, status=run_status, error=run_error
+      )
+      if run_exception is not None:
+        stats.guard_report = guard_report
+        run_exception.evaluation_stats = stats
       if recorder is not None:
         evaluation = {
           "success": stats.stable_success,
-          "placed_in_box": cylinder_is_in_box(simulation),
+          "placed_in_box": (
+            cylinder_is_in_box(simulation)
+            if guard_report["physics_valid"] else None
+          ),
         }
         record_error = None
-        try:
-          recorder.capture(
-            control_tick,
-            "placed" if stats.stable_success else "terminal",
-            force=True,
-          )
-        except Exception as error:
-          record_error = f"{type(error).__name__}: {error}"
+        if not getattr(simulation, "_evaluation_physics_invalid", False):
+          try:
+            recorder.capture(
+              control_tick,
+              "placed" if stats.stable_success else "terminal",
+              force=True,
+            )
+          except Exception as error:
+            record_error = f"{type(error).__name__}: {error}"
         try:
           recorder.finish(
             status=run_status,
             evaluation=evaluation,
             error=run_error or record_error,
           )
-        except Exception:
-          if run_error is None:
-            raise
+        except Exception as error:
+          if record_error is None:
+            record_error = f"{type(error).__name__}: {error}"
+        if record_error is not None and run_exception is not None:
+          # Preserve the rollout exception as primary while still letting the
+          # canonical wrapper invalidate a trial whose video also failed.
+          run_exception.record_error = record_error
+        if record_error is not None and run_exception is None:
+          stats.guard_report = evaluation_guard_report(
+            simulation, status="error", error=record_error
+          )
+          stats.guard_report.update(
+            stop_reason="fatal_error", formal_metrics_valid=False
+          )
+          stats.record_error = record_error
+          raise EvaluationArtifactError(
+            f"evaluation video recording failed: {record_error}",
+            stats=stats,
+            guard_report=stats.guard_report,
+          )
     finally:
       free_close_force.close()
       stabilizer.close()
 
   wall_elapsed = time.monotonic() - episode_start_wall
-  placed = cylinder_is_in_box(simulation)
+  stats.guard_report = evaluation_guard_report(
+    simulation, status=run_status, error=run_error
+  )
+  placed = (
+    cylinder_is_in_box(simulation)
+    if stats.guard_report["physics_valid"] else None
+  )
+  sim_time = float(simulation.data.time)
+  sim_elapsed = sim_time - episode_start_sim if np.isfinite(sim_time) else None
   print(
     "[summary] "
     f"success={stats.stable_success} placed_in_box={placed} "
     f"requests={stats.requests} "
-    f"action_steps={stats.action_steps} sim_elapsed_s="
-    f"{simulation.data.time - episode_start_sim:.3f} "
+    f"action_steps={stats.action_steps} sim_elapsed_s={sim_elapsed} "
     f"wall_elapsed_s={wall_elapsed:.3f} "
     f"max_object_height={stats.maximum_object_height:.3f} "
     f"arm_ik_failures={stats.arm_ik_failures} "
@@ -1063,6 +1514,14 @@ async def _run(args: argparse.Namespace) -> RolloutStats:
     f"max_hand_error={stats.maximum_hand_error:.4f}m",
     flush=True,
   )
+  if (
+    run_status == "task_not_completed"
+    and args.max_requests
+    and stats.requests >= args.max_requests
+    and sim_elapsed is not None
+    and sim_elapsed < args.max_sim_seconds
+  ):
+    stats.guard_report["stop_reason"] = "request_limit"
   return stats
 
 

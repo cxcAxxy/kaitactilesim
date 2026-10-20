@@ -22,6 +22,13 @@ from kaihand_tactile_env.shared.egosteer_client import (
   EgoSteerPolicyClient,
   ObservationHistory,
 )
+from kaihand_tactile_env.shared.evaluation_guards import (
+  DEFAULT_MAX_SIM_SECONDS,
+  GUARD_MODES,
+  ensure_evaluation_physics,
+  evaluation_guard_report,
+  recover_nonfinite_action,
+)
 from kaihand_tactile_env.shared.evaluation_video import EvaluationVideo
 from kaihand_tactile_env.shared.policy_cameras import (
   image_shape_hwc,
@@ -32,6 +39,10 @@ from kaihand_tactile_env.shared.policy_tasks import (
   create_task_policy_adapter,
 )
 from kaihand_tactile_env.shared.rendering import WorkcellRenderer
+from kaihand_tactile_env.shared.whiteboard_contact_recorder import (
+  finish_whiteboard_contact_recording,
+  start_whiteboard_contact_recording,
+)
 from run_egosteer_policy import (
   RolloutStats,
   _append_model_observations,
@@ -55,12 +66,27 @@ def parse_args(argv=None):
   parser.add_argument("--seed", type=int, required=True)
   parser.add_argument("--execute-steps", type=int, default=5)
   parser.add_argument("--max-requests", type=int, default=0)
-  parser.add_argument("--max-sim-seconds", type=float, default=90.0)
+  parser.add_argument(
+    "--guard-mode", choices=GUARD_MODES, default="observe",
+    help="observe records recoverable task guards; strict stops on the first one",
+  )
+  parser.add_argument(
+    "--max-sim-seconds", type=float, default=DEFAULT_MAX_SIM_SECONDS
+  )
   parser.add_argument("--response-timeout", type=float, default=600.0)
   parser.add_argument("--record", action=argparse.BooleanOptionalAction, default=True)
   parser.add_argument("--record-fps", type=int, choices=(5, 10), default=10)
   parser.add_argument("--reference-dataset", type=Path)
   parser.add_argument("--reference-episode-index", type=int, default=0)
+  parser.add_argument(
+    "--contact-reference-hdf5", type=Path,
+    help="Whiteboard contact metrics: explicit expert Raw HDF5 reference",
+  )
+  parser.add_argument(
+    "--contact-demo-root", type=Path,
+    default=Path("/nas/chenxianchi/datasets/sim/task_demo"),
+    help="Whiteboard contact metrics: directory containing expert demo metadata",
+  )
   parser.add_argument("--review-width", type=int, default=1920)
   parser.add_argument("--review-height", type=int, default=1080)
   parser.add_argument("--review-render-width", type=int, default=640)
@@ -80,9 +106,18 @@ def parse_args(argv=None):
   parser.add_argument("--max-hand-error", type=float, default=0.02)
   parser.add_argument("--strict-ik", action="store_true")
   args = parser.parse_args(argv)
+  if args.contact_reference_hdf5 is not None and args.task not in {
+    "whiteboard-wipe", "whiteboard-wipe-horizontal",
+  }:
+    parser.error("--contact-reference-hdf5 requires a whiteboard task")
   if args.seed < 0 or args.max_requests < 0 or args.execute_steps <= 0:
     parser.error("seed/requests must be nonnegative; execute-steps must be positive")
-  if args.max_sim_seconds <= 0 or args.response_timeout <= 0:
+  if (
+    not np.isfinite(args.max_sim_seconds)
+    or not np.isfinite(args.response_timeout)
+    or args.max_sim_seconds <= 0
+    or args.response_timeout <= 0
+  ):
     parser.error("time limits must be positive")
   if min(
     args.review_width,
@@ -182,24 +217,51 @@ async def run(args) -> dict:
     "control_hz": CONTROL_HZ,
     "replan_period_s": args.execute_steps / CONTROL_HZ,
     "max_sim_seconds": args.max_sim_seconds,
+    "guard_mode": args.guard_mode,
+    "diagnostic_only": args.guard_mode == "observe",
+    "formal_metrics_valid": args.guard_mode == "strict",
+    "diagnostic_reasons": (
+      ["guard_mode_observe"] if args.guard_mode == "observe" else []
+    ),
+    "guard_events": [],
+    "stop_reason": None,
+    "physics_valid": None,
     "expert_used": False,
   }
+  if args.task in {"whiteboard-wipe", "whiteboard-wipe-horizontal"}:
+    report.update(
+      contact_reference_hdf5=(
+        str(args.contact_reference_hdf5.expanduser().absolute())
+        if args.contact_reference_hdf5 is not None else None
+      ),
+      contact_demo_root=str(args.contact_demo_root.expanduser().absolute()),
+    )
   started = time.monotonic()
   stats = RolloutStats()
   adapter = recorder = None
+  contact_recorder = None
   control_tick = 0
+  request_limit_reached = False
   run_error = None
+  last_valid_evaluation = None
   try:
     async with EgoSteerPolicyClient(
-      args.server, response_timeout=args.response_timeout
+      args.server,
+      response_timeout=args.response_timeout,
+      allow_nonfinite_actions=args.guard_mode == "observe",
     ) as client:
       metadata = client.metadata or {}
       horizon = validate_server(metadata, deployment, args.execute_steps)
       report["server_metadata"] = metadata
       report["prediction_horizon"] = horizon
 
-      adapter = create_task_policy_adapter(args.task, args.seed)
+      adapter = create_task_policy_adapter(
+        args.task, args.seed, guard_mode=args.guard_mode
+      )
+      contact_recorder = start_whiteboard_contact_recording(adapter)
       simulation = adapter.simulation
+      ensure_evaluation_physics(simulation)
+      last_valid_evaluation = adapter.report()
       observation = deployment["observation_contract"]
       camera_names = policy_camera_names(observation)
       image_height, image_width, _ = image_shape_hwc(observation)
@@ -234,7 +296,7 @@ async def run(args) -> dict:
         if args.record:
           recorder = EvaluationVideo(
             simulation,
-            output / "review",
+            output,
             fps=args.record_fps,
             width=args.review_width,
             height=args.review_height,
@@ -262,12 +324,16 @@ async def run(args) -> dict:
               "observation_contract": observation,
               "action_representation": deployment["action_representation"],
               "seed": args.seed,
+              "guard_mode": args.guard_mode,
+              "diagnostic_only": report["diagnostic_only"],
+              "formal_metrics_valid": report["formal_metrics_valid"],
             },
           )
           recorder.capture(0, adapter.stage())
 
         while simulation.data.time < args.max_sim_seconds and not adapter.success:
           if args.max_requests and stats.requests >= args.max_requests:
+            request_limit_reached = True
             break
           selected = _select_model_observation(
             camera_names, histories, calibrations
@@ -289,16 +355,21 @@ async def run(args) -> dict:
             jpeg_quality=95,
           )
           stats.requests += 1
-          predicted = _validated_prediction(
-            response.pred_actions,
-            horizon=horizon,
-            action_dim=int(deployment["action_dim"]),
-          )
-          decoded = decode_action_targets(
-            simulation,
-            relative_to_absolute(states[-1], predicted),
-            camera_from_world,
-          )
+          try:
+            predicted = _validated_prediction(
+              response.pred_actions,
+              horizon=horizon,
+              action_dim=int(deployment["action_dim"]),
+            )
+            decoded = decode_action_targets(
+              simulation,
+              relative_to_absolute(states[-1], predicted),
+              camera_from_world,
+            )
+          except Exception as error:
+            if not recover_nonfinite_action(simulation, error):
+              raise
+            predicted = decoded = None
           row = {
             "request": stats.requests,
             "sim_time": float(simulation.data.time),
@@ -306,7 +377,8 @@ async def run(args) -> dict:
             "round_trip_s": time.monotonic() - request_started,
             "server_timing": response.server_timing,
             "right_wrist_targets_world": (
-              decoded.right.site_positions_world.tolist()
+              None if decoded is None
+              else decoded.right.site_positions_world.tolist()
             ),
           }
           log.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -316,26 +388,33 @@ async def run(args) -> dict:
               f"{name}_images": selected.selected_images[name]
               for name in camera_names
             }
-            np.savez_compressed(
-              output / "first_request.npz",
-              states=states,
-              predicted_actions=predicted,
-              **camera_fields,
-            )
+            if predicted is not None:
+              np.savez_compressed(
+                output / "first_request.npz",
+                states=states,
+                predicted_actions=predicted,
+                **camera_fields,
+              )
 
-          for action_index in range(args.execute_steps):
+          action_count = 1 if decoded is None else args.execute_steps
+          for action_index in range(action_count):
             if simulation.data.time >= args.max_sim_seconds or adapter.success:
               break
-            _command_action_step(
-              simulation, decoded, action_index, args, stats
+            if decoded is not None:
+              _command_action_step(
+                simulation, decoded, action_index, args, stats
+              )
+            action_rejected = decoded is None or bool(
+              getattr(simulation, "_evaluation_action_rejected", False)
             )
             control_tick += 1
-            target_time = control_tick / CONTROL_HZ
+            target_time = min(args.max_sim_seconds, control_tick / CONTROL_HZ)
             while simulation.data.time < target_time - 1.0e-12:
               adapter.step()
               if adapter.success:
                 stats.stable_success = True
                 break
+            last_valid_evaluation = adapter.report()
             stats.action_steps += 1
             stats.maximum_object_height = max(
               stats.maximum_object_height,
@@ -346,30 +425,81 @@ async def run(args) -> dict:
             )
             if recorder is not None:
               recorder.capture(control_tick, adapter.stage())
+            if action_rejected:
+              break
 
         report["status"] = "success" if adapter.success else "task_not_completed"
-        report["evaluation"] = adapter.report()
+        last_valid_evaluation = adapter.report()
+        report["evaluation"] = last_valid_evaluation
         stats.stable_success = adapter.success
   except Exception as error:
     run_error = f"{type(error).__name__}: {error}"
     report.update(status="error", error=run_error)
+    if adapter is None:
+      report["stop_reason"] = "fatal_error"
     raise
   finally:
     if adapter is not None:
-      report["sim_seconds"] = float(adapter.simulation.data.time)
-      report["evaluation"] = adapter.report()
-      stats.stable_success = adapter.success
+      guard_report = evaluation_guard_report(
+        adapter.simulation,
+        status=report.get("status"),
+        error=run_error,
+      )
+      sim_seconds = float(adapter.simulation.data.time)
+      report["sim_seconds"] = sim_seconds if np.isfinite(sim_seconds) else None
+      if guard_report["physics_valid"]:
+        last_valid_evaluation = adapter.report()
+      if last_valid_evaluation is not None:
+        last_valid_evaluation = {
+          **last_valid_evaluation,
+          **guard_report,
+        }
+      report["evaluation"] = last_valid_evaluation
+      task_success = bool(
+        last_valid_evaluation and last_valid_evaluation.get("success", False)
+      )
+      report["task_success"] = task_success
+      stats.stable_success = task_success
+      guard_report["formal_metrics_valid"] = bool(
+        report.get("formal_metrics_valid", True)
+        and guard_report["formal_metrics_valid"]
+      )
+      guard_report["diagnostic_only"] = bool(
+        report.get("diagnostic_only", False)
+        or guard_report["diagnostic_only"]
+      )
+      report.update(guard_report)
+      if request_limit_reached and not task_success:
+        report["stop_reason"] = "request_limit"
     report.update(stats=asdict(stats), wall_seconds=time.monotonic() - started)
     if recorder is not None:
+      recording_errors = []
+      if report.get("physics_valid", True):
+        try:
+          recorder.capture(control_tick, adapter.stage(), force=True)
+        except Exception as error:
+          recording_errors.append(f"final capture: {type(error).__name__}: {error}")
       try:
-        recorder.capture(control_tick, adapter.stage(), force=True)
         report["video"] = recorder.finish(
-          status=report.get("status", "error"),
+          status="error" if recording_errors else report.get("status", "error"),
           evaluation=report.get("evaluation"),
-          error=run_error,
+          error=run_error or (recording_errors[0] if recording_errors else None),
         )
       except Exception as error:
-        report["record_error"] = f"{type(error).__name__}: {error}"
+        recording_errors.append(f"finish: {type(error).__name__}: {error}")
+      if recording_errors:
+        report["record_error"] = "; ".join(recording_errors)
+        report.update(
+          status="error",
+          stop_reason="fatal_error",
+          formal_metrics_valid=False,
+        )
+    if contact_recorder is not None:
+      report["contact_intensity"] = finish_whiteboard_contact_recording(
+        contact_recorder, output, report,
+        reference_hdf5=args.contact_reference_hdf5,
+        demo_root=args.contact_demo_root,
+      )
     (output / "summary.json").write_text(
       json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )

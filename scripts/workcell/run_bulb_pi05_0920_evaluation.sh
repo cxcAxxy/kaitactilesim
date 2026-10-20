@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SIM="${SIM_CODE_DIR:-$(cd -- "$SCRIPT_DIR/../.." && pwd)}"
 OPENPI="${OPENPI_CODE_DIR:-/cpfs_infra/user/chenxianchi/code/openpi}"
+TASK="${SHARED_PI05_TASK:-bulb-screw}"
 CHECKPOINT_ROOT="${BULB_PI05_CHECKPOINT_ROOT:-/nas/chenxianchi/datasets/sim/bulb-screw/pi05/0920_200/checkpoints/pi05_kaihand/bulb-scew_bs128_skip7}"
 DEFAULT_REFERENCE_DATASET="${CHECKPOINT_ROOT%%/checkpoints/*}"
 REFERENCE_DATASET="${BULB_PI05_REFERENCE_DATASET:-$DEFAULT_REFERENCE_DATASET}"
@@ -12,6 +13,9 @@ PORT="${BULB_PI05_PORT:-18783}"
 GPU="${BULB_PI05_GPU:-0}"
 RUN_ROOT="${BULB_PI05_OUTPUT_DIR:-/cpfs_infra/user/chenxianchi/evaluations/bulb_pi05_0920_N20_video20_$(date +%Y%m%d_%H%M%S)_$$}"
 SMOKE_SECONDS="${BULB_PI05_SMOKE_SECONDS:-2}"
+EXECUTE_STEPS="${SHARED_PI05_EXECUTE_STEPS:-horizon}"
+DIAGNOSTIC_RELAX_WHITEBOARD_CONTACT_GUARDS="${SHARED_PI05_DIAGNOSTIC_RELAX_WHITEBOARD_CONTACT_GUARDS:-0}"
+ALLOW_LEGACY_UNBOUND_DIAGNOSTIC="${SHARED_PI05_ALLOW_LEGACY_UNBOUND_DIAGNOSTIC:-0}"
 MODEL_PYTHON="$OPENPI/.venv-pi05/bin/python"
 SIM_PYTHON="$SIM/.pixi/envs/default/bin/python"
 SERVER_PID=""
@@ -30,6 +34,12 @@ Optional environment variables:
   BULB_PI05_REFERENCE_DATASET matching LeRobot dataset root
                               (default: prefix of checkpoint root before /checkpoints/)
   BULB_PI05_SMOKE_SECONDS    smoke-test simulation seconds (default: 2)
+  SHARED_PI05_EXECUTE_STEPS  actions per inference request (default: horizon)
+  SHARED_PI05_DIAGNOSTIC_RELAX_WHITEBOARD_CONTACT_GUARDS
+                             whiteboard-only diagnostic mode (0 or 1; default: 0)
+  SHARED_PI05_ALLOW_LEGACY_UNBOUND_DIAGNOSTIC
+                             allow old checkpoints without bound training
+                             provenance, permanently diagnostic-only (0 or 1)
 EOF
 }
 
@@ -61,6 +71,25 @@ fi
 REFERENCE_DATASET="$(cd -- "$REFERENCE_DATASET" && pwd -P)"
 if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   echo "BULB_PI05_PORT must be in 1..65535" >&2
+  exit 2
+fi
+if [[ "$EXECUTE_STEPS" != "horizon" ]] && ! [[ "$EXECUTE_STEPS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "SHARED_PI05_EXECUTE_STEPS must be 'horizon' or a positive integer" >&2
+  exit 2
+fi
+if [[ "$DIAGNOSTIC_RELAX_WHITEBOARD_CONTACT_GUARDS" != "0" \
+      && "$DIAGNOSTIC_RELAX_WHITEBOARD_CONTACT_GUARDS" != "1" ]]; then
+  echo "SHARED_PI05_DIAGNOSTIC_RELAX_WHITEBOARD_CONTACT_GUARDS must be 0 or 1" >&2
+  exit 2
+fi
+if [[ "$ALLOW_LEGACY_UNBOUND_DIAGNOSTIC" != "0" \
+      && "$ALLOW_LEGACY_UNBOUND_DIAGNOSTIC" != "1" ]]; then
+  echo "SHARED_PI05_ALLOW_LEGACY_UNBOUND_DIAGNOSTIC must be 0 or 1" >&2
+  exit 2
+fi
+if [[ "$DIAGNOSTIC_RELAX_WHITEBOARD_CONTACT_GUARDS" == "1" \
+      && "$TASK" != "whiteboard-wipe" ]]; then
+  echo "Whiteboard contact-guard relaxation requires SHARED_PI05_TASK=whiteboard-wipe" >&2
   exit 2
 fi
 for step in "${STEPS[@]}"; do
@@ -98,7 +127,9 @@ wait_for_server() {
     fi
     # Reading the server's own readiness log avoids opening an invalid raw TCP
     # connection to the WebSocket endpoint.
-    if grep -q "server listening" "$log"; then
+    if grep -q "WARMUP_OK" "$log" && grep -q "server listening" "$log"; then
+      grep "WARMUP_OK" "$log" | tail -n 1 >&2
+      echo "SERVER_READY port=$PORT" >&2
       ready=1
       break
     fi
@@ -106,7 +137,7 @@ wait_for_server() {
   done
   if [[ "$ready" != 1 ]]; then
     tail -n 80 "$log" >&2
-    echo "Model server startup exceeded 600 seconds" >&2
+    echo "Model warmup and server startup exceeded 600 seconds" >&2
     return 1
   fi
 }
@@ -114,15 +145,19 @@ wait_for_server() {
 evaluate() {
   local output=$1
   shift
+  local runner_args=(--server "ws://127.0.0.1:$PORT")
+  if [[ "$DIAGNOSTIC_RELAX_WHITEBOARD_CONTACT_GUARDS" == "1" ]]; then
+    runner_args+=(--diagnostic-relax-whiteboard-contact-guards)
+  fi
   "$SIM_PYTHON" "$SIM/scripts/evaluate/evaluate.py" \
-    --task bulb-screw --model-family pi05 \
+    --task "$TASK" --model-family pi05 \
     --deployment-manifest "$MANIFEST" \
     --output-dir "$output" \
     --cameras head right_wrist \
     --reference-dataset "$REFERENCE_DATASET" \
     --reference-episode-index 0 \
     "$@" \
-    -- --server "ws://127.0.0.1:$PORT"
+    -- "${runner_args[@]}"
 }
 
 check_smoke() {
@@ -174,14 +209,24 @@ for STEP in "${STEPS[@]}"; do
   MANIFEST="$DEPLOYMENT/deployment_manifest.json"
   SERVER_LOG="$RUN_ROOT/step${STEP}_server.log"
   SMOKE="$RUN_ROOT/step${STEP}_smoke"
-  FORMAL="$RUN_ROOT/step${STEP}_N20_video20"
+  if [[ "$ALLOW_LEGACY_UNBOUND_DIAGNOSTIC" == "1" ]]; then
+    RESULT="$RUN_ROOT/step${STEP}_diagnostic_N20_video20"
+  else
+    RESULT="$RUN_ROOT/step${STEP}_N20_video20"
+  fi
 
   echo "PREPARE step=$STEP" >&2
   (
     cd "$OPENPI"
-    "$MODEL_PYTHON" "$SIM/scripts/workcell/prepare_shared_task_pi05_deployment.py" \
-      --task bulb-screw --checkpoint "$CHECKPOINT_ROOT/$STEP" \
-      --openpi-root "$OPENPI" --hash-workers 4 --output-dir "$DEPLOYMENT"
+    prepare_args=()
+    if [[ "$ALLOW_LEGACY_UNBOUND_DIAGNOSTIC" == "1" ]]; then
+      prepare_args+=(--allow-legacy-unbound-diagnostic)
+    fi
+    env PYTHONPATH="$SIM/src${PYTHONPATH:+:$PYTHONPATH}" \
+      "$MODEL_PYTHON" "$SIM/scripts/workcell/prepare_shared_task_pi05_deployment.py" \
+      --task "$TASK" --checkpoint "$CHECKPOINT_ROOT/$STEP" \
+      --openpi-root "$OPENPI" --hash-workers 4 --output-dir "$DEPLOYMENT" \
+      "${prepare_args[@]}"
   )
 
   echo "START_SERVER step=$STEP port=$PORT gpu=$GPU" >&2
@@ -197,18 +242,22 @@ for STEP in "${STEPS[@]}"; do
 
   echo "SMOKE step=$STEP seconds=$SMOKE_SECONDS" >&2
   if ! evaluate "$SMOKE" \
-    --num-trials 1 --video-count 1 --execute-steps horizon \
+    --num-trials 1 --video-count 1 --execute-steps "$EXECUTE_STEPS" \
     --max-sim-seconds "$SMOKE_SECONDS" --record-fps 10; then
     tail -n 100 "$SMOKE/seed_000.log" >&2 || true
     exit 1
   fi
   check_smoke "$SMOKE" "$REFERENCE_DATASET"
 
-  echo "FORMAL step=$STEP N=20 videos=20 execute_steps=horizon" >&2
-  if ! evaluate "$FORMAL" \
-    --num-trials 20 --video-count 20 --execute-steps horizon \
+  if [[ "$ALLOW_LEGACY_UNBOUND_DIAGNOSTIC" == "1" ]]; then
+    echo "DIAGNOSTIC step=$STEP N=20 videos=20 execute_steps=$EXECUTE_STEPS" >&2
+  else
+    echo "FORMAL step=$STEP N=20 videos=20 execute_steps=$EXECUTE_STEPS" >&2
+  fi
+  if ! evaluate "$RESULT" \
+    --num-trials 20 --video-count 20 --execute-steps "$EXECUTE_STEPS" \
     --record-fps 10; then
-    echo "Formal evaluation failed; inspect $FORMAL and $SERVER_LOG" >&2
+    echo "Evaluation failed; inspect $RESULT and $SERVER_LOG" >&2
     exit 1
   fi
   stop_server

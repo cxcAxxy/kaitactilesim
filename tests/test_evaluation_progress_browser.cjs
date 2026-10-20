@@ -1,0 +1,64 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const {chromium}=require(process.env.KAI_PLAYWRIGHT_MODULE||'playwright');
+(async()=>{
+  const url=process.argv[2],output=process.argv[3];fs.mkdirSync(output,{recursive:true});
+  const browser=await chromium.launch({executablePath:process.env.KAI_CHROMIUM_EXECUTABLE,headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
+  try{
+    const page=await browser.newPage({viewport:{width:1580,height:1100}}),errors=[];
+    page.on('pageerror',error=>errors.push(error.message));
+    await page.goto(url);await page.waitForSelector('.episode-pane');
+    assert.equal(await page.locator('.episode-pane').count(),2);
+    const data=await page.evaluate(()=>JSON.parse(document.getElementById('progress-data').textContent));
+    assert.equal(data.episodes.length,3);
+    assert(data.episodes.filter(e=>e.role==='policy').every(e=>e.outcome==='fail'));
+    assert.equal(data.comparison.quantitative_comparison,'unverified');
+    assert((await page.locator('#baseline-link').getAttribute('href')).includes('suite_v2_h50_20261013_r2'));
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.screenshot({path:path.join(output,'desktop.png')});
+    await page.locator('[data-bin="4"]').click();
+    assert.match(await page.locator('.policy .bin-result').textContent(),/没有该进度区间的观测/);
+    assert.match(await page.locator('.policy .stats').textContent(),/—/);
+    assert(await page.locator('.policy .seek-row button').isDisabled());
+    assert(!(await page.locator('.expert .seek-row button').isDisabled()));
+    await page.locator('.expert .seek-row button').click();
+    const expertBefore=await page.locator('.expert input[type=range]').inputValue();
+    assert(Number(expertBefore)>0);
+    await page.locator('[data-bin="1"]').click();
+    assert.equal(await page.locator('.expert input[type=range]').inputValue(),expertBefore,'bin change preserves independent cursor');
+    await page.waitForFunction(()=>document.querySelector('.policy video').readyState>=1);
+    await page.locator('.policy .seek-row button').click();
+    assert.equal(await page.locator('.expert input[type=range]').inputValue(),expertBefore,'policy seek must not seek expert');
+    assert(Number(await page.locator('.policy input[type=range]').inputValue())>0);
+    await page.waitForFunction(()=>!document.querySelector('.policy video').seeking);
+    const mapping=await page.evaluate(()=>{
+      const data=JSON.parse(document.getElementById('progress-data').textContent);
+      const id=document.querySelector('.policy').dataset.episodeId,e=data.episodes.find(e=>e.id===id);
+      const index=Number(document.querySelector('.policy input[type=range]').value),time=e.points[index].time_s;
+      let expected=null;e.media.time_s.forEach((t,i)=>{if(t<=time+1e-8)expected=e.media.video_time_s[i];});
+      return {expected,actual:document.querySelector('.policy video').currentTime};
+    });
+    assert(Math.abs(mapping.expected-mapping.actual)<.001);
+    await page.locator('#comparison-panes').screenshot({path:path.join(output,'progress-comparison.png')});
+    const modelBefore=await page.locator('.policy input[type=range]').inputValue();
+    await page.locator('#signal-select').selectOption('hand_normal_sum');
+    assert.equal(await page.locator('.policy input[type=range]').inputValue(),modelBefore);
+    assert.equal(await page.locator('.expert input[type=range]').inputValue(),expertBefore);
+    assert.match(await page.locator('.policy .chart-title').textContent(),/五指/);
+    const zeroIndex=data.episodes.filter(e=>e.role==='policy').findIndex(e=>e.final_progress===0);
+    await page.locator('#policy-select').selectOption(String(zeroIndex));
+    assert.match(await page.locator('.policy .progress-readout').textContent(),/0\.0%/);
+    assert.match(await page.locator('.policy .bin-result').textContent(),/没有该进度区间的观测/);
+    assert.match(await page.locator('.policy .outcome').textContent(),/失败/);
+    await page.setViewportSize({width:390,height:844});
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'mobile overflow');
+    await page.screenshot({path:path.join(output,'mobile.png'),fullPage:true});
+    // The old entry must still serve unchanged instead of requiring restoration.
+    await page.locator('#baseline-link').click();await page.waitForSelector('.hub-horizon-notice');
+    assert.match(await page.locator('.hub-horizon-notice').textContent(),/H50-only/);
+    assert.deepEqual(errors,[]);
+    console.log(JSON.stringify({passed:true,checks:['real policy and reference records','failure/unknown retention','unobserved bins not zero','independent native cursors','video explicit mapping','signal toggle','desktop/mobile','stable rollback link','no browser errors']}));
+  }finally{await browser.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

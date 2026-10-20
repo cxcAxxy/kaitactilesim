@@ -21,6 +21,7 @@ from .config import (
   SCENE_OBJECTS,
   SIDES,
   default_model_path,
+  legacy_model_path,
   task_config,
 )
 from .tactile import compile_model_with_genesis_probes
@@ -146,6 +147,7 @@ class ArmHandSimulation:
     if scene not in SCENE_NAMES:
       raise ValueError(f"scene must be one of {SCENE_NAMES}, got {scene!r}")
     self.scene = scene
+    self._compiled_scene = scene
     self.model_path = (
       Path(model_path or default_model_path(scene)).expanduser().resolve()
     )
@@ -402,20 +404,29 @@ class ArmHandSimulation:
 
   def _configure_scene_geometry(self) -> None:
     """Show and enable only the collision geometry for ``self.scene``."""
-    for scene, names in self._scene_geom_names.items():
-      visible = scene == self.scene
-      for name in names:
-        geom_id = self.model.geom(name).id
-        contype, conaffinity, rgba = self._scene_geom_defaults[geom_id]
-        self.model.geom_contype[geom_id] = contype if visible else 0
-        self.model.geom_conaffinity[geom_id] = conaffinity if visible else 0
-        self.model.geom_rgba[geom_id] = rgba if visible else (0.0, 0.0, 0.0, 0.0)
+    # Variants share geometry names. An inactive variant must not disable the
+    # active scene's board/plug/bulb when walking the registry.
+    active = set(self._scene_geom_names[self.scene])
+    for name in {name for names in self._scene_geom_names.values() for name in names}:
+      geom_id = self.model.geom(name).id
+      visible = name in active
+      contype, conaffinity, rgba = self._scene_geom_defaults[geom_id]
+      self.model.geom_contype[geom_id] = contype if visible else 0
+      self.model.geom_conaffinity[geom_id] = conaffinity if visible else 0
+      self.model.geom_rgba[geom_id] = rgba if visible else (0.0, 0.0, 0.0, 0.0)
 
   def set_scene(self, scene: str) -> None:
     """Retain legacy switching; independent scenes require a new instance."""
     if scene not in SCENE_NAMES:
       raise ValueError(f"scene must be one of {SCENE_NAMES}, got {scene!r}")
-    if not set(SCENE_OBJECTS[scene]).issubset(self.model_object_names):
+    legacy_switch = (
+      self.model_path == legacy_model_path().resolve()
+      and scene in {"pick-place", "poker-draw"}
+    )
+    if (
+      scene != self._compiled_scene and not legacy_switch
+      or not set(SCENE_OBJECTS[scene]).issubset(self.model_object_names)
+    ):
       raise ValueError(
         "independent task models cannot switch scene in place; "
         f"create ArmHandSimulation(scene={scene!r}) instead"
@@ -822,19 +833,31 @@ class ArmHandSimulation:
     side: str,
     target_positions: Iterable[Iterable[float]],
     *,
+    target_rotations: Iterable[Iterable[Iterable[float]]] | None = None,
     seed: Iterable[float] | None = None,
     arm_joint_positions: Iterable[float] | None = None,
     max_iterations: int = 100,
     position_tolerance: float = 1.5e-3,
+    position_weights: float | Iterable[float] = 1.0,
+    orientation_weights: float | Iterable[float] = 0.01,
     posture_weight: float = 0.01,
     damping: float = 0.003,
     step_limit: float = 0.2,
   ) -> HandIkResult:
-    """Solve one hand's 20 actuators for five world-frame fingertip targets.
+    """Solve one hand's 20 actuators for world-frame fingertip targets.
 
     ``target_positions`` must be shaped ``(5, 3)`` and ordered thumb, index,
-    middle, ring, pinky.  By default the kinematics use the arm's current
-    Cartesian IK goal, which makes the usual call sequence
+    middle, ring, pinky.  Optional ``target_rotations`` are world-from-site
+    rotation matrices shaped ``(5, 3, 3)`` in the same order.  Rotations are
+    a weighted soft objective: they select a distal-link posture without
+    making success depend on satisfying a generally over-constrained 6-DoF
+    pose for every fingertip.  ``orientation_weights`` scale radians into the
+    position residual's metre-like units and may be a scalar or one value per
+    finger.  ``position_weights`` likewise scale each finger's three position
+    residuals, but all position targets must retain a positive weight.
+
+    By default the kinematics use the arm's current Cartesian IK goal, which
+    makes the usual call sequence
     ``set_pose_target(...); set_fingertip_targets(...)`` consistent even
     before the simulated arm has moved.  ``arm_joint_positions`` can override
     that seven-joint posture explicitly.
@@ -858,6 +881,60 @@ class ArmHandSimulation:
       raise ValueError(
         "target_positions must be a finite (5, 3) array in canonical finger order"
       )
+
+    rotations: np.ndarray | None
+    if target_rotations is None:
+      rotations = None
+    else:
+      try:
+        rotations = np.asarray(tuple(target_rotations), dtype=float)
+      except (TypeError, ValueError) as error:
+        raise ValueError(
+          "target_rotations must be five finite 3x3 rotation matrices"
+        ) from error
+      if rotations.shape != (5, 3, 3) or not np.all(np.isfinite(rotations)):
+        raise ValueError(
+          "target_rotations must be five finite 3x3 rotation matrices"
+        )
+      identity = np.eye(3)
+      gram = np.swapaxes(rotations, -1, -2) @ rotations
+      determinants = np.linalg.det(rotations)
+      if not np.allclose(gram, identity, atol=5.0e-4, rtol=0.0) or not np.allclose(
+        determinants, 1.0, atol=5.0e-4, rtol=0.0
+      ):
+        raise ValueError(
+          "target_rotations must be five finite 3x3 rotation matrices"
+        )
+
+    def finger_weights(
+      values: float | Iterable[float], name: str, *, strictly_positive: bool
+    ) -> np.ndarray:
+      try:
+        if np.isscalar(values):
+          weights = np.full(5, float(values), dtype=float)
+        else:
+          weights = np.asarray(tuple(values), dtype=float)
+      except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a finite scalar or five values") from error
+      invalid = weights.shape != (5,) or not np.all(np.isfinite(weights))
+      if strictly_positive:
+        invalid = invalid or bool(np.any(weights <= 0.0))
+      else:
+        invalid = invalid or bool(np.any(weights < 0.0))
+      if invalid:
+        qualifier = "positive " if strictly_positive else "non-negative "
+        raise ValueError(
+          f"{name} must be a finite {qualifier}scalar or five values"
+        )
+      return weights
+
+    position_scales = finger_weights(
+      position_weights, "position_weights", strictly_positive=True
+    )
+    orientation_scales = finger_weights(
+      orientation_weights, "orientation_weights", strictly_positive=False
+    )
+    use_orientation = rotations is not None and bool(np.any(orientation_scales > 0.0))
     if max_iterations <= 0:
       raise ValueError("max_iterations must be positive")
     if position_tolerance <= 0.0 or not np.isfinite(position_tolerance):
@@ -899,6 +976,27 @@ class ArmHandSimulation:
     q_reference = np.clip(q_reference, lower, upper)
     q = q_reference.copy()
 
+    # Establish the position-feasible branch first, then use the soft pose
+    # rows to resolve its redundant distal posture.  Besides preserving the
+    # hard position-success semantics, this avoids a poor orientation local
+    # minimum when the supplied seed is far from a closing grasp.
+    initialization_iterations = 0
+    if use_orientation:
+      position_initialization = self.solve_hand_ik(
+        side,
+        targets,
+        seed=q_reference,
+        arm_joint_positions=arm_q,
+        max_iterations=max_iterations,
+        position_tolerance=position_tolerance,
+        position_weights=position_scales,
+        posture_weight=posture_weight,
+        damping=damping,
+        step_limit=step_limit,
+      )
+      q = position_initialization.joint_positions.copy()
+      initialization_iterations = position_initialization.iterations
+
     np.copyto(self.ik_data.qpos, self.data.qpos)
     np.copyto(self.ik_data.qvel, self.data.qvel)
     self.ik_data.qpos[self._arm_qpos[side]] = arm_q
@@ -907,7 +1005,9 @@ class ArmHandSimulation:
     thumb_joint6_dof = self._thumb_joint6_dof[side]
     site_ids = self._fingertip_site_ids[side]
 
-    def evaluate(candidate: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate(
+      candidate: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
       self.ik_data.qpos[qpos_addresses] = candidate
       # mj_forward does not project equality constraints onto qpos.  Enforce
       # the model's thumb_joint6 == thumb_joint5 relation explicitly so FK and
@@ -915,72 +1015,172 @@ class ArmHandSimulation:
       self.ik_data.qpos[thumb_joint6_qpos] = candidate[thumb_joint5_index]
       mujoco.mj_forward(self.model, self.ik_data)
       errors = targets - self.ik_data.site_xpos[site_ids]
-      return errors, np.linalg.norm(errors, axis=1)
+      error_norms = np.linalg.norm(errors, axis=1)
+      orientation_errors = np.zeros((5, 3), dtype=float)
+      orientation_error_norms = np.zeros(5, dtype=float)
+      if use_orientation:
+        for finger_index, site_id in enumerate(site_ids):
+          current_rotation = self.ik_data.site_xmat[site_id].reshape(3, 3)
+          orientation_errors[finger_index] = _rotation_vector_world(
+            rotations[finger_index], current_rotation
+          )
+        orientation_error_norms = np.linalg.norm(orientation_errors, axis=1)
+      weighted_position_errors = position_scales[:, None] * errors
+      task_cost = float(np.sum(weighted_position_errors**2))
+      if use_orientation:
+        weighted_orientation_errors = orientation_scales[:, None] * orientation_errors
+        task_cost += float(np.sum(weighted_orientation_errors**2))
+      return (
+        errors,
+        error_norms,
+        orientation_errors,
+        orientation_error_norms,
+        task_cost,
+      )
 
-    errors, error_norms = evaluate(q)
+    (
+      errors,
+      error_norms,
+      orientation_errors,
+      orientation_error_norms,
+      task_cost,
+    ) = evaluate(q)
+
+    def result_key(
+      position_errors: np.ndarray, norms: np.ndarray, cost: float
+    ) -> tuple[float, float, float]:
+      maximum_error = float(np.max(norms))
+      if use_orientation:
+        # Position remains the hard acceptance condition.  Once it is met,
+        # rank equivalent IK branches by the weighted pose objective.
+        return (
+          max(0.0, maximum_error - position_tolerance),
+          cost,
+          maximum_error,
+        )
+      return (maximum_error, float(np.sum(position_errors**2)), cost)
+
     best_q = q.copy()
     best_error_norms = error_norms.copy()
-    best_score = (float(np.max(error_norms)), float(np.sum(errors * errors)))
-    if best_score[0] <= position_tolerance:
+    best_key = result_key(errors, error_norms, task_cost)
+    if float(np.max(error_norms)) <= position_tolerance and not use_orientation:
       return HandIkResult(
         True,
         joint_names,
         q.copy(),
         error_norms.copy(),
-        best_score[0],
+        float(np.max(error_norms)),
         0,
       )
 
     jacobian_position = np.zeros((3, self.model.nv))
-    jacobian = np.zeros((15, 20))
-    identity_task = np.eye(15)
+    jacobian_rotation = np.zeros((3, self.model.nv))
+    task_dimensions = 30 if use_orientation else 15
+    jacobian = np.zeros((task_dimensions, 20))
+    identity_task = np.eye(task_dimensions)
     identity_joint = np.eye(20)
-    completed_iterations = 0
+    completed_iterations = initialization_iterations
     stalled_iterations = 0
 
     for iteration in range(1, max_iterations + 1):
-      completed_iterations = iteration
+      completed_iterations = initialization_iterations + iteration
       jacobian.fill(0.0)
       for finger_index, site_id in enumerate(site_ids):
         jacobian_position.fill(0.0)
+        jacobian_rotation.fill(0.0)
         mujoco.mj_jacSite(
           self.model,
           self.ik_data,
           jacobian_position,
-          None,
+          jacobian_rotation if use_orientation else None,
           int(site_id),
         )
         row = slice(3 * finger_index, 3 * finger_index + 3)
-        jacobian[row] = jacobian_position[:, dof_addresses]
+        jacobian[row] = (
+          position_scales[finger_index] * jacobian_position[:, dof_addresses]
+        )
         if finger_index == 0:
           # joint5 rotates both its own link and, through the equality, joint6.
           # The reduced-coordinate derivative is therefore the sum of the two
           # unconstrained MuJoCo Jacobian columns.
-          jacobian[row, thumb_joint5_index] += jacobian_position[:, thumb_joint6_dof]
+          jacobian[row, thumb_joint5_index] += (
+            position_scales[finger_index]
+            * jacobian_position[:, thumb_joint6_dof]
+          )
+        if use_orientation:
+          rotation_row = slice(15 + 3 * finger_index, 18 + 3 * finger_index)
+          jacobian[rotation_row] = (
+            orientation_scales[finger_index]
+            * jacobian_rotation[:, dof_addresses]
+          )
+          if finger_index == 0:
+            # The equality-reduced rotational derivative must include the
+            # passive distal joint for exactly the same reason as position.
+            jacobian[rotation_row, thumb_joint5_index] += (
+              orientation_scales[finger_index]
+              * jacobian_rotation[:, thumb_joint6_dof]
+            )
 
-      task_matrix = jacobian @ jacobian.T + (damping**2) * identity_task
       try:
-        jacobian_pinv = np.linalg.solve(task_matrix, jacobian).T
+        if use_orientation:
+          # With pose rows there are more residuals than hand DoFs.  Solving
+          # in joint space avoids inverting a rank-deficient 30x30 task-space
+          # matrix and preserves the independent per-finger block structure.
+          jacobian_pinv = np.linalg.solve(
+            jacobian.T @ jacobian + (damping**2) * identity_joint,
+            jacobian.T,
+          )
+        else:
+          task_matrix = jacobian @ jacobian.T + (damping**2) * identity_task
+          jacobian_pinv = np.linalg.solve(task_matrix, jacobian).T
       except np.linalg.LinAlgError:
         break
-      nullspace = identity_joint - jacobian_pinv @ jacobian
-      delta_q = jacobian_pinv @ errors.reshape(-1)
+      if use_orientation:
+        # A damped pseudo-inverse leaves a small artificial "null space" even
+        # when the pose rows fully determine a finger.  Feeding the continuity
+        # objective through that leakage biases the solution away from an
+        # otherwise reachable pose.  Use an SVD projector for posture only;
+        # the task update itself remains damped for robustness.
+        nullspace = identity_joint - np.linalg.pinv(
+          jacobian, rcond=1.0e-6
+        ) @ jacobian
+      else:
+        nullspace = identity_joint - jacobian_pinv @ jacobian
+      weighted_errors = position_scales[:, None] * errors
+      if use_orientation:
+        weighted_errors = np.concatenate(
+          (
+            weighted_errors.reshape(-1),
+            (orientation_scales[:, None] * orientation_errors).reshape(-1),
+          )
+        )
+      else:
+        weighted_errors = weighted_errors.reshape(-1)
+      delta_q = jacobian_pinv @ weighted_errors
       delta_q += posture_weight * nullspace @ (q_reference - q)
       delta_q = np.clip(delta_q, -step_limit, step_limit)
 
-      current_cost = float(np.sum(errors * errors))
+      current_cost = task_cost
       accepted = False
       # Backtracking keeps the DLS update stable around singular/limited
       # postures and gives a useful best-effort result for unreachable policy
       # predictions instead of allowing an oscillating final iterate.
       for scale in (1.0, 0.5, 0.25, 0.125, 0.0625):
         candidate = np.clip(q + scale * delta_q, lower, upper)
-        candidate_errors, candidate_norms = evaluate(candidate)
-        candidate_cost = float(np.sum(candidate_errors * candidate_errors))
+        (
+          candidate_errors,
+          candidate_norms,
+          candidate_orientation_errors,
+          candidate_orientation_norms,
+          candidate_cost,
+        ) = evaluate(candidate)
         if candidate_cost <= current_cost + 1.0e-14:
           q = candidate
           errors = candidate_errors
           error_norms = candidate_norms
+          orientation_errors = candidate_orientation_errors
+          orientation_error_norms = candidate_orientation_norms
+          task_cost = candidate_cost
           accepted = True
           break
       if not accepted:
@@ -994,19 +1194,36 @@ class ArmHandSimulation:
       else:
         stalled_iterations = 0
 
-      score = (float(np.max(error_norms)), float(np.sum(errors * errors)))
-      if score < best_score:
-        best_score = score
+      key = result_key(errors, error_norms, task_cost)
+      if key < best_key:
+        best_key = key
         best_q = q.copy()
         best_error_norms = error_norms.copy()
-      if score[0] <= position_tolerance:
+      maximum_error = float(np.max(error_norms))
+      if maximum_error <= position_tolerance and not use_orientation:
         return HandIkResult(
           True,
           joint_names,
           q.copy(),
           error_norms.copy(),
-          score[0],
-          iteration,
+          maximum_error,
+          completed_iterations,
+        )
+      if (
+        maximum_error <= position_tolerance
+        and use_orientation
+        and float(
+          np.max(orientation_scales * orientation_error_norms, initial=0.0)
+        )
+        <= 1.0e-7
+      ):
+        return HandIkResult(
+          True,
+          joint_names,
+          q.copy(),
+          error_norms.copy(),
+          maximum_error,
+          completed_iterations,
         )
       if stalled_iterations >= 8:
         break
@@ -1026,44 +1243,82 @@ class ArmHandSimulation:
         thumb_lower,
         thumb_upper,
       )
-      thumb_identity_task = np.eye(3)
+      use_thumb_orientation = use_orientation and orientation_scales[0] > 0.0
+      thumb_task_dimensions = 6 if use_thumb_orientation else 3
+      thumb_identity_task = np.eye(thumb_task_dimensions)
       thumb_identity_joint = np.eye(4)
       fallback_iterations = max(12, min(60, max_iterations // 2))
 
       for thumb_seed in (thumb_midpoint, thumb_power_grasp):
         q = best_q.copy()
         q[thumb_indices] = thumb_seed
-        errors, error_norms = evaluate(q)
+        (
+          errors,
+          error_norms,
+          orientation_errors,
+          orientation_error_norms,
+          task_cost,
+        ) = evaluate(q)
         for _ in range(fallback_iterations):
           completed_iterations += 1
           jacobian_position.fill(0.0)
+          jacobian_rotation.fill(0.0)
           mujoco.mj_jacSite(
             self.model,
             self.ik_data,
             jacobian_position,
-            None,
+            jacobian_rotation if use_thumb_orientation else None,
             int(site_ids[0]),
           )
-          thumb_jacobian = jacobian_position[:, dof_addresses[thumb_indices]]
-          thumb_jacobian[:, thumb_joint5_index] += jacobian_position[
-            :, thumb_joint6_dof
-          ]
-          thumb_task_matrix = (
-            thumb_jacobian @ thumb_jacobian.T + (damping**2) * thumb_identity_task
+          thumb_jacobian = np.zeros((thumb_task_dimensions, 4), dtype=float)
+          thumb_jacobian[:3] = (
+            position_scales[0]
+            * jacobian_position[:, dof_addresses[thumb_indices]]
           )
+          thumb_jacobian[:3, thumb_joint5_index] += (
+            position_scales[0] * jacobian_position[:, thumb_joint6_dof]
+          )
+          thumb_error = position_scales[0] * errors[0]
+          if use_thumb_orientation:
+            thumb_jacobian[3:] = (
+              orientation_scales[0]
+              * jacobian_rotation[:, dof_addresses[thumb_indices]]
+            )
+            thumb_jacobian[3:, thumb_joint5_index] += (
+              orientation_scales[0] * jacobian_rotation[:, thumb_joint6_dof]
+            )
+            thumb_error = np.concatenate(
+              (thumb_error, orientation_scales[0] * orientation_errors[0])
+            )
           try:
-            thumb_pinv = np.linalg.solve(thumb_task_matrix, thumb_jacobian).T
+            if use_thumb_orientation:
+              thumb_pinv = np.linalg.solve(
+                thumb_jacobian.T @ thumb_jacobian
+                + (damping**2) * thumb_identity_joint,
+                thumb_jacobian.T,
+              )
+            else:
+              thumb_task_matrix = (
+                thumb_jacobian @ thumb_jacobian.T
+                + (damping**2) * thumb_identity_task
+              )
+              thumb_pinv = np.linalg.solve(thumb_task_matrix, thumb_jacobian).T
           except np.linalg.LinAlgError:
             break
-          thumb_nullspace = thumb_identity_joint - thumb_pinv @ thumb_jacobian
-          thumb_delta = thumb_pinv @ errors[0]
+          if use_thumb_orientation:
+            thumb_nullspace = thumb_identity_joint - np.linalg.pinv(
+              thumb_jacobian, rcond=1.0e-6
+            ) @ thumb_jacobian
+          else:
+            thumb_nullspace = thumb_identity_joint - thumb_pinv @ thumb_jacobian
+          thumb_delta = thumb_pinv @ thumb_error
           thumb_delta += (
             posture_weight
             * thumb_nullspace
             @ (q_reference[thumb_indices] - q[thumb_indices])
           )
           thumb_delta = np.clip(thumb_delta, -step_limit, step_limit)
-          current_thumb_cost = float(errors[0] @ errors[0])
+          current_thumb_cost = float(thumb_error @ thumb_error)
           accepted = False
           for scale in (1.0, 0.5, 0.25, 0.125, 0.0625):
             candidate = q.copy()
@@ -1072,39 +1327,60 @@ class ArmHandSimulation:
               thumb_lower,
               thumb_upper,
             )
-            candidate_errors, candidate_norms = evaluate(candidate)
-            candidate_thumb_cost = float(candidate_errors[0] @ candidate_errors[0])
+            (
+              candidate_errors,
+              candidate_norms,
+              candidate_orientation_errors,
+              candidate_orientation_norms,
+              candidate_cost,
+            ) = evaluate(candidate)
+            candidate_thumb_error = position_scales[0] * candidate_errors[0]
+            if use_thumb_orientation:
+              candidate_thumb_error = np.concatenate(
+                (
+                  candidate_thumb_error,
+                  orientation_scales[0] * candidate_orientation_errors[0],
+                )
+              )
+            candidate_thumb_cost = float(
+              candidate_thumb_error @ candidate_thumb_error
+            )
             if candidate_thumb_cost <= current_thumb_cost + 1.0e-14:
               q = candidate
               errors = candidate_errors
               error_norms = candidate_norms
+              orientation_errors = candidate_orientation_errors
+              orientation_error_norms = candidate_orientation_norms
+              task_cost = candidate_cost
               accepted = True
               break
           if not accepted:
             break
 
-          score = (float(np.max(error_norms)), float(np.sum(errors * errors)))
-          if score < best_score:
-            best_score = score
+          key = result_key(errors, error_norms, task_cost)
+          if key < best_key:
+            best_key = key
             best_q = q.copy()
             best_error_norms = error_norms.copy()
-          if score[0] <= position_tolerance:
+          maximum_error = float(np.max(error_norms))
+          if maximum_error <= position_tolerance and not use_orientation:
             return HandIkResult(
               True,
               joint_names,
               q.copy(),
               error_norms.copy(),
-              score[0],
+              maximum_error,
               completed_iterations,
             )
 
     evaluate(best_q)
+    best_position_error = float(np.max(best_error_norms))
     return HandIkResult(
-      False,
+      best_position_error <= position_tolerance,
       joint_names,
       best_q,
       best_error_norms,
-      best_score[0],
+      best_position_error,
       completed_iterations,
     )
 
@@ -1113,11 +1389,14 @@ class ArmHandSimulation:
     side: str,
     target_positions: Iterable[Iterable[float]],
     *,
+    target_rotations: Iterable[Iterable[Iterable[float]]] | None = None,
     seed: Iterable[float] | None = None,
     arm_joint_positions: Iterable[float] | None = None,
     apply_best_effort: bool = True,
     max_iterations: int = 100,
     position_tolerance: float = 1.5e-3,
+    position_weights: float | Iterable[float] = 1.0,
+    orientation_weights: float | Iterable[float] = 0.01,
     posture_weight: float = 0.01,
     damping: float = 0.003,
     step_limit: float = 0.2,
@@ -1131,10 +1410,13 @@ class ArmHandSimulation:
     result = self.solve_hand_ik(
       side,
       target_positions,
+      target_rotations=target_rotations,
       seed=seed,
       arm_joint_positions=arm_joint_positions,
       max_iterations=max_iterations,
       position_tolerance=position_tolerance,
+      position_weights=position_weights,
+      orientation_weights=orientation_weights,
       posture_weight=posture_weight,
       damping=damping,
       step_limit=step_limit,

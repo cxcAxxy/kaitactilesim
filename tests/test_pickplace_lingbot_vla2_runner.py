@@ -338,8 +338,8 @@ def test_no_record_rollout_executes_absolute_targets_and_writes_summary(tmp_path
   assert len(seen["actions"]) == 2
   np.testing.assert_allclose(seen["actions"][0][:7], 0.7)
   np.testing.assert_allclose(seen["actions"][0][7:], 0.3)
-  assert (output / "review").is_dir()
-  assert not (output / "review/review.mp4").exists()
+  assert not (output / "review").exists()
+  assert not (output / "review.mp4").exists()
   assert report["comparison_plots"]["status"] == "ok"
   assert report["comparison_plots"]["rollout"]["samples"] == 3
   for filename in (
@@ -348,7 +348,7 @@ def test_no_record_rollout_executes_absolute_targets_and_writes_summary(tmp_path
     "evaluation_right_hand_actuated_dof.png",
     "evaluation_right_fingertip_tactile.png",
   ):
-    assert (output / "review" / filename).is_file()
+    assert (output / filename).is_file()
   assert (output / "first_request.npz").is_file()
   assert json.loads((output / "summary.json").read_text())["status"] == "task_not_completed"
 
@@ -408,14 +408,15 @@ def test_one_step_produces_real_30hz_comparison(tmp_path, monkeypatch, runner, r
     assert report["video"]["frame_count"] == 2
     assert report["video"]["time_series_displayed"] is False
     assert report["video"]["model_input_cameras_displayed"] == ["head", "right_wrist"]
-    assert (output / "review/review.mp4").is_file()
+    assert (output / "review.mp4").is_file()
   else:
     assert "video" not in report
-    assert not (output / "review/review.mp4").exists()
+    assert not (output / "review.mp4").exists()
   for file_name in (
     "evaluation_rollout_trace.npz",
     "evaluation_right_wrist_state.png",
     "evaluation_right_hand_actuated_dof.png",
     "evaluation_right_fingertip_tactile.png",
   ):
-    assert (output / "review" / file_name).is_file()
+    assert (output / file_name).is_file()
+  assert not (output / "review").exists()

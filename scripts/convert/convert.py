@@ -11,6 +11,8 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,21 +23,31 @@ from kaihand_tactile_env.pipeline.conversion import (
   adapter_for,
   default_cameras_for,
   inspect_raw_dataset,
+  source_contract,
 )
+from kaihand_tactile_env.pipeline.runtime import RuntimeProfile, load_runtime_profile
 from kaihand_tactile_env.shared.cameras import TRAINING_CAMERA_NAMES
 
 ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PI05_BACKENDS = {
-  "convert_pickplace_unified_to_lerobot.py",
-  "convert_poker_unified_to_lerobot.py",
-  "convert_shared_to_lerobot.py",
-  "convert_usb_unified_to_lerobot.py",
-}
-FAST_PI05_BACKENDS = {
-  "convert_pickplace_unified_to_lerobot.py",
-  "convert_poker_unified_to_lerobot.py",
-  "convert_shared_to_lerobot.py",
-}
+PLAN_SCHEMA = "kaihand_conversion_plan_v1"
+RESULT_SCHEMA = "kaihand_pipeline_conversion_v1"
+PIPELINE_MANIFEST = "pipeline_conversion.json"
+_BACKEND_MANIFEST_PATHS = (
+  "conversion_manifest.json",
+  "dataset_manifest.json",
+  "source_snapshot_manifest.json",
+  "meta/kaihand_card_conversion_manifest.json",
+  "meta/kaihand_card_source_snapshot.json",
+  "meta/kaihand_conversion.json",
+  "meta/kaihand_conversion_manifest.json",
+  "meta/kaihand_fast_pi05_conversion.json",
+  "meta/kaihand_schema.json",
+  "meta/kaihand_source_snapshot.json",
+  "meta/kaihand_source_episodes.jsonl",
+  "meta/kaihand_usb_conversion_manifest.json",
+  "meta/kaihand_usb_source_snapshot.json",
+  "meta/info.json",
+)
 
 
 def parse_args(argv=None):
@@ -78,8 +90,21 @@ def parse_args(argv=None):
     "--lerobot-v3-python", type=Path,
     help="Python with LeRobot 0.4.x/v3 support; required if this Python lacks lerobot",
   )
+  parser.add_argument(
+    "--runtime-config", type=Path,
+    help="TOML/JSON file containing named conversion runtimes",
+  )
+  parser.add_argument(
+    "--runtime",
+    help="runtime name in --runtime-config (or use its default_runtime)",
+  )
   parser.add_argument("--dry-run", action="store_true")
-  args = parser.parse_args(argv)
+  raw_argv = list(argv) if argv is not None else sys.argv[1:]
+  args = parser.parse_args(raw_argv)
+  args._openpi_root_explicit = any(
+    value == "--openpi-root" or value.startswith("--openpi-root=")
+    for value in raw_argv
+  )
   if args.workers <= 0:
     parser.error("--workers must be positive")
   if args.expected_episodes < 0:
@@ -91,11 +116,78 @@ def parse_args(argv=None):
   return args
 
 
-def _command(args, dataset, contract):
+def _same_path(first: Path, second: Path) -> bool:
+  return first.expanduser().resolve() == second.expanduser().resolve()
+
+
+def _selected_path(
+  explicit: Path | None,
+  configured: Path | None,
+  *,
+  explicit_option: str,
+) -> Path | None:
+  if (
+    explicit is not None
+    and configured is not None
+    and not _same_path(explicit, configured)
+  ):
+    raise ValueError(
+      f"{explicit_option} conflicts with the selected runtime profile"
+    )
+  return explicit if explicit is not None else configured
+
+
+def _openpi_root(args, runtime_profile: RuntimeProfile | None) -> Path:
+  configured = runtime_profile.project_root if runtime_profile is not None else None
+  explicit = (
+    args.openpi_root
+    if getattr(args, "_openpi_root_explicit", runtime_profile is None)
+    else None
+  )
+  selected = _selected_path(
+    explicit,
+    configured,
+    explicit_option="--openpi-root",
+  )
+  return (selected or args.openpi_root).expanduser().resolve()
+
+
+def _python_for(
+  explicit: Path | None,
+  runtime_profile: RuntimeProfile | None,
+  *,
+  explicit_option: str,
+  fallback: Path | str,
+) -> Path | str:
+  configured = runtime_profile.python if runtime_profile is not None else None
+  return _selected_path(
+    explicit,
+    configured,
+    explicit_option=explicit_option,
+  ) or fallback
+
+
+def _backend_path(contract, openpi_root: Path | None = None) -> Path:
+  if contract.backend_location == "workcell":
+    return ROOT / "scripts/workcell" / contract.backend
+  if contract.backend_location == "runtime-project" and openpi_root is not None:
+    return openpi_root / "examples/kaihand" / contract.backend
+  raise ValueError(
+    f"adapter {contract.backend!r} has unsupported backend location "
+    f"{contract.backend_location!r}"
+  )
+
+
+def _command(args, dataset, contract, runtime_profile=None):
   if contract.output_format == "lerobot-v3":
     command = [
-      str(args.lerobot_v3_python or sys.executable),
-      str(ROOT / "scripts/workcell" / contract.backend),
+      str(_python_for(
+        args.lerobot_v3_python,
+        runtime_profile,
+        explicit_option="--lerobot-v3-python",
+        fallback=sys.executable,
+      )),
+      str(_backend_path(contract)),
       "--input-dir", str(dataset.root),
       "--output-dir", str(args.output_dir),
       "--task", dataset.task,
@@ -115,37 +207,41 @@ def _command(args, dataset, contract):
     return command
   if contract.output_format == "egosteer":
     cmd = [
-      sys.executable,
-      str(ROOT / "scripts/workcell" / contract.backend),
+      str(_python_for(
+        None,
+        runtime_profile,
+        explicit_option="runtime python",
+        fallback=sys.executable,
+      )),
+      str(_backend_path(contract)),
       "--input-dir", str(dataset.root),
       "--output-dir", str(args.output_dir),
     ]
-    if dataset.task in (
-      "poker-draw", "usb-insert", "bulb-screw", "install-ram", "whiteboard-wipe"
-    ):
-      cmd += [
-        "--workers", str(args.workers),
-        "--expected-episodes", str(len(dataset.episodes)),
-        "--cameras", *dataset.cameras,
-      ]
-      if args.staging_root:
-        cmd += ["--staging-root", str(args.staging_root)]
-      if args.verify_source_hash:
-        cmd.append("--verify-source-hash")
-    if contract.backend == "convert_card_to_egosteer.py":
+    if contract.worker_option == "--workers":
+      cmd += ["--workers", str(args.workers)]
+    if contract.supports("expected_episodes"):
+      cmd += ["--expected-episodes", str(len(dataset.episodes))]
+    if contract.supports("cameras"):
+      cmd += ["--cameras", *dataset.cameras]
+    if args.staging_root and contract.supports("staging_root"):
+      cmd += ["--staging-root", str(args.staging_root)]
+    if args.verify_source_hash and contract.supports("verify_source_hash"):
+      cmd.append("--verify-source-hash")
+    if contract.supports("task"):
       cmd += ["--task", dataset.task]
-    if args.instruction:
+    if args.instruction and contract.supports("instruction"):
       cmd += ["--instruction", args.instruction]
-    if args.dataset_name:
+    if args.dataset_name and contract.supports("dataset_name"):
       cmd += ["--dataset-name", args.dataset_name]
     return cmd
-  openpi_root = args.openpi_root.expanduser().resolve()
-  python = args.pi05_python or openpi_root / ".venv-pi05/bin/python"
-  backend_path = (
-    ROOT / "scripts/workcell" / contract.backend
-    if contract.backend in LOCAL_PI05_BACKENDS
-    else openpi_root / "examples/kaihand" / contract.backend
+  openpi_root = _openpi_root(args, runtime_profile)
+  python = _python_for(
+    args.pi05_python,
+    runtime_profile,
+    explicit_option="--pi05-python",
+    fallback=openpi_root / ".venv-pi05/bin/python",
   )
+  backend_path = _backend_path(contract, openpi_root)
   cmd = [
     str(python),
     str(backend_path),
@@ -154,26 +250,25 @@ def _command(args, dataset, contract):
     "--expected-episodes", str(len(dataset.episodes)),
     "--fingerprint-workers", str(args.workers),
   ]
-  if contract.backend not in FAST_PI05_BACKENDS:
+  if contract.supports("image_writer_threads"):
     cmd += [
       "--image-writer-processes", "0",
       "--image-writer-threads", str(args.workers),
     ]
-  if contract.backend in LOCAL_PI05_BACKENDS:
+  if contract.supports("openpi_root"):
     cmd += ["--openpi-root", str(openpi_root)]
-  if args.staging_root:
+  if args.staging_root and contract.supports("staging_root"):
     cmd += ["--staging-root", str(args.staging_root)]
-  if args.verify_source_hash:
+  if args.verify_source_hash and contract.supports("verify_source_hash"):
     cmd.append("--verify-source-hash")
-  if contract.backend in (
-    "convert_card_to_lerobot.py",
-    "convert_poker_unified_to_lerobot.py",
-    "convert_shared_to_lerobot.py",
-  ):
-    cmd += ["--task", dataset.task, "--cameras", *dataset.cameras]
-    if args.instruction:
+  if contract.supports("task"):
+    cmd += ["--task", dataset.task]
+  if contract.supports("cameras"):
+    cmd += ["--cameras", *dataset.cameras]
+  if contract.supports("instruction") or contract.supports("dataset_name"):
+    if args.instruction and contract.supports("instruction"):
       cmd += ["--instruction", args.instruction]
-    if args.dataset_name:
+    if args.dataset_name and contract.supports("dataset_name"):
       cmd += ["--dataset-name", args.dataset_name]
   return cmd
 
@@ -241,6 +336,330 @@ def _capture_sidecar_sha256(source: Path) -> str | None:
   ):
     return None
   return value.lower()
+
+
+def _source_snapshot(dataset) -> tuple[dict[str, Any], dict[str, Any]]:
+  """Capture file identity and literal Raw contracts around one metadata read."""
+
+  before = {path: path.stat() for path in dataset.episodes}
+  contract = source_contract(dataset)
+  rows = []
+  for path in dataset.episodes:
+    initial = before[path]
+    final = path.stat()
+    initial_identity = (
+      initial.st_dev,
+      initial.st_ino,
+      initial.st_size,
+      initial.st_mtime_ns,
+    )
+    final_identity = (
+      final.st_dev,
+      final.st_ino,
+      final.st_size,
+      final.st_mtime_ns,
+    )
+    if initial_identity != final_identity:
+      raise RuntimeError(f"source changed while reading its contract: {path}")
+    capture_sha256 = _capture_sidecar_sha256(path)
+    rows.append({
+      "path": path.relative_to(dataset.root).as_posix(),
+      "bytes": final.st_size,
+      "mtime_ns": final.st_mtime_ns,
+      "device": final.st_dev,
+      "inode": final.st_ino,
+      "capture_sha256": capture_sha256,
+      "capture_sha256_status": (
+        "declared_by_capture_sidecar_not_recomputed"
+        if capture_sha256 is not None
+        else "not_declared"
+      ),
+    })
+  return ({"root": str(dataset.root), "episodes": rows}, contract)
+
+
+def _assert_source_unchanged(dataset, identity: dict[str, Any]) -> None:
+  expected = {
+    row["path"]: (
+      row["device"], row["inode"], row["bytes"], row["mtime_ns"]
+    )
+    for row in identity["episodes"]
+  }
+  for source in dataset.episodes:
+    relative = source.relative_to(dataset.root).as_posix()
+    stat = source.stat()
+    actual = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+    if actual != expected[relative]:
+      raise RuntimeError(f"source changed during conversion: {source}")
+
+
+def _sha256_file(path: Path) -> str:
+  digest = hashlib.sha256()
+  with path.open("rb") as stream:
+    for block in iter(lambda: stream.read(1024 * 1024), b""):
+      digest.update(block)
+  return digest.hexdigest()
+
+
+def _declared_manifest_contracts(payload: dict[str, Any]) -> dict[str, Any]:
+  """Copy only fields that a backend itself labels as camera/action contracts."""
+
+  fields = {}
+  selected_names = {
+    "action_alignment",
+    "action_contract",
+    "action_representation",
+    "action_semantics",
+    "camera_contract",
+    "camera_views",
+    "cameras",
+    "observation_contract",
+  }
+
+  def visit(value: dict[str, Any], prefix: str = "") -> None:
+    for key, item in value.items():
+      path = f"{prefix}.{key}" if prefix else key
+      if key.lower() in selected_names:
+        fields[path] = item
+      elif isinstance(item, dict):
+        visit(item, path)
+
+  visit(payload)
+  return fields
+
+
+def _backend_manifest_references(output: Path) -> list[dict[str, Any]]:
+  references = []
+  source_identity_paths = {
+    "source_snapshot_manifest.json",
+    "meta/kaihand_card_source_snapshot.json",
+    "meta/kaihand_source_snapshot.json",
+    "meta/kaihand_source_episodes.jsonl",
+    "meta/kaihand_usb_source_snapshot.json",
+  }
+  for relative in _BACKEND_MANIFEST_PATHS:
+    path = output / relative
+    if not path.is_file() or path.is_symlink():
+      continue
+    reference: dict[str, Any] = {
+      "path": relative,
+      "sha256": _sha256_file(path),
+      "role": (
+        "source_identity" if relative in source_identity_paths else "manifest"
+      ),
+    }
+    if path.suffix == ".json":
+      try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+      except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"backend manifest is unreadable: {path}: {error}") from error
+      if not isinstance(payload, dict):
+        raise ValueError(f"backend manifest must be an object: {path}")
+      if "schema" in payload:
+        reference["schema"] = payload["schema"]
+      if "schema_version" in payload:
+        reference["schema_version"] = payload["schema_version"]
+      declared = _declared_manifest_contracts(payload)
+      if declared:
+        reference["declared_contracts"] = declared
+      source_references = {
+        key: payload[key]
+        for key in (
+          "input_dir",
+          "source_collection",
+          "source_manifest",
+          "source_root",
+          "source_episodes",
+        )
+        if key in payload
+      }
+      if source_references:
+        reference["declared_source_identity"] = source_references
+    references.append(reference)
+  return references
+
+
+def _pythonpath_prepend(
+  args, contract, runtime_profile: RuntimeProfile | None
+) -> tuple[str, ...]:
+  if contract.runtime == "in-process":
+    return ()
+  paths = [ROOT / "src"]
+  if contract.runtime == "pi05-python":
+    openpi_root = _openpi_root(args, runtime_profile)
+    paths.extend((
+      openpi_root / "src",
+      openpi_root / "packages/openpi-client/src",
+    ))
+  return tuple(str(path) for path in paths)
+
+
+def _uses_external_environment(
+  command: list[str], runtime_profile: RuntimeProfile | None
+) -> bool:
+  if runtime_profile is not None:
+    return True
+  try:
+    return not _same_path(Path(command[0]), Path(sys.executable))
+  except (OSError, RuntimeError):
+    return True
+
+
+def _subprocess_environment(
+  args,
+  contract,
+  runtime_profile: RuntimeProfile | None,
+) -> dict[str, str]:
+  environment = (
+    runtime_profile.environment()
+    if runtime_profile is not None
+    else dict(os.environ)
+  )
+  existing = environment.get("PYTHONPATH", "")
+  entries = [*_pythonpath_prepend(args, contract, runtime_profile)]
+  entries.extend(value for value in existing.split(os.pathsep) if value)
+  environment["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(entries))
+  return environment
+
+
+def _runtime_record(
+  args,
+  contract,
+  runtime_profile: RuntimeProfile | None,
+  command: list[str] | None,
+) -> dict[str, Any]:
+  project_root = None
+  if contract.supports("openpi_root"):
+    project_root = str(_openpi_root(args, runtime_profile))
+  prepend = (
+    _pythonpath_prepend(args, contract, runtime_profile)
+    if command is not None and _uses_external_environment(command, runtime_profile)
+    else ()
+  )
+  return {
+    "kind": contract.runtime,
+    "executable": command[0] if command is not None else sys.executable,
+    "project_root": project_root,
+    "pythonpath_prepend": list(prepend),
+    "profile": runtime_profile.as_dict() if runtime_profile is not None else None,
+  }
+
+
+def _conversion_plan(
+  args,
+  dataset,
+  contract,
+  runtime_profile: RuntimeProfile | None,
+  command: list[str] | None,
+  source_identity: dict[str, Any],
+  raw_contract: dict[str, Any],
+) -> dict[str, Any]:
+  return {
+    "schema": PLAN_SCHEMA,
+    "schema_version": 1,
+    "stage": "convert",
+    "task": dataset.task,
+    "format": args.format,
+    "adapter": contract.backend,
+    "episodes": len(dataset.episodes),
+    "cameras": dataset.cameras,
+    "command": command,
+    "resume": args.resume,
+    "workers": {
+      "requested": args.workers,
+      "backend_option": contract.worker_option,
+      "semantics": contract.worker_semantics,
+    },
+    "runtime": _runtime_record(args, contract, runtime_profile, command),
+    "source_identity": source_identity,
+    "source_contract": raw_contract,
+  }
+
+
+def _publish_pipeline_manifest(
+  args,
+  dataset,
+  plan: dict[str, Any],
+  source_identity: dict[str, Any],
+) -> Path:
+  output = args.output_dir.expanduser().resolve()
+  if not output.is_dir() or output.is_symlink():
+    raise RuntimeError(f"successful backend did not publish an output directory: {output}")
+  _assert_source_unchanged(dataset, source_identity)
+  manifest_path = output / PIPELINE_MANIFEST
+  if manifest_path.is_symlink():
+    raise FileExistsError(
+      f"refusing to replace symlinked pipeline manifest: {manifest_path}"
+    )
+  if manifest_path.exists():
+    if not args.resume:
+      raise FileExistsError(
+        f"refusing to overwrite backend-owned {manifest_path}"
+      )
+    try:
+      previous = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+      raise FileExistsError(
+        f"refusing to overwrite backend-owned {manifest_path}: {error}"
+      ) from error
+    if not isinstance(previous, dict) or previous.get("schema") != RESULT_SCHEMA:
+      raise FileExistsError(
+        f"refusing to overwrite backend-owned {manifest_path}"
+      )
+  backend_manifests = _backend_manifest_references(output)
+  result = {
+    **plan,
+    "schema": RESULT_SCHEMA,
+    "schema_version": 1,
+    "status": "success",
+    "completed_utc": datetime.now(timezone.utc).isoformat(),
+    "backend_returncode": 0,
+    "backend_manifests": backend_manifests,
+    "backend_source_identity": [
+      {"path": row["path"], "sha256": row["sha256"]}
+      for row in backend_manifests
+      if row["role"] == "source_identity"
+    ],
+  }
+  _write_json_atomic(manifest_path, result)
+  return manifest_path
+
+
+def _validate_runtime_profile(
+  contract, runtime_profile: RuntimeProfile | None, *, execute: bool
+) -> None:
+  if runtime_profile is None:
+    return
+  declared = set()
+  if runtime_profile.python is not None:
+    declared.add("python")
+  if runtime_profile.project_root is not None:
+    declared.add("project_root")
+  if runtime_profile.env:
+    declared.add("env")
+  unsupported = declared - set(contract.runtime_profile_fields)
+  if unsupported:
+    raise ValueError(
+      f"{contract.output_format} adapter does not consume runtime profile "
+      f"fields: {', '.join(sorted(unsupported))}"
+    )
+  if execute:
+    runtime_profile.validate()
+
+
+@contextmanager
+def _in_process_environment(runtime_profile: RuntimeProfile | None):
+  overrides = runtime_profile.env if runtime_profile is not None else {}
+  previous = {name: os.environ.get(name) for name in overrides}
+  try:
+    os.environ.update(overrides)
+    yield
+  finally:
+    for name, value in previous.items():
+      if value is None:
+        os.environ.pop(name, None)
+      else:
+        os.environ[name] = value
 
 
 def _existing_tict_record(
@@ -499,6 +918,7 @@ def main(argv=None):
   if args.list_support:
     print(json.dumps({"formats": FORMATS, "adapters": adapter_catalog()}, indent=2))
     return 0
+  runtime_profile = load_runtime_profile(args.runtime_config, args.runtime)
   probe = inspect_raw_dataset(args.input_dir, task=args.task, cameras=("head",))
   cameras = args.cameras or default_cameras_for(probe.task, args.format)
   dataset = (
@@ -512,11 +932,26 @@ def main(argv=None):
       f"found {len(dataset.episodes)}"
     )
   contract = adapter_for(dataset, args.format)
+  _validate_runtime_profile(
+    contract, runtime_profile, execute=not args.dry_run
+  )
   if args.format == "lerobot-v3":
-    if args.lerobot_v3_python is None and importlib.util.find_spec("lerobot") is None:
+    configured_python = (
+      runtime_profile.python if runtime_profile is not None else None
+    )
+    _selected_path(
+      args.lerobot_v3_python,
+      configured_python,
+      explicit_option="--lerobot-v3-python",
+    )
+    if (
+      args.lerobot_v3_python is None
+      and configured_python is None
+      and importlib.util.find_spec("lerobot") is None
+    ):
       raise ValueError(
         "this Python lacks LeRobot; pass --lerobot-v3-python PATH to the "
-        "LeRobot v3 environment"
+        "LeRobot v3 environment, or select a named runtime"
       )
     if args.lerobot_v3_python is not None and not args.lerobot_v3_python.is_file():
       raise FileNotFoundError(f"LeRobot v3 Python not found: {args.lerobot_v3_python}")
@@ -530,25 +965,52 @@ def main(argv=None):
     raise ValueError(
       f"{args.format} adapter publishes atomically but does not yet support resume"
     )
+  source_identity, raw_contract = _source_snapshot(dataset)
   if args.format == "egotouch":
-    result = _convert_egotouch(args, dataset)
+    plan = _conversion_plan(
+      args,
+      dataset,
+      contract,
+      runtime_profile,
+      None,
+      source_identity,
+      raw_contract,
+    )
+    with _in_process_environment(runtime_profile):
+      result = _convert_egotouch(args, dataset)
+    if args.dry_run:
+      result = {**plan, **result}
+    else:
+      if result.get("complete") is not True:
+        raise RuntimeError("EgoTouch backend did not publish a complete manifest")
+      _publish_pipeline_manifest(args, dataset, plan, source_identity)
     print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
     return 0
-  command = _command(args, dataset, contract)
-  plan = {
-    "task": dataset.task,
-    "format": args.format,
-    "adapter": contract.backend,
-    "episodes": len(dataset.episodes),
-    "cameras": dataset.cameras,
-    "command": command,
-  }
+  command = _command(args, dataset, contract, runtime_profile)
+  plan = _conversion_plan(
+    args,
+    dataset,
+    contract,
+    runtime_profile,
+    command,
+    source_identity,
+    raw_contract,
+  )
   print(json.dumps(plan, indent=2, ensure_ascii=False))
   if args.dry_run:
     return 0
   if args.output_dir.exists() and not (args.resume and args.format == "lerobot-v3"):
     raise FileExistsError(f"output must not already exist: {args.output_dir}")
-  return subprocess.run(command, check=False).returncode
+  run_options: dict[str, Any] = {"check": False}
+  if _uses_external_environment(command, runtime_profile):
+    run_options["env"] = _subprocess_environment(
+      args, contract, runtime_profile
+    )
+  completed = subprocess.run(command, **run_options)
+  if completed.returncode != 0:
+    return completed.returncode
+  _publish_pipeline_manifest(args, dataset, plan, source_identity)
+  return 0
 
 
 if __name__ == "__main__":

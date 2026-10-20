@@ -29,10 +29,13 @@ BOARD_NORMAL = BOARD_ROTATION[:, 2]
 BOARD_SURFACE = BOARD_CENTER + 0.008 * BOARD_NORMAL
 PAD_BOTTOM = np.array([0.0, 0.0, -0.015])
 INK_COUNT = 25
+INK_PATTERN = "z_top_down_v1"
+# Board-local x points up the tilted board; y points left when viewed head-on.
+# Same nominal 16 cm width / 14 cm height as the former two horizontal strokes.
+INK_Z_VERTICES = np.array([[0.07, 0.08], [0.07, -0.08], [-0.07, 0.08], [-0.07, -0.08]])
+INK_Z_SEGMENTS = (8, 9, 8)
 # Ink center translation in the board plane; keep the frame outside the stroke.
 INK_CENTER_RANGE_M = np.array([0.04, 0.06])
-MIN_NORMAL_FORCE = 1.5
-MAX_NORMAL_FORCE = 8.0
 MIN_SLIDING_SPEED = 0.005
 REQUIRED_SLIDING_DISTANCE = 0.03
 

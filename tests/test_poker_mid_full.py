@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+import mujoco
 import numpy as np
 import pytest
 from kaihand_tactile_env.shared.simulation import ArmHandSimulation
@@ -37,6 +38,10 @@ def _simulation() -> MidForcePokerSimulation:
     ctrl=np.asarray([0.7, 0.8, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.14]),
     qpos=np.linspace(-0.3, -0.1, 12),
     qvel=np.linspace(0.01, 0.12, 12),
+    qacc=np.zeros(12),
+    warning=[
+      SimpleNamespace(number=0, lastinfo=0) for _ in range(mujoco.mjtWarning.mjNWARNING)
+    ],
     qfrc_applied=np.linspace(0.0, 0.11, 12),
   )
   sim.model = SimpleNamespace(
@@ -184,12 +189,13 @@ def test_handover_resumes_original_step_with_zero_initial_control_slew(
       sim._arm_goal["right"] - sim._arm_command["right"], np.zeros(7)
     )
     calls.append(steps)
+    sim.data.time += steps * sim.timestep
 
   monkeypatch.setattr(ArmHandSimulation, "step", original_step)
   sim.end_cartesian_drive()
   sim.step(3)
 
-  assert calls == [3]
+  assert calls == [1, 1, 1]
 
 
 @pytest.mark.parametrize("invalid", [np.nan, np.inf, -np.inf, -2.001, 2.001])
@@ -361,7 +367,9 @@ def test_pinch_feedback_responds_to_force_even_when_geometric_contacts_exist():
     executor._maintain_dynamic_pinch(set(fingers), {"thumb"}, 1.5, 2.0)
   assert np.max(abs(executor._pinch_flexion_targets - 1)) <= np.deg2rad(1) + 1e-12
   assert abs(executor._pinch_thumb_joint5_target - 1) <= np.deg2rad(1) + 1e-12
-  assert forces == dict(zip((*fingers, "thumb"), [0.0, 0.25, 1.0, 0.25, 2.0], strict=True))
+  assert forces == dict(
+    zip((*fingers, "thumb"), [0.0, 0.25, 1.0, 0.25, 2.0], strict=True)
+  )
 
 
 def _executor_harness(

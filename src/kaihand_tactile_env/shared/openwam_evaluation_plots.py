@@ -10,6 +10,7 @@ observation alignment instead of reading the converted Parquet file: the first
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -19,6 +20,7 @@ from typing import Any
 
 import h5py
 import matplotlib
+import mujoco
 import numpy as np
 
 matplotlib.use("Agg")
@@ -26,10 +28,29 @@ matplotlib.use("Agg")
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
+from .config import model_fingerprint
+from .contact_tactile import SolverDistributedTactileProvider
+
 SCHEMA_VERSION = "kaihand-openwam-evaluation-plots-v1"
 SOURCE_MANIFEST = Path("meta/kaihand_source_episodes.jsonl")
 FAST_CONVERSION_MANIFEST = Path("meta/kaihand_fast_pi05_conversion.json")
-FAST_CONVERSION_SCHEMA = "kaihand_fast_pi05_video_v1"
+FAST_CONVERSION_SCHEMAS = frozenset(
+  ("kaihand_fast_pi05_video_v1", "kaihand_fast_pi05_video_v2")
+)
+LEGACY_EPISODE_SCHEMA = "kaihand_tactile_episode_v1"
+LEGACY_PICKPLACE_CONTRACT = "pick_place_stable_terminal_v2"
+LEGACY_PICKPLACE_SCENE = "pick-place"
+LEGACY_PICKPLACE_SIDE = "right"
+LEGACY_PICKPLACE_TARGET_GEOM = "cylinder_geom"
+
+# The legacy recorder writes qpos after ``mj_step`` but leaves the camera,
+# contact, and kinematic caches at the preceding physics epoch.  A reconstructed
+# wrist camera is the independent witness that the hash-bound model and this
+# clock correction recover the recorded geometry.
+_MAX_CAMERA_FK_POSITION_MEAN_M = 2.0e-5
+_MAX_CAMERA_FK_POSITION_MAX_M = 1.0e-4
+_MAX_CAMERA_FK_ROTATION_MEAN_RAD = 5.0e-5
+_MAX_CAMERA_FK_ROTATION_MAX_RAD = 5.0e-4
 
 RIGHT_HAND_ACTUATED_JOINT_NAMES = (
   "hand_r_thumb_joint1",
@@ -91,6 +112,8 @@ class OpenWAMReference:
   fingertip_normal_force_n: np.ndarray
   fingertip_tangent_force_n: np.ndarray
   joint_names: tuple[str, ...]
+  wrist_source: str = "cameras/head/world_from_wrist"
+  tactile_source: str = "tactile_contact_force taxel grids"
 
   @property
   def state_29(self) -> np.ndarray:
@@ -168,6 +191,58 @@ def _require_dataset(file: h5py.File, path: str) -> h5py.Dataset:
   return file[path]
 
 
+def _attribute_text(
+  attributes: h5py.AttributeManager,
+  name: str,
+  *,
+  context: str,
+) -> str:
+  if name not in attributes:
+    raise ValueError(f"{context} is missing required attribute {name}")
+  value = attributes[name]
+  if isinstance(value, bytes):
+    try:
+      value = value.decode("utf-8")
+    except UnicodeDecodeError as error:
+      raise ValueError(f"{context} attribute {name} contains invalid UTF-8") from error
+  if not isinstance(value, str) or not value:
+    raise ValueError(f"{context} attribute {name} must be nonempty text")
+  return value
+
+
+def _sha256_file(path: Path) -> str:
+  digest = hashlib.sha256()
+  with path.open("rb") as stream:
+    for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+      digest.update(chunk)
+  return digest.hexdigest()
+
+
+def _model_qpos_names(model: mujoco.MjModel) -> tuple[str, ...]:
+  """Reproduce the recorder's scalar qpos naming without trusting order."""
+  names = [""] * model.nq
+  for joint_id in range(model.njnt):
+    joint_name = model.joint(joint_id).name or f"joint_{joint_id}"
+    address = int(model.jnt_qposadr[joint_id])
+    width = (
+      int(model.jnt_qposadr[joint_id + 1] - address)
+      if joint_id + 1 < model.njnt
+      else model.nq - address
+    )
+    labels = (
+      ("x", "y", "z", "qw", "qx", "qy", "qz")
+      if width == 7
+      else tuple(str(index) for index in range(width))
+    )
+    for offset, label in enumerate(labels):
+      names[address + offset] = (
+        joint_name if width == 1 else f"{joint_name}/{label}"
+      )
+  if any(not name for name in names):
+    raise RuntimeError("MuJoCo qpos naming left an unnamed scalar")
+  return tuple(names)
+
+
 def _columns(
   available: Sequence[str],
   requested: Sequence[str],
@@ -226,9 +301,9 @@ def _read_manifest_record(
       raise ValueError(f"cannot read fast pi0.5 conversion manifest: {fast_manifest}") from error
     if not isinstance(payload, dict):
       raise ValueError(f"{fast_manifest}: expected a JSON object")
-    if payload.get("schema") != FAST_CONVERSION_SCHEMA:
+    if payload.get("schema") not in FAST_CONVERSION_SCHEMAS:
       raise ValueError(
-        f"{fast_manifest}: expected schema {FAST_CONVERSION_SCHEMA!r}"
+        f"{fast_manifest}: expected one of {sorted(FAST_CONVERSION_SCHEMAS)!r}"
       )
     records = payload.get("episodes")
     if not isinstance(records, list) or not records:
@@ -371,6 +446,35 @@ def _read_manifest_record(
     ) from error
   if not source_hdf5.is_file():
     raise ValueError(f"source_hdf5 is not a file: {source_hdf5}")
+  expected_size = selected.get("source_hdf5_size_bytes")
+  if expected_size is not None:
+    if (
+      isinstance(expected_size, bool)
+      or not isinstance(expected_size, int)
+      or expected_size <= 0
+    ):
+      raise ValueError(
+        f"{context}: episode {output_episode_index} has invalid "
+        "source_hdf5_size_bytes"
+      )
+    if source_hdf5.stat().st_size != expected_size:
+      raise ValueError(
+        f"{context}: source HDF5 size differs from frozen provenance"
+      )
+  expected_sha256 = selected.get("source_hdf5_sha256")
+  if expected_sha256 is not None:
+    if not isinstance(expected_sha256, str) or re.fullmatch(
+      r"[0-9a-f]{64}", expected_sha256
+    ) is None:
+      raise ValueError(
+        f"{context}: episode {output_episode_index} has invalid "
+        "source_hdf5_sha256"
+      )
+    actual_sha256 = _sha256_file(source_hdf5)
+    if actual_sha256 != expected_sha256:
+      raise ValueError(
+        f"{context}: source HDF5 SHA-256 differs from frozen provenance"
+      )
   return source_hdf5, exported_frames
 
 
@@ -427,6 +531,584 @@ def _validate_world_from_wrist(matrices: np.ndarray, *, context: str) -> None:
 
 def _rot6d_from_matrix(rotation: np.ndarray) -> np.ndarray:
   return np.concatenate((rotation[:, :, 0], rotation[:, :, 1]), axis=1)
+
+
+@dataclass(frozen=True)
+class _LegacyPickPlaceContext:
+  model_path: Path
+  model: mujoco.MjModel
+  state_qpos: np.ndarray
+  timestep: float
+
+
+def _is_legacy_pickplace_episode(file: h5py.File) -> bool:
+  """Recognize the one legacy schema for which FK/contact recovery is valid.
+
+  Returning ``False`` deliberately leaves other historical task recordings on
+  the generic missing-stream path.  Their absent physical reference fields are
+  an expected comparison gap, not a malformed PickPlace episode.
+  """
+  schema = file.attrs.get("schema_version")
+  if isinstance(schema, bytes):
+    try:
+      schema = schema.decode("utf-8")
+    except UnicodeDecodeError:
+      return False
+  if schema != LEGACY_EPISODE_SCHEMA:
+    return False
+  metadata_value = file.attrs.get("metadata_json")
+  if isinstance(metadata_value, bytes):
+    try:
+      metadata_value = metadata_value.decode("utf-8")
+    except UnicodeDecodeError:
+      return False
+  if not isinstance(metadata_value, str):
+    return False
+  try:
+    metadata = json.loads(metadata_value)
+  except json.JSONDecodeError:
+    return False
+  return isinstance(metadata, dict) and metadata.get("scene") == LEGACY_PICKPLACE_SCENE
+
+
+def _cached_observation_times(
+  acquisition_times: np.ndarray,
+  timestep: float,
+  *,
+  context: str,
+) -> np.ndarray:
+  times = np.asarray(acquisition_times, dtype=np.float64)
+  if (
+    times.ndim != 1
+    or not len(times)
+    or not np.isfinite(times).all()
+    or np.any(times < 0.0)
+    or (len(times) > 1 and np.any(np.diff(times) <= 0.0))
+  ):
+    raise ValueError(f"{context} timestamps must be finite and strictly increasing")
+  if not np.isfinite(timestep) or timestep <= 0.0:
+    raise ValueError("MuJoCo timestep must be finite and positive")
+  result = np.maximum(times - timestep, 0.0)
+  if len(result) > 1 and np.any(np.diff(result) <= 0.0):
+    raise ValueError(
+      f"{context} cached observation timestamps must be strictly increasing"
+    )
+  return result
+
+
+def _interpolate_legacy_qpos(
+  model: mujoco.MjModel,
+  state_times: np.ndarray,
+  state_qpos: np.ndarray,
+  target_times: np.ndarray,
+) -> np.ndarray:
+  """Interpolate hinge joints and use nearest samples for non-hinge qpos."""
+  times = np.asarray(state_times, dtype=np.float64)
+  targets = np.asarray(target_times, dtype=np.float64)
+  qpos = np.asarray(state_qpos, dtype=np.float64)
+  if (
+    times.ndim != 1
+    or len(times) < 2
+    or not np.isfinite(times).all()
+    or np.any(np.diff(times) <= 0.0)
+  ):
+    raise ValueError("state timestamps must be finite and strictly increasing")
+  if qpos.shape != (len(times), model.nq) or not np.isfinite(qpos).all():
+    raise ValueError("legacy state/qpos does not match the hash-bound MuJoCo model")
+  if targets.ndim != 1 or not len(targets) or not np.isfinite(targets).all():
+    raise ValueError("legacy FK target timestamps must be a finite vector")
+  tolerance = 1.0e-12
+  if targets[0] < times[0] - tolerance or targets[-1] > times[-1] + tolerance:
+    raise ValueError("legacy FK target timestamps fall outside the state interval")
+
+  right = np.searchsorted(times, targets, side="left")
+  right = np.clip(right, 0, len(times) - 1)
+  exact = np.isclose(times[right], targets, rtol=0.0, atol=tolerance)
+  left = np.maximum(right - 1, 0)
+  left[exact] = right[exact]
+  nearest = np.where(
+    np.abs(targets - times[left]) <= np.abs(times[right] - targets),
+    left,
+    right,
+  )
+  output = qpos[nearest].copy()
+  hinge_addresses = np.asarray(
+    [
+      int(model.jnt_qposadr[joint_id])
+      for joint_id in range(model.njnt)
+      if model.jnt_type[joint_id] == mujoco.mjtJoint.mjJNT_HINGE
+    ],
+    dtype=np.intp,
+  )
+  denominator = times[right] - times[left]
+  alpha = np.zeros(len(targets), dtype=np.float64)
+  bracketed = denominator > 0.0
+  alpha[bracketed] = (
+    targets[bracketed] - times[left[bracketed]]
+  ) / denominator[bracketed]
+  output[:, hinge_addresses] = (
+    qpos[left][:, hinge_addresses]
+    + alpha[:, None]
+    * (qpos[right][:, hinge_addresses] - qpos[left][:, hinge_addresses])
+  )
+  return output
+
+
+def _legacy_pickplace_context(
+  file: h5py.File,
+  state_times: np.ndarray,
+) -> _LegacyPickPlaceContext:
+  """Load only the exact model provenance permitted for legacy FK."""
+  filename = str(file.filename)
+  schema = _attribute_text(file.attrs, "schema_version", context=filename)
+  if schema != LEGACY_EPISODE_SCHEMA:
+    raise ValueError(
+      f"{filename}: FK fallback requires schema {LEGACY_EPISODE_SCHEMA!r}"
+    )
+  try:
+    metadata = json.loads(
+      _attribute_text(file.attrs, "metadata_json", context=filename)
+    )
+    outcome = json.loads(
+      _attribute_text(file.attrs, "outcome_json", context=filename)
+    )
+  except json.JSONDecodeError as error:
+    raise ValueError(f"{filename}: invalid JSON provenance attributes") from error
+  if not isinstance(metadata, dict) or not isinstance(outcome, dict):
+    raise ValueError(f"{filename}: metadata_json and outcome_json must be objects")
+  expected_metadata = {
+    "scene": LEGACY_PICKPLACE_SCENE,
+    "side": LEGACY_PICKPLACE_SIDE,
+    "recording_contract": LEGACY_PICKPLACE_CONTRACT,
+    "model_layout": "task-isolated-v1",
+  }
+  mismatch = {
+    key: (expected, metadata.get(key))
+    for key, expected in expected_metadata.items()
+    if metadata.get(key) != expected
+  }
+  if mismatch:
+    raise ValueError(f"{filename}: legacy PickPlace provenance mismatch: {mismatch}")
+  if outcome.get("success") is not True or outcome.get("placed_in_box") is not True:
+    raise ValueError(f"{filename}: reference episode is not a successful placement")
+
+  recorded_sha256 = _attribute_text(file.attrs, "model_sha256", context=filename)
+  recorded_fingerprint = _attribute_text(
+    file.attrs, "model_fingerprint", context=filename
+  )
+  if re.fullmatch(r"[0-9a-f]{64}", recorded_sha256) is None or re.fullmatch(
+    r"[0-9a-f]{64}", recorded_fingerprint
+  ) is None:
+    raise ValueError(f"{filename}: malformed model hash provenance")
+  if metadata.get("base_model_sha256") != recorded_sha256 or metadata.get(
+    "base_model_fingerprint"
+  ) != recorded_fingerprint:
+    raise ValueError(f"{filename}: root and metadata model provenance disagree")
+
+  model_value = _attribute_text(file.attrs, "model_path", context=filename)
+  model_path = Path(model_value).expanduser()
+  if not model_path.is_absolute():
+    raise ValueError(f"{filename}: recorded model_path must be absolute")
+  try:
+    model_path = model_path.resolve(strict=True)
+  except FileNotFoundError as error:
+    raise FileNotFoundError(
+      f"{filename}: recorded model_path no longer exists: {model_path}"
+    ) from error
+  if not model_path.is_file():
+    raise ValueError(f"{filename}: recorded model_path is not a file: {model_path}")
+  if _sha256_file(model_path) != recorded_sha256:
+    raise ValueError(f"{filename}: recorded root MJCF SHA-256 mismatch")
+  if model_fingerprint(model_path) != recorded_fingerprint:
+    raise ValueError(f"{filename}: recursive MJCF fingerprint mismatch")
+
+  model = mujoco.MjModel.from_xml_path(str(model_path))
+  timestep = float(model.opt.timestep)
+  physics_hz = file.attrs.get("physics_hz")
+  if (
+    isinstance(physics_hz, (bool, np.bool_))
+    or not isinstance(physics_hz, (int, np.integer))
+    or int(physics_hz) <= 0
+    or not np.isclose(timestep, 1.0 / int(physics_hz), atol=1.0e-12)
+  ):
+    raise ValueError(f"{filename}: physics_hz and MuJoCo timestep disagree")
+
+  recorded_qpos_names = _decode_names(
+    _require_dataset(file, "state/full_qpos_names"),
+    context="state/full_qpos_names",
+  )
+  if recorded_qpos_names != _model_qpos_names(model):
+    raise ValueError(f"{filename}: qpos ordering differs from the hash-bound MJCF")
+  qpos_dataset = _require_dataset(file, "state/qpos")
+  if qpos_dataset.shape != (len(state_times), model.nq):
+    raise ValueError(
+      f"{filename}: state/qpos must have shape ({len(state_times)}, {model.nq})"
+    )
+  state_qpos = np.asarray(qpos_dataset[:], dtype=np.float64)
+  if not np.isfinite(state_qpos).all():
+    raise ValueError(f"{filename}: state/qpos must be finite")
+  return _LegacyPickPlaceContext(
+    model_path=model_path,
+    model=model,
+    state_qpos=state_qpos,
+    timestep=timestep,
+  )
+
+
+def _pose_matrix(position: np.ndarray, rotation: np.ndarray) -> np.ndarray:
+  result = np.eye(4, dtype=np.float64)
+  result[:3, 3] = position
+  result[:3, :3] = rotation
+  return result
+
+
+def _legacy_wrist_from_qpos(
+  file: h5py.File,
+  context: _LegacyPickPlaceContext,
+  state_times: np.ndarray,
+  camera_times: np.ndarray,
+  head_state_indices: np.ndarray,
+) -> np.ndarray:
+  """Recover native wrist poses and validate them against wrist-camera FK."""
+  model = context.model
+  right_camera = file.get("cameras/right_wrist")
+  if not isinstance(right_camera, h5py.Group):
+    raise ValueError(
+      f"{file.filename}: legacy wrist FK requires cameras/right_wrist"
+    )
+  right_times = np.asarray(
+    _require_dataset(file, "cameras/right_wrist/timestamp")[: len(camera_times)],
+    dtype=np.float64,
+  )
+  right_indices = np.asarray(
+    _require_dataset(file, "cameras/right_wrist/state_index")[: len(camera_times)],
+    dtype=np.int64,
+  )
+  if not np.array_equal(right_times, camera_times) or not np.array_equal(
+    right_indices, head_state_indices
+  ):
+    raise ValueError(
+      f"{file.filename}: head and right-wrist camera clocks are not synchronized"
+    )
+  recorded_camera_dataset = _require_dataset(
+    file, "cameras/right_wrist/world_from_camera"
+  )
+  if recorded_camera_dataset.ndim != 3 or recorded_camera_dataset.shape[1:] != (
+    4,
+    4,
+  ):
+    raise ValueError(
+      "cameras/right_wrist/world_from_camera must have shape (T,4,4)"
+    )
+  if recorded_camera_dataset.shape[0] < len(camera_times):
+    raise ValueError("right-wrist camera pose stream is shorter than the reference")
+
+  camera_pose_times = _cached_observation_times(
+    camera_times, context.timestep, context="camera"
+  )
+  state_pose_times = _cached_observation_times(
+    state_times, context.timestep, context="state"
+  )
+  expected_indices = np.searchsorted(
+    state_pose_times, camera_pose_times, side="right"
+  ) - 1
+  if not np.array_equal(head_state_indices, expected_indices):
+    raise ValueError(
+      f"{file.filename}: legacy clock correction changed camera/state causality"
+    )
+  qpos = _interpolate_legacy_qpos(
+    model, state_times, context.state_qpos, camera_pose_times
+  )
+  wrist_id = mujoco.mj_name2id(
+    model, mujoco.mjtObj.mjOBJ_SITE, NATIVE_RIGHT_WRIST_SITE
+  )
+  camera_id = mujoco.mj_name2id(
+    model, mujoco.mjtObj.mjOBJ_CAMERA, "right_wrist"
+  )
+  if wrist_id < 0 or camera_id < 0:
+    raise ValueError(
+      f"{context.model_path}: missing {NATIVE_RIGHT_WRIST_SITE} or right_wrist camera"
+    )
+  data = mujoco.MjData(model)
+  wrist_matrices = np.empty((len(qpos), 4, 4), dtype=np.float64)
+  reconstructed_cameras = np.empty_like(wrist_matrices)
+  for index, row in enumerate(qpos):
+    data.qpos[:] = row
+    data.qvel[:] = 0.0
+    mujoco.mj_forward(model, data)
+    wrist_matrices[index] = _pose_matrix(
+      np.asarray(data.site_xpos[wrist_id]),
+      np.asarray(data.site_xmat[wrist_id]).reshape(3, 3),
+    )
+    reconstructed_cameras[index] = _pose_matrix(
+      np.asarray(data.cam_xpos[camera_id]),
+      np.asarray(data.cam_xmat[camera_id]).reshape(3, 3),
+    )
+  recorded_cameras = np.asarray(
+    recorded_camera_dataset[: len(camera_times)], dtype=np.float64
+  )
+  _validate_world_from_wrist(
+    wrist_matrices, context=f"reconstructed {NATIVE_RIGHT_WRIST_SITE} pose"
+  )
+  _validate_world_from_wrist(
+    reconstructed_cameras, context="reconstructed right_wrist camera pose"
+  )
+  _validate_world_from_wrist(
+    recorded_cameras, context="recorded right_wrist camera pose"
+  )
+  position_error = np.linalg.norm(
+    reconstructed_cameras[:, :3, 3] - recorded_cameras[:, :3, 3], axis=1
+  )
+  relative_rotation = (
+    np.swapaxes(recorded_cameras[:, :3, :3], 1, 2)
+    @ reconstructed_cameras[:, :3, :3]
+  )
+  rotation_error = np.arccos(
+    np.clip(
+      (np.trace(relative_rotation, axis1=1, axis2=2) - 1.0) * 0.5,
+      -1.0,
+      1.0,
+    )
+  )
+  metrics = {
+    "position_mean_m": float(position_error.mean()),
+    "position_max_m": float(position_error.max()),
+    "rotation_mean_rad": float(rotation_error.mean()),
+    "rotation_max_rad": float(rotation_error.max()),
+  }
+  limits = {
+    "position_mean_m": _MAX_CAMERA_FK_POSITION_MEAN_M,
+    "position_max_m": _MAX_CAMERA_FK_POSITION_MAX_M,
+    "rotation_mean_rad": _MAX_CAMERA_FK_ROTATION_MEAN_RAD,
+    "rotation_max_rad": _MAX_CAMERA_FK_ROTATION_MAX_RAD,
+  }
+  failures = [
+    f"{name}={metrics[name]:.6g} >= {limit:.6g}"
+    for name, limit in limits.items()
+    if metrics[name] >= limit
+  ]
+  if failures:
+    raise ValueError(
+      "legacy wrist FK disagrees with recorded right-wrist camera: "
+      + ", ".join(failures)
+    )
+  return wrist_matrices
+
+
+def _recorded_name_ids(
+  dataset: h5py.Dataset,
+  requested: Sequence[str],
+  *,
+  context: str,
+) -> dict[str, int]:
+  values = np.asarray(dataset[:])
+  if values.ndim != 1:
+    raise ValueError(f"{context} must be one-dimensional")
+  names = []
+  for value in values:
+    if isinstance(value, bytes):
+      try:
+        names.append(value.decode("utf-8"))
+      except UnicodeDecodeError as error:
+        raise ValueError(f"{context} contains invalid UTF-8") from error
+    elif isinstance(value, str):
+      names.append(value)
+    else:
+      raise ValueError(f"{context} contains a non-string value")
+  result = {}
+  for name in requested:
+    matches = [index for index, candidate in enumerate(names) if candidate == name]
+    if len(matches) != 1:
+      raise ValueError(f"{context} must contain exactly one {name!r}")
+    result[name] = matches[0]
+  return result
+
+
+def _legacy_contact_events(
+  file: h5py.File,
+  state_count: int,
+) -> dict[str, np.ndarray]:
+  events = file.get("contacts/events")
+  if not isinstance(events, h5py.Group):
+    raise ValueError(f"{file.filename}: missing required group contacts/events")
+  expected_attributes = {
+    "wrench_force_unit": "N",
+    "wrench_action": "on geom2; negate for action on geom1",
+  }
+  for name, expected in expected_attributes.items():
+    actual = _attribute_text(events.attrs, name, context="contacts/events")
+    if actual != expected:
+      raise ValueError(f"contacts/events has unexpected {name}: {actual!r}")
+  arrays = {
+    "start": np.asarray(_require_dataset(file, "contacts/frame_start")[:]),
+    "count": np.asarray(_require_dataset(file, "contacts/frame_count")[:]),
+    "state_index": np.asarray(
+      _require_dataset(file, "contacts/events/state_index")[:]
+    ),
+    "geom1": np.asarray(_require_dataset(file, "contacts/events/geom1_id")[:]),
+    "geom2": np.asarray(_require_dataset(file, "contacts/events/geom2_id")[:]),
+    "frame": np.asarray(
+      _require_dataset(file, "contacts/events/frame_world")[:], dtype=np.float64
+    ),
+    "wrench_contact": np.asarray(
+      _require_dataset(file, "contacts/events/wrench_contact_on_geom2")[:],
+      dtype=np.float64,
+    ),
+    "wrench_world": np.asarray(
+      _require_dataset(file, "contacts/events/wrench_world_on_geom2")[:],
+      dtype=np.float64,
+    ),
+  }
+  event_count = len(arrays["geom1"])
+  expected_shapes = {
+    "start": (state_count,),
+    "count": (state_count,),
+    "state_index": (event_count,),
+    "geom1": (event_count,),
+    "geom2": (event_count,),
+    "frame": (event_count, 3, 3),
+    "wrench_contact": (event_count, 6),
+    "wrench_world": (event_count, 6),
+  }
+  for name, shape in expected_shapes.items():
+    if arrays[name].shape != shape:
+      raise ValueError(f"recorded contacts {name} must have shape {shape}")
+  for name in ("start", "count", "state_index", "geom1", "geom2"):
+    if arrays[name].dtype.kind not in "iu":
+      raise ValueError(f"recorded contacts {name} must contain integers")
+  if np.any(arrays["start"] < 0) or np.any(arrays["count"] < 0):
+    raise ValueError("recorded contact frame ranges must be nonnegative")
+  expected_starts = np.concatenate(
+    (
+      np.zeros(1, dtype=np.int64),
+      np.cumsum(arrays["count"][:-1], dtype=np.int64),
+    )
+  )
+  if not np.array_equal(arrays["start"], expected_starts):
+    raise ValueError("recorded contact frame ranges must be contiguous")
+  if int(arrays["start"][-1] + arrays["count"][-1]) != event_count:
+    raise ValueError("recorded contact frame ranges do not cover every event")
+  expected_indices = np.repeat(
+    np.arange(state_count, dtype=np.int64), arrays["count"].astype(np.int64)
+  )
+  if not np.array_equal(arrays["state_index"], expected_indices):
+    raise ValueError("recorded contact events have inconsistent state indices")
+  for name in ("frame", "wrench_contact", "wrench_world"):
+    if not np.isfinite(arrays[name]).all():
+      raise ValueError(f"recorded contacts {name} contains NaN/Inf")
+  expected_world_force = np.einsum(
+    "eji,ej->ei", arrays["frame"], arrays["wrench_contact"][:, :3]
+  )
+  if not np.allclose(
+    arrays["wrench_world"][:, :3],
+    expected_world_force,
+    rtol=1.0e-10,
+    atol=1.0e-9,
+  ):
+    raise ValueError("recorded world/contact-frame force wrenches disagree")
+  return arrays
+
+
+def _legacy_tactile_from_contacts(
+  file: h5py.File,
+  context: _LegacyPickPlaceContext,
+  state_times: np.ndarray,
+  observation_indices: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+  """Reconstruct exact right-pad solver Fn and signed tangent resultant."""
+  model = context.model
+  provider = SolverDistributedTactileProvider(
+    model,
+    target_geom_names=(LEGACY_PICKPLACE_TARGET_GEOM,),
+    link_names=RIGHT_FINGERTIP_LINK_NAMES,
+  )
+  pose_times = _cached_observation_times(
+    state_times, context.timestep, context="state"
+  )[observation_indices]
+  qpos = _interpolate_legacy_qpos(
+    model, state_times, context.state_qpos, pose_times
+  )
+  body_ids = np.asarray(
+    [
+      mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+      for name in RIGHT_FINGERTIP_LINK_NAMES
+    ],
+    dtype=np.intp,
+  )
+  if np.any(body_ids < 0):
+    raise ValueError(f"{context.model_path}: missing a right fingertip body")
+  data = mujoco.MjData(model)
+  rotations = np.empty((len(qpos), 5, 3, 3), dtype=np.float64)
+  for index, row in enumerate(qpos):
+    data.qpos[:] = row
+    data.qvel[:] = 0.0
+    mujoco.mj_forward(model, data)
+    rotations[index] = np.asarray(data.xmat[body_ids]).reshape(5, 3, 3)
+  if not np.allclose(
+    np.swapaxes(rotations, -1, -2) @ rotations,
+    np.eye(3),
+    atol=2.0e-5,
+  ):
+    raise ValueError("legacy fingertip FK produced invalid rotations")
+  tangent_basis_world = np.einsum(
+    "nfij,fkj->nfki", rotations, provider.tangent_basis_local
+  )
+
+  pad_names = tuple(
+    f"{name}_tactile_pad_col" for name in RIGHT_FINGERTIP_LINK_NAMES
+  )
+  recorded_ids = _recorded_name_ids(
+    _require_dataset(file, "model/geom_names"),
+    (*pad_names, LEGACY_PICKPLACE_TARGET_GEOM),
+    context="model/geom_names",
+  )
+  pad_to_finger = {
+    recorded_ids[name]: index for index, name in enumerate(pad_names)
+  }
+  target_id = recorded_ids[LEGACY_PICKPLACE_TARGET_GEOM]
+  arrays = _legacy_contact_events(file, len(state_times))
+  geom_count = _require_dataset(file, "model/geom_names").shape[0]
+  if any(
+    np.any(arrays[name] < 0) or np.any(arrays[name] >= geom_count)
+    for name in ("geom1", "geom2")
+  ):
+    raise ValueError("recorded contact event references an invalid geom id")
+
+  normal = np.zeros((len(observation_indices), 5), dtype=np.float64)
+  tangent = np.zeros((len(observation_indices), 5, 2), dtype=np.float64)
+  selected_count = 0
+  for frame_index, state_index in enumerate(observation_indices):
+    first = int(arrays["start"][state_index])
+    last = first + int(arrays["count"][state_index])
+    for event_index in range(first, last):
+      geom1 = int(arrays["geom1"][event_index])
+      geom2 = int(arrays["geom2"][event_index])
+      if geom1 in pad_to_finger and geom2 == target_id:
+        finger_index = pad_to_finger[geom1]
+        sign = -1.0
+      elif geom2 in pad_to_finger and geom1 == target_id:
+        finger_index = pad_to_finger[geom2]
+        sign = 1.0
+      else:
+        continue
+      wrench = arrays["wrench_contact"][event_index, :3]
+      tangent_contact = np.asarray([0.0, wrench[1], wrench[2]])
+      tangent_world = sign * (arrays["frame"][event_index].T @ tangent_contact)
+      normal[frame_index, finger_index] += abs(float(wrench[0]))
+      tangent[frame_index, finger_index] += (
+        tangent_basis_world[frame_index, finger_index] @ tangent_world
+      )
+      selected_count += 1
+  if selected_count == 0:
+    raise ValueError("legacy episode contains no right-pad/cylinder solver contacts")
+  tangent_resultant = np.linalg.norm(tangent, axis=-1)
+  if (
+    not np.isfinite(normal).all()
+    or not np.isfinite(tangent_resultant).all()
+    or np.any(normal < 0.0)
+  ):
+    raise ValueError("legacy reconstructed fingertip forces are invalid")
+  return normal, tangent_resultant
 
 
 def load_openwam_reference(
@@ -511,37 +1193,73 @@ def load_openwam_reference(
     if not np.isfinite(joint_position).all():
       raise ValueError("reference right-hand joint positions must be finite")
 
-    wrist_dataset = _require_dataset(file, "cameras/head/world_from_wrist")
-    if (
-      wrist_dataset.ndim != 4
-      or wrist_dataset.shape[0] != camera_times_dataset.shape[0]
-      or wrist_dataset.shape[2:] != (4, 4)
-    ):
-      raise ValueError(
-        "cameras/head/world_from_wrist must have shape (camera, side, 4, 4)"
+    has_recorded_wrist = "cameras/head/world_from_wrist" in file
+    has_recorded_taxels = all(
+      path in file
+      for path in (
+        "tactile_contact_force/link_names",
+        "tactile_contact_force/normal_taxel_force_n",
+        "tactile_contact_force/tangent_taxel_force_n",
       )
-    side_count = wrist_dataset.shape[1]
-    side_names = _json_string_list_attribute(
-      head, "side_names_json", expected_length=side_count
     )
-    wrist_sites = _json_string_list_attribute(
-      head, "wrist_sites_json", expected_length=side_count
+    legacy_context = (
+      _legacy_pickplace_context(file, state_times)
+      if (not has_recorded_wrist or not has_recorded_taxels)
+      and _is_legacy_pickplace_episode(file)
+      else None
     )
-    if NATIVE_RIGHT_WRIST_SITE not in wrist_sites:
-      raise ValueError(
-        f"cameras/head does not record native site {NATIVE_RIGHT_WRIST_SITE}"
+    if has_recorded_wrist:
+      # Preserve the native task-space recording fast path byte-for-byte in
+      # semantics; legacy FK is used only when this dataset is absent.
+      wrist_dataset = _require_dataset(file, "cameras/head/world_from_wrist")
+      if (
+        wrist_dataset.ndim != 4
+        or wrist_dataset.shape[0] != camera_times_dataset.shape[0]
+        or wrist_dataset.shape[2:] != (4, 4)
+      ):
+        raise ValueError(
+          "cameras/head/world_from_wrist must have shape (camera, side, 4, 4)"
+        )
+      side_count = wrist_dataset.shape[1]
+      side_names = _json_string_list_attribute(
+        head, "side_names_json", expected_length=side_count
       )
-    right_side = wrist_sites.index(NATIVE_RIGHT_WRIST_SITE)
-    if side_names[right_side] != "right":
-      raise ValueError(
-        f"native site {NATIVE_RIGHT_WRIST_SITE} is not labeled as the right side"
+      wrist_sites = _json_string_list_attribute(
+        head, "wrist_sites_json", expected_length=side_count
       )
-    wrist_matrices = np.asarray(
-      wrist_dataset[:frame_count, right_side], dtype=np.float64
-    )
-    _validate_world_from_wrist(
-      wrist_matrices, context=f"{NATIVE_RIGHT_WRIST_SITE} world pose"
-    )
+      if NATIVE_RIGHT_WRIST_SITE not in wrist_sites:
+        raise ValueError(
+          f"cameras/head does not record native site {NATIVE_RIGHT_WRIST_SITE}"
+        )
+      right_side = wrist_sites.index(NATIVE_RIGHT_WRIST_SITE)
+      if side_names[right_side] != "right":
+        raise ValueError(
+          f"native site {NATIVE_RIGHT_WRIST_SITE} is not labeled as the right side"
+        )
+      wrist_matrices = np.asarray(
+        wrist_dataset[:frame_count, right_side], dtype=np.float64
+      )
+      _validate_world_from_wrist(
+        wrist_matrices, context=f"{NATIVE_RIGHT_WRIST_SITE} world pose"
+      )
+      wrist_source = "cameras/head/world_from_wrist"
+    elif legacy_context is not None:
+      wrist_matrices = _legacy_wrist_from_qpos(
+        file,
+        legacy_context,
+        state_times,
+        camera_times[:frame_count],
+        observation_indices,
+      )
+      wrist_source = (
+        "hash-bound MuJoCo FK from legacy state/qpos at camera cached epoch"
+      )
+    else:
+      # Preserve the original missing-reference signal for non-PickPlace
+      # historical schemas; EvaluationComparisonTrace maps it to
+      # ``reference_unavailable``.
+      _require_dataset(file, "cameras/head/world_from_wrist")
+      raise AssertionError("unreachable")
     wrist_state = np.concatenate(
       (
         wrist_matrices[:, :3, 3],
@@ -550,42 +1268,54 @@ def load_openwam_reference(
       axis=1,
     )
 
-    tactile_names = _decode_names(
-      _require_dataset(file, "tactile_contact_force/link_names"),
-      context="tactile_contact_force/link_names",
-    )
-    tactile_columns = _columns(
-      tactile_names,
-      RIGHT_FINGERTIP_LINK_NAMES,
-      context="tactile_contact_force/link_names",
-    )
-    normal_dataset = _require_dataset(
-      file, "tactile_contact_force/normal_taxel_force_n"
-    )
-    tangent_dataset = _require_dataset(
-      file, "tactile_contact_force/tangent_taxel_force_n"
-    )
-    expected_normal_tail = (len(tactile_names), 7, 5)
-    if normal_dataset.shape != (len(state_times), *expected_normal_tail):
-      raise ValueError(
-        "normal_taxel_force_n must have shape "
-        f"({len(state_times)}, {len(tactile_names)}, 7, 5), "
-        f"got {normal_dataset.shape}"
+    if has_recorded_taxels:
+      tactile_names = _decode_names(
+        _require_dataset(file, "tactile_contact_force/link_names"),
+        context="tactile_contact_force/link_names",
       )
-    if tangent_dataset.shape != (*normal_dataset.shape, 2):
-      raise ValueError(
-        "tangent_taxel_force_n must have shape "
-        f"{(*normal_dataset.shape, 2)}, got {tangent_dataset.shape}"
+      tactile_columns = _columns(
+        tactile_names,
+        RIGHT_FINGERTIP_LINK_NAMES,
+        context="tactile_contact_force/link_names",
       )
-    if observation_indices[-1] >= normal_dataset.shape[0]:
-      raise ValueError("observation state_index is outside tactile force streams")
-    normal = np.asarray(
-      normal_dataset[observation_indices][:, tactile_columns], dtype=np.float64
-    )
-    tangent = np.asarray(
-      tangent_dataset[observation_indices][:, tactile_columns], dtype=np.float64
-    )
-    normal_force, tangent_force = aggregate_fingertip_forces(normal, tangent)
+      normal_dataset = _require_dataset(
+        file, "tactile_contact_force/normal_taxel_force_n"
+      )
+      tangent_dataset = _require_dataset(
+        file, "tactile_contact_force/tangent_taxel_force_n"
+      )
+      expected_normal_tail = (len(tactile_names), 7, 5)
+      if normal_dataset.shape != (len(state_times), *expected_normal_tail):
+        raise ValueError(
+          "normal_taxel_force_n must have shape "
+          f"({len(state_times)}, {len(tactile_names)}, 7, 5), "
+          f"got {normal_dataset.shape}"
+        )
+      if tangent_dataset.shape != (*normal_dataset.shape, 2):
+        raise ValueError(
+          "tangent_taxel_force_n must have shape "
+          f"{(*normal_dataset.shape, 2)}, got {tangent_dataset.shape}"
+        )
+      if observation_indices[-1] >= normal_dataset.shape[0]:
+        raise ValueError("observation state_index is outside tactile force streams")
+      normal = np.asarray(
+        normal_dataset[observation_indices][:, tactile_columns], dtype=np.float64
+      )
+      tangent = np.asarray(
+        tangent_dataset[observation_indices][:, tactile_columns], dtype=np.float64
+      )
+      normal_force, tangent_force = aggregate_fingertip_forces(normal, tangent)
+      tactile_source = "tactile_contact_force taxel grids"
+    elif legacy_context is not None:
+      normal_force, tangent_force = _legacy_tactile_from_contacts(
+        file, legacy_context, state_times, observation_indices
+      )
+      tactile_source = (
+        "recorded contacts/events exact right-pad/cylinder solver resultants"
+      )
+    else:
+      _require_dataset(file, "tactile_contact_force/link_names")
+      raise AssertionError("unreachable")
 
   reference_time = camera_times[:-1] - camera_times[0]
   return OpenWAMReference(
@@ -600,6 +1330,8 @@ def load_openwam_reference(
     fingertip_normal_force_n=normal_force,
     fingertip_tangent_force_n=tangent_force,
     joint_names=requested_joints,
+    wrist_source=wrist_source,
+    tactile_source=tactile_source,
   )
 
 
@@ -910,6 +1642,8 @@ class OpenWAMEvaluationPlots:
         "exported_frames_30hz": reference.exported_frames_30hz,
         "samples": len(reference.time_s),
         "source_start_time_s": reference.source_start_time_s,
+        "wrist_source": reference.wrist_source,
+        "tactile_source": reference.tactile_source,
         "alignment": (
           "first exported_frames_30hz head-camera rows; "
           "cameras/head/state_index selects observation state samples"
@@ -931,6 +1665,7 @@ class OpenWAMEvaluationPlots:
       "tactile": {
         "finger_order": list(FINGER_NAMES),
         "link_names": list(RIGHT_FINGERTIP_LINK_NAMES),
+        "reference_source": reference.tactile_source,
         "taxel_grid": [7, 5],
         "Fn": "sum of all 7x5 normal taxel forces",
         "Ft": (

@@ -9,6 +9,13 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from ...shared.evaluation_guards import (
+  FatalSimulationError,
+  is_observe_mode,
+  mark_physics_invalid,
+  record_guard_event,
+  task_guard,
+)
 from ...shared.simulation import HAND_JOINT_NAMES, ArmHandSimulation
 from ..vase_wipe.sponge import PIN, GraspPatchFriction, SpongeTactileProvider, points
 from . import config
@@ -288,9 +295,18 @@ class SpongeGraspSimulation(ArmHandSimulation):
       np.min(np.linalg.det(tetrahedra[:, 1:] - tetrahedra[:, :1]) / self._rest_volumes)
     )
     self.minimum_element_volume_ratio = min(self.minimum_element_volume_ratio, ratio)
-    if ratio <= 0:
-      self.penetration_count += 1
-      raise RuntimeError(f"Sponge element inverted at {self.data.time:.4f}s")
+    inverted = ratio <= 0
+    if inverted and not is_observe_mode(self):
+      record_guard_event(
+        self,
+        "sponge_integrity_guard",
+        "Sponge element inverted",
+        measured=ratio,
+        threshold=0.0,
+        recovery="stop_invalid_physics",
+      )
+      mark_physics_invalid(self)
+      raise FatalSimulationError("Sponge element inverted")
     rigid = np.flatnonzero(np.all(contacts.geom >= 0, axis=1))
     if len(rigid):
       pairs = contacts.geom[rigid]
@@ -306,12 +322,21 @@ class SpongeGraspSimulation(ArmHandSimulation):
         )
         if distance < 0:
           self.penetration_count += 1
-          raise RuntimeError(f"Hand/table penetration at {self.data.time:.4f}s")
+        task_guard(
+          self,
+          distance < 0,
+          "penetration_guard",
+          "Hand/table penetration",
+          measured=distance,
+          threshold=0.0,
+          recovery="continue_physics",
+        )
     ids = np.flatnonzero(np.any(contacts.flex == self._flex_id, axis=1))
     if len(ids):
       ids = ids[_external_flex_contact_mask(contacts.geom[ids], contacts.elem[ids])]
     if len(ids):
-      distance = float(np.min(contacts.dist[ids]))
+      contact = contacts[int(ids[np.argmin(contacts.dist[ids])])]
+      distance = float(contact.dist)
       self.minimum_sponge_contact_distance_m = (
         distance
         if self.minimum_sponge_contact_distance_m is None
@@ -319,9 +344,33 @@ class SpongeGraspSimulation(ArmHandSimulation):
       )
       if distance < 0:
         self.penetration_count += 1
-        raise RuntimeError(
-          f"Sponge penetration at {self.data.time:.4f}s: {distance * 1000:.6f} mm"
-        )
+      task_guard(
+        self,
+        distance < 0,
+        "penetration_guard",
+        "Sponge penetration",
+        measured=distance,
+        threshold=0.0,
+        recovery="continue_physics",
+        details={
+          "geom": contact.geom.tolist(),
+          "flex": contact.flex.tolist(),
+          "elem": contact.elem.tolist(),
+          "vert": contact.vert.tolist(),
+        },
+      )
+    if inverted:
+      self.penetration_count += 1
+      record_guard_event(
+        self,
+        "sponge_integrity_guard",
+        "Sponge element inverted",
+        measured=ratio,
+        threshold=0.0,
+        recovery="stop_invalid_physics",
+      )
+      mark_physics_invalid(self)
+      raise FatalSimulationError("Sponge element inverted")
 
   def deformation_mm(self):
     current = self.data.flexvert_xpos[

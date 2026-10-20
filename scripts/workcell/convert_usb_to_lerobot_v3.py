@@ -34,6 +34,13 @@ from typing import Any, Iterable, Sequence
 
 import h5py
 import numpy as np
+from kaihand_tactile_env.shared.policy_tasks import (
+  TASK_INSTRUCTIONS as _TASK_INSTRUCTIONS,
+)
+from kaihand_tactile_env.shared.task_variants import (
+  VARIANT_TASKS,
+  validate_variant_outcome,
+)
 
 FPS = 30
 RAW_SCHEMA = "kaihand_tactile_episode_v1"
@@ -141,6 +148,18 @@ TASK_SPECS = {
     diagnostic_group="sponge_grasp",
   ),
 }
+
+for _task in VARIANT_TASKS:
+  TASK_SPECS[_task] = TaskSpec(
+    name=_task, key=_task.replace("-", "_"),
+    object_name={
+      "usb-unplug": "usb_plug", "bulb-unscrew": "bulb", "bulb-screw-inplace": "bulb",
+      "whiteboard-wipe-horizontal": "eraser",
+      "whiteboard-wipe-horizontal-line": "eraser",
+    }[_task],
+    instruction=_TASK_INSTRUCTIONS[_task], control_hz=100,
+    diagnostic_group=_task.replace("-", "_"),
+  )
 
 # Legacy names retained for callers/tests that imported the original USB-only
 # module. Runtime conversion uses the task detected from collection.json or a
@@ -480,7 +499,9 @@ def _validate_success_gate(
     raise ValueError(
       f"{path}: outcome object {object_name!r} is not {spec.object_name!r}"
     )
-  if spec.name == "usb-insert":
+  if spec.name in VARIANT_TASKS:
+    validate_variant_outcome(spec.name, outcome, require_current_usb_protocol=True)
+  elif spec.name == "usb-insert":
     insertion = outcome.get("insertion")
     if (
       outcome.get("released") is not True

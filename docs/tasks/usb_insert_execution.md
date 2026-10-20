@@ -1,5 +1,9 @@
 # USB 正手插入与肘部外展验证
 
+当前原生成功、0.6 N / 0.15 秒主动到底证据，以及专家完整结果之间的准确区别，见
+[USB 插入成功判定](success_criteria.md#usb-insert)。尤其不能把原生 `success`
+直接解释成已主动压底并释放；下文带日期的动作/验收记录保留其历史背景。
+
 2026-09-17：插入前增加孔口上方的停稳对准。搬运完成后，先把插头尖端移到
 孔口上方 100 mm；横向误差小于 0.08 mm、姿态误差小于 0.004 rad、
 高度误差小于 0.15 mm、线速度小于 1 mm/s、角速度小于 0.01 rad/s
@@ -28,9 +32,9 @@
 运行原命令：
 
 ```bash
-pixi run run-usb-insert
+pixi run --as-is run-usb-insert
 # 无窗口执行并保存报告（输出文件不能已经存在）
-pixi run run-usb-insert -- --headless --result-json artifacts/usb_run.json
+pixi run --as-is run-usb-insert -- --headless --result-json artifacts/usb_run.json
 ```
 
 自动入口显式使用 `--run-task --plug-for-insertion`。沿用已认可正手版本的 USB 初态：标记朝下、yaw 为 330°，连接端朝机器人前方偏右。仅在 time=0 设置朝向，位置仍在原桌面位置；默认查看场景、旧 `--plug-face-down` 预设和其他任务保持原状。

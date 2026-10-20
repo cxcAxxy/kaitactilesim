@@ -11,7 +11,6 @@ const CAMERA_LABELS = {
 
 const FINGER_LABELS = ["Thumb", "Index", "Middle", "Ring", "Pinky"];
 const CHANNEL_KEYS = ["normal", "tangential", "proximity"];
-const CHANNEL_CLASSES = ["normal", "tangent", "proximity"];
 const APP_BASE = new URL("./", window.location.href);
 
 const elements = Object.fromEntries(
@@ -41,6 +40,9 @@ const state = {
   master: null,
   generation: 0,
   animationFrame: null,
+  playbackRequest: 0,
+  playbackReady: false,
+  lastSyncAt: 0,
   seeking: false,
   toastTimer: null,
   restoreToken: null,
@@ -59,7 +61,8 @@ async function api(path, options = {}) {
   const type = response.headers.get("content-type") || "";
   const payload = type.includes("application/json") ? await response.json() : null;
   if (!response.ok) {
-    const message = payload?.error || payload?.message || `${response.status} ${response.statusText}`;
+    let message = payload?.error?.message || payload?.message || `${response.status} ${response.statusText}`;
+    if (payload?.error?.details?.token) message += `（回收站 token: ${payload.error.details.token}）`;
     throw new Error(message);
   }
   return payload;
@@ -152,7 +155,7 @@ async function loadDataset(refresh = false, preferredId = null) {
   elements.refreshButton.disabled = true;
   setHealth("loading", refresh ? "重新扫描中" : "读取数据集");
   try {
-    const payload = await api(`/api/dataset${refresh ? "?refresh=1" : ""}`);
+    const payload = await api("/api/dataset");
     state.dataset = payload;
     state.episodes = [...(payload.episodes || [])].sort((a, b) => episodeId(a) - episodeId(b));
     elements.episodeCount.textContent = String(payload.count ?? state.episodes.length);
@@ -233,17 +236,25 @@ function escapeHtml(value) {
   })[character]);
 }
 
-function renderCameraGrid() {
+function releaseVideos() {
   stopPlayback();
-  for (const video of state.videos.values()) {
+  const oldVideos = [...state.videos.values()];
+  state.videos.clear();
+  state.master = null;
+  state.playbackReady = false;
+  elements.playButton.disabled = true;
+  for (const video of oldVideos) {
     video.removeAttribute("src");
     video.load();
   }
-  state.videos.clear();
-  state.master = null;
+}
+
+function renderCameraGrid(videos) {
+  releaseVideos();
   const fragment = document.createDocumentFragment();
-  const videos = episodeVideos(state.activeSummary);
-  const cameras = cameraNames().filter((camera) => videos[camera] !== false && videos[camera] !== null);
+  const cameras = cameraNames().filter(
+    (camera) => videos[camera] === true || typeof videos[camera] === "string",
+  );
   cameras.forEach((camera, index) => {
     const card = document.createElement("article");
     card.className = "camera-card";
@@ -251,7 +262,7 @@ function renderCameraGrid() {
     label.className = "camera-label";
     label.textContent = CAMERA_LABELS[camera] || camera.replaceAll("_", " ").toUpperCase();
     const video = document.createElement("video");
-    video.preload = index === 0 ? "auto" : "metadata";
+    video.preload = "auto";
     video.muted = true;
     video.playsInline = true;
     video.disablePictureInPicture = false;
@@ -266,17 +277,32 @@ function renderCameraGrid() {
     status.textContent = "载入中";
     const error = document.createElement("div");
     error.className = "camera-error";
-    error.textContent = "浏览器无法解码该 AV1 视频。请使用新版 Chrome/Edge，或在服务器端生成 H.264 代理。";
+    error.textContent = "视频载入失败，请刷新列表或重新选择数据。";
     video.addEventListener("loadedmetadata", () => {
+      if (state.videos.get(camera) !== video) return;
       status.textContent = `${video.videoWidth}×${video.videoHeight} · ${episodeFps(state.activeSummary)} FPS`;
       if (video === state.master) setupMasterDuration();
+      state.playbackReady = [...state.videos.values()].every(item => item.readyState >= 1 && !item.error);
+      elements.playButton.disabled = !state.playbackReady;
+      if (state.playbackReady) setHealth("ready", "视频已就绪");
     });
     video.addEventListener("canplay", () => card.classList.remove("has-error"));
     video.addEventListener("error", () => {
+      if (state.videos.get(camera) !== video || !video.error) return;
+      state.playbackReady = false;
+      elements.playButton.disabled = true;
+      stopPlayback();
       card.classList.add("has-error");
       label.classList.add("is-error");
-      status.textContent = "解码失败";
-      setHealth("error", "视频解码失败");
+      const messages = {
+        1: "视频载入已中止，请重新选择该条数据。",
+        2: "视频请求失败，请检查服务器连接后重试。",
+        3: "H.264 视频解码失败，请刷新后重试。",
+        4: "H.264 视频源不可用，请检查服务器或端口代理后重试。",
+      };
+      error.textContent = messages[video.error.code] || "视频载入失败，请重新选择该条数据。";
+      status.textContent = "载入失败";
+      setHealth("error", "视频载入失败");
     });
     card.append(video, label, status, error);
     fragment.append(card);
@@ -291,9 +317,12 @@ function renderCameraGrid() {
 function bindMasterEvents() {
   const master = state.master;
   if (!master) return;
-  master.addEventListener("timeupdate", updatePlaybackUi);
+  master.addEventListener("timeupdate", () => {
+    if (master === state.master) updatePlaybackUi();
+  });
   master.addEventListener("progress", updateBufferedUi);
   master.addEventListener("ended", () => {
+    if (master !== state.master) return;
     if (elements.loopButton.getAttribute("aria-pressed") === "true") {
       seekAll(0);
       playAll();
@@ -301,8 +330,29 @@ function bindMasterEvents() {
       stopPlayback();
     }
   });
-  master.addEventListener("waiting", () => setHealth("loading", "视频缓冲中"));
-  master.addEventListener("playing", () => setHealth("ready", "三路同步播放"));
+  master.addEventListener("waiting", () => {
+    if (master === state.master) setHealth("loading", "视频缓冲中");
+  });
+  master.addEventListener("playing", () => {
+    if (master === state.master) setHealth("ready", "三路同步播放");
+  });
+}
+
+async function preparePlayback(id, generation) {
+  const deadline = performance.now() + 300000;
+  while (generation === state.generation) {
+    const payload = await api(`/api/episodes/${id}/playback`);
+    if (generation !== state.generation) return;
+    if (payload.state === "ready") {
+      renderCameraGrid(payload.videos);
+      return;
+    }
+    const message = `正在准备兼容视频 ${payload.completed}/${payload.total}，首次打开需要稍等…`;
+    elements.cameraGrid.textContent = message;
+    setHealth("loading", `准备视频 ${payload.completed}/${payload.total}`);
+    if (performance.now() > deadline) throw new Error("视频准备超时，请重新选择该条数据重试");
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
 }
 
 function setupMasterDuration() {
@@ -321,7 +371,7 @@ async function selectEpisode(id, { force = false } = {}) {
   const summary = state.episodes.find((episode) => episodeId(episode) === id);
   if (!summary) return;
   const generation = ++state.generation;
-  stopPlayback();
+  releaseVideos();
   state.activeId = id;
   state.activeSummary = summary;
   state.metadata = null;
@@ -335,13 +385,24 @@ async function selectEpisode(id, { force = false } = {}) {
   elements.deleteButton.disabled = false;
   elements.previousButton.disabled = false;
   elements.nextButton.disabled = false;
+  elements.timeline.max = String(Math.max(durationSeconds(summary), 0.001));
+  elements.timeline.value = "0";
+  elements.timeline.style.setProperty("--progress", "0%");
+  elements.currentTime.textContent = formatDuration(0);
+  elements.durationTime.textContent = formatDuration(durationSeconds(summary));
   elements.tactileStatus.textContent = "读取并按 10 Hz 对齐触觉…";
   setHealth("loading", "载入 episode");
   renderEpisodeList();
   const active = elements.episodeList.querySelector(`[data-id="${id}"]`);
   active?.scrollIntoView({ block: "nearest" });
-  renderCameraGrid();
+  elements.cameraGrid.textContent = "正在检查播放视频…";
   resetTactileDashboard();
+
+  const playbackPromise = preparePlayback(id, generation).catch(error => {
+    if (generation !== state.generation) return;
+    elements.cameraGrid.textContent = `视频准备失败：${error.message}。请刷新列表重试。`;
+    throw error;
+  });
 
   const detailsPromise = api(`/api/episodes/${id}`)
     .then((payload) => {
@@ -357,9 +418,9 @@ async function selectEpisode(id, { force = false } = {}) {
       state.telemetryIndex = -1;
       const samples = state.telemetry.times.length;
       elements.tactileStatus.textContent = `${samples.toLocaleString()} 个显示采样 · latest-nonfuture 对齐`;
-      updateTactile(0, true);
+      updateTactile(state.master?.currentTime || 0, true);
     });
-  const results = await Promise.allSettled([detailsPromise, telemetryPromise]);
+  const results = await Promise.allSettled([detailsPromise, telemetryPromise, playbackPromise]);
   if (generation !== state.generation) return;
   const failures = results.filter((result) => result.status === "rejected");
   if (failures.length) {
@@ -367,7 +428,10 @@ async function selectEpisode(id, { force = false } = {}) {
     elements.tactileStatus.textContent = `部分数据不可用：${message}`;
     showToast(`载入 ${episodeName(id)} 时出现问题：${message}`);
   }
-  setHealth(failures.length === results.length ? "error" : "ready", failures.length ? "部分数据可用" : "同步数据已就绪");
+  if (results[2].status === "rejected") setHealth("error", "视频准备失败");
+  else if (state.playbackReady && ![...state.videos.values()].some(video => video.error)) {
+    setHealth("ready", failures.length ? "视频已就绪，部分数据不可用" : "同步数据已就绪");
+  }
 }
 
 function updateHeaderFromMetadata(payload) {
@@ -388,11 +452,7 @@ function updateHeaderFromMetadata(payload) {
 
 function clearSelection() {
   ++state.generation;
-  stopPlayback();
-  for (const video of state.videos.values()) {
-    video.removeAttribute("src");
-    video.load();
-  }
+  releaseVideos();
   state.activeId = null;
   state.activeSummary = null;
   state.metadata = null;
@@ -414,25 +474,38 @@ function clearSelection() {
 function resetTactileDashboard() {
   const fragment = document.createDocumentFragment();
   [["LEFT", "左手"], ["RIGHT", "右手"]].forEach(([hand, zh]) => {
-    const handLabel = document.createElement("div");
-    handLabel.className = "hand-label";
-    handLabel.innerHTML = `<strong>${hand}</strong><span>${zh}</span>`;
-    fragment.append(handLabel);
-    FINGER_LABELS.forEach((finger, fingerIndex) => {
-      const card = document.createElement("div");
-      card.className = "finger-card";
-      card.dataset.hand = hand.toLowerCase();
-      card.dataset.finger = String(fingerIndex);
-      card.innerHTML = `
-        <span>${finger}</span>
-        <div class="finger-bars">
-          ${CHANNEL_CLASSES.map((channel) => `<i class="sensor-bar ${channel}" style="--level:0"></i>`).join("")}
-        </div>
-        <div class="finger-values"><b>0</b><b>0</b><b>0</b></div>`;
-      fragment.append(card);
+    ["Fn", "|Ft|"].forEach((quantity, channel) => {
+      const label = document.createElement("div");
+      label.className = "hand-label";
+      label.dataset.scaleChannel = String(channel);
+      label.innerHTML = `<strong>${hand}</strong><span>${zh} ${quantity}</span><small>raw</small>`;
+      fragment.append(label);
+      FINGER_LABELS.forEach((finger, fingerIndex) => {
+        const card = document.createElement("div");
+        card.className = "finger-card";
+        card.dataset.hand = hand.toLowerCase();
+        card.dataset.finger = String(fingerIndex);
+        card.dataset.channel = String(channel);
+        card.innerHTML = `<span>${finger}</span>
+          <div class="finger-heatmap is-missing" role="img" aria-label="${zh} ${finger} ${quantity}：暂无数据">
+            <b class="heatmap-value">—</b><small class="heatmap-saturation" hidden>超量程</small>
+          </div>`;
+        fragment.append(card);
+      });
     });
   });
   elements.tactileDashboard.replaceChildren(fragment);
+}
+
+function heatmapColor(level) {
+  // Same color lookup knots as shared/evaluation_video.py::_heatmap_lut.
+  const knots = [0, 48, 112, 176, 224, 255];
+  const colors = [[5, 4, 12], [40, 8, 75], [150, 15, 115], [235, 45, 75], [255, 145, 20], [255, 245, 220]];
+  const position = Math.round(Math.max(0, Math.min(1, level)) * 255);
+  let i = 0;
+  while (i < knots.length - 2 && position > knots[i + 1]) i += 1;
+  const fraction = (position - knots[i]) / (knots[i + 1] - knots[i]);
+  return `rgb(${colors[i].map((v, channel) => Math.floor(v + fraction * (colors[i + 1][channel] - v))).join(', ')})`;
 }
 
 function normalizeTelemetry(payload) {
@@ -471,22 +544,25 @@ function updateTactile(time, force = false) {
   const index = sampleIndexAt(time);
   if (index < 0 || (!force && index === state.telemetryIndex)) return;
   state.telemetryIndex = index;
-  ["left", "right"].forEach((hand) => {
-    const handSample = state.telemetry[hand]?.[index];
-    if (!handSample) return;
-    for (let finger = 0; finger < 5; finger += 1) {
-      const card = elements.tactileDashboard.querySelector(`[data-hand="${hand}"][data-finger="${finger}"]`);
-      const values = handSample[finger] || [0, 0, 0];
-      card?.querySelectorAll(".sensor-bar").forEach((bar, channel) => {
-        const value = Math.max(0, Number(values[channel]) || 0);
-        const level = Math.min(1, value / state.telemetry.scales[channel]);
-        bar.style.setProperty("--level", level.toFixed(4));
-      });
-      card?.querySelectorAll(".finger-values b").forEach((label, channel) => {
-        label.textContent = compactNumber(values[channel]);
-        label.title = String(values[channel] ?? 0);
-      });
-    }
+  elements.tactileDashboard.querySelectorAll('[data-scale-channel]').forEach(label => {
+    const maximum = state.telemetry.scales[Number(label.dataset.scaleChannel)];
+    label.querySelector('small').textContent = `0–${compactNumber(maximum)}`;
+    label.title = `当前 episode 固定量程：0–${maximum} SDK raw（P99）`;
+  });
+  elements.tactileDashboard.querySelectorAll('.finger-card').forEach(card => {
+    const {hand, finger, channel} = card.dataset;
+    const raw = state.telemetry[hand]?.[index]?.[Number(finger)]?.[Number(channel)];
+    const missing = raw == null || !Number.isFinite(raw);
+    const value = missing ? null : (Number(channel) === 1 ? Math.abs(raw) : Math.max(0, raw));
+    const maximum = state.telemetry.scales[Number(channel)];
+    const map = card.querySelector('.finger-heatmap');
+    map.classList.toggle('is-missing', missing);
+    map.style.backgroundColor = missing ? '' : heatmapColor(value / maximum);
+    map.querySelector('.heatmap-value').textContent = missing ? '—' : compactNumber(value);
+    map.querySelector('.heatmap-saturation').hidden = missing || value <= maximum;
+    const description = `${hand} ${FINGER_LABELS[Number(finger)]} ${Number(channel) === 0 ? 'Fn' : '|Ft|'}: ${missing ? '暂无数据' : `${value} SDK raw`}`;
+    map.setAttribute('aria-label', description);
+    map.title = `${description}；每指整体值，无空间 taxel 数据`;
   });
 }
 
@@ -501,25 +577,32 @@ function compactNumber(value) {
 }
 
 async function playAll() {
-  if (!state.master) return;
+  if (!state.master || !state.playbackReady) return;
+  const master = state.master;
+  const request = ++state.playbackRequest;
   if (state.master.ended || state.master.currentTime >= state.master.duration - 0.02) seekAll(0);
   const target = state.master.currentTime;
   for (const video of state.videos.values()) {
-    if (Math.abs(video.currentTime - target) > 0.03) video.currentTime = target;
+    if (!video.seeking && Math.abs(video.currentTime - target) > 0.03) video.currentTime = target;
     video.playbackRate = Number(elements.speedSelect.value);
   }
   const outcomes = await Promise.allSettled([...state.videos.values()].map((video) => video.play()));
+  if (request !== state.playbackRequest || master !== state.master) return;
   const rejected = outcomes.filter((outcome) => outcome.status === "rejected");
-  if (rejected.length === outcomes.length) {
+  if (rejected.length) {
+    stopPlayback();
     showToast(`无法开始播放：${rejected[0].reason?.message || "浏览器拒绝播放"}`);
     return;
   }
   elements.playButton.classList.add("is-playing");
   elements.playButton.setAttribute("aria-label", "暂停");
+  if (state.animationFrame !== null) cancelAnimationFrame(state.animationFrame);
+  state.lastSyncAt = 0;
   syncLoop();
 }
 
 function stopPlayback() {
+  ++state.playbackRequest;
   for (const video of state.videos.values()) video.pause();
   elements.playButton.classList.remove("is-playing");
   elements.playButton.setAttribute("aria-label", "播放");
@@ -533,9 +616,16 @@ function syncLoop() {
     return;
   }
   const time = state.master.currentTime;
-  for (const video of state.videos.values()) {
-    if (video === state.master || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) continue;
-    if (Math.abs(video.currentTime - time) > 0.09) video.currentTime = time;
+  const now = performance.now();
+  if (!state.seeking && !state.master.seeking && now - state.lastSyncAt >= 250) {
+    state.lastSyncAt = now;
+    for (const video of state.videos.values()) {
+      if (video === state.master || video.seeking || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) continue;
+      const drift = video.currentTime - time;
+      const rate = Number(elements.speedSelect.value);
+      if (Math.abs(drift) > 0.5) video.currentTime = time;
+      else video.playbackRate = rate * (Math.abs(drift) > 0.04 ? (drift > 0 ? 0.95 : 1.05) : 1);
+    }
   }
   updatePlaybackUi();
   state.animationFrame = requestAnimationFrame(syncLoop);
@@ -552,7 +642,10 @@ function seekAll(time) {
 }
 
 function updatePlaybackUi(explicitTime = null) {
-  const time = explicitTime ?? state.master?.currentTime ?? 0;
+  if (state.seeking && !Number.isFinite(explicitTime)) return;
+  // DOM event objects are not timestamps. Ignore them even if a future caller
+  // accidentally installs this function directly as an event listener.
+  const time = Number.isFinite(explicitTime) ? explicitTime : state.master?.currentTime ?? 0;
   const duration = Number(elements.timeline.max) || state.master?.duration || 0;
   if (!state.seeking) elements.timeline.value = String(time);
   elements.timeline.style.setProperty("--progress", `${duration ? (time / duration) * 100 : 0}%`);
@@ -646,12 +739,14 @@ async function restoreLastDeletion() {
   const id = state.deletedId;
   elements.toastAction.disabled = true;
   try {
-    await api(`/api/trash/${encodeURIComponent(token)}/restore`, { method: "POST" });
+    const payload = await api(`/api/trash/${encodeURIComponent(token)}/restore`, { method: "POST" });
     state.restoreToken = null;
     state.deletedId = null;
     hideToast();
     await loadDataset(true, id);
-    showToast(`${episodeName(id)} 已恢复`);
+    showToast(payload.trash_cleanup_pending
+      ? `${episodeName(id)} 已恢复；回收站空目录可稍后清理`
+      : `${episodeName(id)} 已恢复`);
   } catch (error) {
     elements.toastAction.disabled = false;
     showToast(`恢复失败：${error.message}`, "重试", restoreLastDeletion);
@@ -675,7 +770,12 @@ function hideToast() {
 }
 
 function isEditingTarget(target) {
-  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target.isContentEditable;
+  return target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement
+    || target instanceof HTMLButtonElement
+    || target instanceof HTMLAnchorElement
+    || target.isContentEditable;
 }
 
 elements.episodeSearch.addEventListener("input", applyFilter);

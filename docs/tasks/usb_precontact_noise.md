@@ -4,16 +4,16 @@ USB 自动任务在接触物体前，可向手腕目标的世界 X/Y 平移加�
 
 ```bash
 # 使用默认噪声；每次自动生成并记录 noise seed
-pixi run run-usb-insert
+pixi run --as-is run-usb-insert
 
 # 固定物体初态和控制噪声，保存完整控制轨迹
-pixi run run-usb-insert -- --headless \
+pixi run --as-is run-usb-insert -- --headless \
   --xy-jitter-mm 10 --yaw-jitter-deg 5 --seed 42 \
   --precontact-noise-mm 0.5 --noise-seed 1 \
   --result-json /path/to/usb_seed42_noise1.json
 
 # 无噪声基线
-pixi run run-usb-insert -- --precontact-noise-mm 0
+pixi run --as-is run-usb-insert -- --precontact-noise-mm 0
 ```
 
 物体初态的 `--seed` 与控制噪声的 `--noise-seed` 相互独立。只固定前者能复现摆放，不能保证控制轨迹相同；在模型和控制器版本相同的前提下，同时固定两种 seed 及相关参数才能复现加噪动作。初态定义见 [USB 初始位姿随机化](usb_randomization.md)。

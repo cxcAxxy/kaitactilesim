@@ -53,6 +53,46 @@ def test_scene_isolated_and_passive(sim):
   assert not BulbScrewMonitor(sim).measure().success
 
 
+def test_pickup_cradle_is_open_passive_and_clears_neck(sim):
+  cradle = sim.model.body("bulb_pickup_cradle").id
+  assert sim.model.body_jntnum[cradle] == 0
+  assert sim.model.body_geomnum[cradle] == config.PICKUP_CRADLE_PRONG_COUNT
+  prongs = np.array(
+    [
+      sim.model.geom(f"bulb_pickup_cradle_prong_{i:02d}").id
+      for i in range(config.PICKUP_CRADLE_PRONG_COUNT)
+    ]
+  )
+  assert set(sim.model.geom_bodyid[prongs]) == {cradle}
+  assert np.all(sim.model.geom_type[prongs] == mujoco.mjtGeom.mjGEOM_CAPSULE)
+  np.testing.assert_allclose(
+    sim.model.geom_size[prongs, 0], config.PICKUP_CRADLE_PRONG_RADIUS_M
+  )
+  inner_radius = (
+    np.linalg.norm(sim.model.geom_pos[prongs, :2], axis=1)
+    - sim.model.geom_size[prongs, 0]
+  )
+  np.testing.assert_allclose(inner_radius, config.PICKUP_CRADLE_INNER_RADIUS_M)
+  height = 2 * (sim.model.geom_size[prongs, 0] + sim.model.geom_size[prongs, 1])
+  np.testing.assert_allclose(height, config.PICKUP_CRADLE_HEIGHT_M)
+  assert np.all(sim.model.geom_friction[prongs, 0] == pytest.approx(0.12))
+
+  neck = sim.model.geom("bulb_neck").id
+  assert min(inner_radius) > sim.model.geom_size[neck, 0]
+  # No hidden attachment: the free bulb remains a different body and lifts out.
+  assert sim.model.geom_bodyid[neck] == sim.model.body("bulb").id
+
+  globe = sim.model.geom("bulb_globe").id
+  mark = sim.model.geom("bulb_orientation_mark").id
+  np.testing.assert_allclose(
+    sim.model.geom_size[globe, :2], config.BULB_GLOBE_RADIUS_XY_M
+  )
+  assert sim.model.geom_size[globe, 2] == pytest.approx(0.034)
+  assert sim.model.geom_pos[mark, 0] == pytest.approx(
+    config.BULB_GLOBE_RADIUS_XY_M - 0.0002
+  )
+
+
 @pytest.mark.parametrize(
   "offset,quat",
   [
@@ -79,8 +119,15 @@ def test_capture_preserves_free_pose_and_reset_clears_thread(sim):
   before = sim.data.qpos.copy()
   velocity = sim.data.qvel.copy()
   assert sim.try_engage_thread()
-  np.testing.assert_array_equal(sim.data.qpos, before)
-  np.testing.assert_array_equal(sim.data.qvel, velocity)
+  free_qpos = int(sim.model.joint("bulb_freejoint").qposadr[0])
+  np.testing.assert_array_equal(
+    sim.data.qpos[free_qpos : free_qpos + 7],
+    before[free_qpos : free_qpos + 7],
+  )
+  np.testing.assert_array_equal(
+    sim.data.qvel[dof : dof + 6],
+    velocity[dof : dof + 6],
+  )
   sim.step(100)
   np.testing.assert_allclose(sim.object_pose("bulb")[3:], quat, atol=0.003)
   sim.reset(seed=5, object_xy_jitter=0.001)
@@ -91,6 +138,71 @@ def test_capture_preserves_free_pose_and_reset_clears_thread(sim):
   np.testing.assert_array_equal(
     sim.model.eq_data[sim._weld, 3:10], [0, 0, 0, 1, 0, 0, 0]
   )
+
+
+@pytest.mark.parametrize(
+  ("twist", "margin"),
+  (
+    (
+      (0, 0, -1.01 * config.CAPTURE_SPEED_M_S, 0, 0, 0),
+      "capture_speed_margin_m_s",
+    ),
+    (
+      (0, 0, 0, 0, 0, 1.01 * config.CAPTURE_ANGULAR_SPEED_RAD_S),
+      "capture_angular_speed_margin_rad_s",
+    ),
+  ),
+)
+def test_capture_rejects_high_linear_or_angular_speed(sim, twist, margin):
+  sim.reset()
+  sim.set_object_pose("bulb", config.THREAD_ENTRY_POSITION_M)
+  dof = int(sim.model.joint("bulb_freejoint").dofadr[0])
+  sim.data.qvel[dof : dof + 6] = twist
+  mujoco.mj_forward(sim.model, sim.data)
+
+  state = BulbScrewMonitor(sim).measure()
+  assert getattr(state, margin) < 0
+  assert not state.capture_ready
+  assert not sim.try_engage_thread()
+
+
+def test_capture_initializes_thread_phase_and_smoothly_removes_gate_residual(sim):
+  sim.reset()
+  yaw = np.deg2rad(340.0)
+  tilt = np.deg2rad(1.9)
+  yaw_quaternion = np.array([np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)])
+  tilt_quaternion = np.array([np.cos(tilt / 2), np.sin(tilt / 2), 0, 0])
+  quaternion = np.empty(4)
+  mujoco.mju_mulQuat(quaternion, yaw_quaternion, tilt_quaternion)
+  depth_offset = 0.0002
+  position = config.THREAD_ENTRY_POSITION_M.copy()
+  position[0] += 0.00039
+  position[2] -= depth_offset
+  sim.set_object_pose("bulb", position, quaternion)
+  before = sim.object_pose("bulb").copy()
+
+  assert sim.thread_contact_load() > config.THREAD_CAPTURE_LOAD_N
+  assert sim.try_engage_thread()
+  np.testing.assert_array_equal(sim.object_pose("bulb"), before)
+  assert sim.data.qpos[sim._slide] == pytest.approx(depth_offset, abs=1e-12)
+  assert sim.data.qpos[sim._hinge] == pytest.approx(
+    2 * np.pi * depth_offset / config.THREAD_PITCH_M,
+    abs=1e-12,
+  )
+
+  peak_linear = 0.0
+  peak_angular = 0.0
+  for _ in range(round(config.CAPTURE_ALIGNMENT_S / sim.timestep) + 10):
+    sim.step()
+    twist = sim.object_twist("bulb")
+    peak_linear = max(peak_linear, float(np.linalg.norm(twist[:3])))
+    peak_angular = max(peak_angular, float(np.linalg.norm(twist[3:])))
+  _, lateral, final_tilt = sim._alignment()
+  assert peak_linear < 0.02
+  assert peak_angular < 0.35
+  assert lateral < 0.00002
+  assert final_tilt < np.deg2rad(0.1)
+  assert np.isfinite(sim.data.qpos).all()
 
 
 def test_real_torque_advances_pitch_and_reverse_releases(sim):
@@ -105,10 +217,15 @@ def test_real_torque_advances_pitch_and_reverse_releases(sim):
   assert not state.seated
   sim.data.xfrc_applied[sim.model.body("bulb").id, 5] = config.MECHANICS_DEMO_TORQUE_NM
   for _ in range(2000):
+    previous_pose = sim.object_pose("bulb").copy()
     sim.step()
     if not sim.thread_engaged:
+      released_pose = sim.object_pose("bulb")
       break
   assert not sim.thread_engaged
+  assert np.linalg.norm(released_pose[:3] - previous_pose[:3]) < 0.001
+  hinge = sim.model.joint("bulb_thread_angle")
+  assert sim.data.qpos[sim._hinge] > hinge.range[0] + 0.1
   assert not sim.try_engage_thread()  # Must lift clear before recapturing.
   sim.reset()
 
@@ -129,7 +246,7 @@ def test_small_torque_compresses_rim_without_certifying_tightness(sim):
 
 def test_bottom_contact_and_continuous_dwell(sim):
   sim.initialize_threaded()
-  monitor = BulbScrewMonitor(sim)
+  monitor = BulbScrewMonitor(sim, auto_confirm_tightening=False)
   touched = False
   for _ in range(4500):
     sim.data.xfrc_applied[sim.model.body("bulb").id, 5] = (
@@ -223,14 +340,14 @@ def test_actual_finger_contact_drives_shared_tactile(sim):
   normal = rotation @ layout.local_normal[ids].mean(axis=0)
   normal /= np.linalg.norm(normal)
   center = data.xpos[body] + rotation @ layout.local_pos[ids].mean(axis=0)
-  # Align the ellipsoid's 30 mm X radius with the tactile pad normal.
+  # Align the ellipsoid's 29 mm X radius with the tactile pad normal.
   reference = np.eye(3)[int(np.argmin(np.abs(normal)))]
   tangent = np.cross(normal, reference)
   tangent /= np.linalg.norm(tangent)
   object_rotation = np.column_stack((normal, tangent, np.cross(normal, tangent)))
   quat = np.empty(4)
   mujoco.mju_mat2Quat(quat, object_rotation.ravel())
-  position = center + normal * 0.0295 - object_rotation @ np.array([0, 0, 0.072])
+  position = center + normal * 0.0285 - object_rotation @ np.array([0, 0, 0.072])
   sim.set_object_pose("bulb", position, quat)
   depth, force = probes.read(data), forces.read(data)
   assert depth.contact[index]
@@ -273,7 +390,9 @@ def test_funnel_contacts_and_guides_misaligned_bulb(sim):
   scene = ET.parse(default_model_path("bulb-screw")).getroot()
   mesh = scene.find("asset/mesh[@name='bulb_funnel_sector']")
   assert mesh is not None
-  vertices = np.asarray([float(v) for v in mesh.attrib["vertex"].split()]).reshape(-1, 3)
+  vertices = np.asarray([float(v) for v in mesh.attrib["vertex"].split()]).reshape(
+    -1, 3
+  )
   bottom_radius = np.linalg.norm(vertices[0, :2])
   throat_radius = np.linalg.norm(vertices[4, :2])
   top_radius = np.linalg.norm(vertices[8, :2])
@@ -282,7 +401,9 @@ def test_funnel_contacts_and_guides_misaligned_bulb(sim):
   assert throat_radius == pytest.approx(0.0168, abs=1e-6)
   assert top_radius == pytest.approx(0.030, abs=1e-6)
   assert outer_radius == pytest.approx(0.044, abs=1e-6)
-  assert sim.model.geom("bulb_fixture_base").size[0] == pytest.approx(outer_radius, abs=1e-6)
+  assert sim.model.geom("bulb_fixture_base").size[0] == pytest.approx(
+    outer_radius, abs=1e-6
+  )
   slope_angle = np.arctan2(vertices[8, 2] - vertices[4, 2], top_radius - throat_radius)
   assert slope_angle > np.deg2rad(60)
 
@@ -290,9 +411,7 @@ def test_funnel_contacts_and_guides_misaligned_bulb(sim):
   # collision faces must actually deflect a falling free bulb toward its axis.
   sim.reset()
   sim.set_object_pose("bulb", [0.631, -0.180, 0.738])
-  funnel = {
-    sim.model.geom(f"bulb_socket_funnel_{i:02d}").id for i in range(24)
-  }
+  funnel = {sim.model.geom(f"bulb_socket_funnel_{i:02d}").id for i in range(24)}
   assert any(
     sim.data.contact[i].geom1 in funnel or sim.data.contact[i].geom2 in funnel
     for i in range(sim.data.ncon)

@@ -10,13 +10,24 @@ from pathlib import Path
 from types import ModuleType
 
 from kaihand_tactile_env.tasks.bulb_screw import config as bulb_screw_config
+from kaihand_tactile_env.tasks.bulb_screw_inplace import (
+  config as bulb_screw_inplace_config,
+)
+from kaihand_tactile_env.tasks.bulb_unscrew import config as bulb_unscrew_config
 from kaihand_tactile_env.tasks.install_ram import config as install_ram_config
 from kaihand_tactile_env.tasks.pick_place import config as pick_place_config
 from kaihand_tactile_env.tasks.poker_draw import config as poker_draw_config
 from kaihand_tactile_env.tasks.sponge_grasp import config as sponge_grasp_config
 from kaihand_tactile_env.tasks.usb_insert import config as usb_insert_config
+from kaihand_tactile_env.tasks.usb_unplug import config as usb_unplug_config
 from kaihand_tactile_env.tasks.vase_wipe import config as vase_wipe_config
 from kaihand_tactile_env.tasks.whiteboard_wipe import config as whiteboard_wipe_config
+from kaihand_tactile_env.tasks.whiteboard_wipe_horizontal import (
+  config as whiteboard_horizontal_config,
+)
+from kaihand_tactile_env.tasks.whiteboard_wipe_horizontal_line import (
+  config as whiteboard_horizontal_line_config,
+)
 
 from .cameras import LEGACY_CAPTURE_CAMERA_NAMES
 from .cameras import ROBOT_CAMERA_NAMES as ROBOT_CAMERA_NAMES
@@ -33,16 +44,21 @@ TASK_CONFIGS = {
   poker_draw_config.SCENE_NAME: poker_draw_config,
   usb_insert_config.SCENE_NAME: usb_insert_config,
   bulb_screw_config.SCENE_NAME: bulb_screw_config,
+  bulb_screw_inplace_config.SCENE_NAME: bulb_screw_inplace_config,
   vase_wipe_config.SCENE_NAME: vase_wipe_config,
   install_ram_config.SCENE_NAME: install_ram_config,
   whiteboard_wipe_config.SCENE_NAME: whiteboard_wipe_config,
   sponge_grasp_config.SCENE_NAME: sponge_grasp_config,
+  usb_unplug_config.SCENE_NAME: usb_unplug_config,
+  whiteboard_horizontal_config.SCENE_NAME: whiteboard_horizontal_config,
+  whiteboard_horizontal_line_config.SCENE_NAME: whiteboard_horizontal_line_config,
+  bulb_unscrew_config.SCENE_NAME: bulb_unscrew_config,
 }
 SCENE_NAMES = tuple(TASK_CONFIGS)
 SCENE_OBJECTS = {scene: config.OBJECT_NAMES for scene, config in TASK_CONFIGS.items()}
-OBJECT_NAMES = tuple(dict.fromkeys(
-  name for names in SCENE_OBJECTS.values() for name in names
-))
+OBJECT_NAMES = tuple(
+  dict.fromkeys(name for names in SCENE_OBJECTS.values() for name in names)
+)
 TACTILE_PROVIDERS = ("solver_contact_proxy_v1", "genesis_probe_bimanual_clean_v1")
 FINGERTIP_LINK_NAMES = tuple(
   f"hand_{side[0]}_{finger}_{link}"
