@@ -1,18 +1,22 @@
 # 统一数据采集
 
+本页维护 Raw 采集配置、调度、校验发布与续采。任务控制器和物理验收由任务指南负责；
+模型数据字段与动作监督见[数据格式合同](../reference/dataset_formats.md)，
+已录制 Raw 的回放见[离线可视化](data_visualization.md)。
+
 统一入口是 `scripts/collect/collect.py`。从仓库根目录使用本节点的 Pixi 完整路径：
 
 ```bash
-cd /cpfs_infra/user/chenxianchi/code/kaitactilesim_unified
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- --help
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- --list-support
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- --describe usb-insert
+cd /cpfs_infra/user/chenxianchi/code/kaitactilesim
+PYTHONPATH=src /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- --help
+PYTHONPATH=src /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- --list-support
+PYTHONPATH=src /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- --describe usb-insert
 ```
 
 入口负责十三个任务的调度、独立进程、seed 派生、输出编号、状态记录、中断处理和断点续采。它调用各任务控制器，不使用训练模型，也不改变任务动作。
 
-本节点已安装环境暂缺离线缓存中没有的 pyarrow，因此示例用 `pixi run --as-is`，
-不自动重装；完整环境安装和转换前依赖要求见[环境与工作目录](pipeline_quickstart.md#环境与工作目录)。
+环境安装、已安装环境的限制和源码导入检查统一见[环境与工作目录](environment.md)。
+示例使用 `--as-is` 复用已安装环境，并用 `PYTHONPATH=src` 指向当前仓库源码。
 实际验收条件见[成功判据总表](../tasks/success_criteria.md)；
 可选的阶段诊断见[分阶段评估](staged_evaluation.md)，不能把阶段通过当作采集成功。
 
@@ -51,21 +55,21 @@ cd /cpfs_infra/user/chenxianchi/code/kaitactilesim_unified
 
 ## 开始前检查
 
-新节点先完整安装锁定环境，当前节点复用已安装环境；再检查所有场景和三路相机。硬件渲染需要
+先按[环境与工作目录](environment.md)准备环境，再检查所有场景和三路相机。硬件渲染需要
 `__EGL_VENDOR_LIBRARY_FILENAMES` 指向 NVIDIA EGL vendor JSON；
 `--render-backend hardware` 不会自动设置这个路径。以下硬件命令均显式包含该环境变量：
 
 ```bash
-cd /cpfs_infra/user/chenxianchi/code/kaitactilesim_unified
-# 新节点需要时先执行 pixi install --locked；当前节点的缺包状态见上方环境说明。
+cd /cpfs_infra/user/chenxianchi/code/kaitactilesim
+# 安装与源码导入检查见 environment.md。
 
 # NVIDIA/硬件 EGL
 __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesim/nvidia_egl_vendor.json \
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
+PYTHONPATH=src /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
   --task all --check --render-backend hardware
 
 # 没有硬件 EGL 时显式使用 Mesa 软件渲染
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
+PYTHONPATH=src /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
   --task all --check --render-backend software
 ```
 
@@ -77,7 +81,7 @@ __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesi
 
 ```bash
 __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesim/nvidia_egl_vendor.json \
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
+PYTHONPATH=src /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
   --task usb-insert --episodes 1 --seed 2026 \
   --output-dir /path/to/raw_smoke \
   --render-backend hardware
@@ -87,7 +91,7 @@ __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesi
 
 ```bash
 __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesim/nvidia_egl_vendor.json \
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
+PYTHONPATH=src /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
   --task all --episodes 10 --seed 2026 \
   --output-dir /path/to/raw_batch \
   --render-backend hardware
@@ -97,7 +101,7 @@ __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesi
 
 ```bash
 __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesim/nvidia_egl_vendor.json \
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
+PYTHONPATH=src /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
   --task poker-draw usb-insert --episodes 20 --seed 2026 \
   --output-dir /path/to/card_usb_raw \
   --render-backend hardware
@@ -106,7 +110,7 @@ __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesi
 `--episodes` 是每个任务的尝试数，不保证成功条数。先使用 `--dry-run` 查看实际子命令且不写数据：
 
 ```bash
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
+PYTHONPATH=src /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
   --task all --episodes 10 \
   --output-dir /path/to/raw_batch --dry-run
 ```
@@ -115,7 +119,7 @@ __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesi
 
 ```bash
 __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesim/nvidia_egl_vendor.json \
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
+PYTHONPATH=src /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
   --task bulb-screw \
   --target-successes 200 \
   --max-attempts 400 \
@@ -134,7 +138,7 @@ seed、任务、渲染后端和源码必须保持不变。
 
 ```bash
 __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesim/nvidia_egl_vendor.json \
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
+PYTHONPATH=src /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
   --task sponge-grasp --target-successes 200 --max-attempts 1000 \
   --workers 8 --seed 20260924 \
   --output-dir /path/to/sponge_grasp_raw_200 \
@@ -152,8 +156,8 @@ __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesi
 上述环境变量会被预检和每个采集子进程继承，使 EGL 使用 NVIDIA 驱动；
 预检应报告实际 NVIDIA renderer 和 `software: false`。软件模式不需要该 NVIDIA 配置前缀。
 
-`--workers 4` 表示同时运行最多 4 个独立 episode 子进程，也是 H20 上当前的
-稳定默认值。成功数模式会把在途任务数限制为“目标成功数减去当前成功数”，
+`--workers 4` 表示同时运行最多 4 个独立 episode 子进程，也是当前接口默认值。
+实际并发应按节点 CPU、内存与渲染容量调整。成功数模式会把在途任务数限制为“目标成功数减去当前成功数”，
 所以不会因并发超过目标。不同任务应分别启动；不要再同时启动多个 4-worker 采集命令。
 
 ## 十三个采集任务
@@ -179,7 +183,7 @@ __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesi
 五个变体均使用独立 task 身份。新 `bulb-screw-inplace` 不包含拿取/搬运；物理成功与
 完整专家流程正常结束分开记录，回 home 不作为物理旋入成功条件。多个 seed 仅是固定初态
 重复性检查，不能统计成初态泛化。运行与单条三相机采集示例见
-[灯泡原位旋入命令](pipeline_quickstart.md#6-灯泡原位旋入任务)。
+[灯泡原位旋入命令](../tasks/bulb_tasks.md#bulb-screw-inplace)。
 
 Bulb、RAM、Vase、Whiteboard、Sponge 的正式批采自动走 raw-only 入口。单条 `data/` 不生成 MP4、逐帧 PNG、
 PDF、CSV、HTML 或验收视频；可视化全部留给离线轨迹回放。批次级 `status.json`、
@@ -205,7 +209,7 @@ PDF、CSV、HTML 或验收视频；可视化全部留给离线轨迹回放。批
 
 ```bash
 __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesim/nvidia_egl_vendor.json \
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
+PYTHONPATH=src /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is collect -- \
   --task usb-insert --episodes 100 --seed 2026 \
   --output-dir /path/to/raw_batch \
   --render-backend hardware --resume
@@ -217,6 +221,8 @@ __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesi
 - 可以提高 `--episodes` 扩展同一批次，但不能更换 seed、任务合同或源码版本后继续混写。
 - 成功数模式可在续采时提高 `--max-attempts`，但不能更换 `--target-successes`。
 - 同一输出目录有互斥锁，不能由两个采集器同时使用。
+- 旧结构的 `collection.json` 只有在完整旧合同（含 `source_sha256`）仍匹配时才可续采；
+  新增或修改源码后应使用新采集目录。
 
 ## 发布前数据质量检查
 
@@ -229,14 +235,16 @@ __EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesi
 
 后续批次仍逐条运行自动校验；若修改相机、时间同步、触觉、控制或导出流程，
 重新执行 5 条小批量人工复核。USB 的具体命令、阈值和触觉起止对照见
-[USB Raw Cleaning](../tasks/usb_cleaning.md)。
+[USB Raw Cleaning](../tasks/usb_tasks.md#usb-cleaning)。
 
 ## 新任务接入
 
 新增任务时需要：
 
 1. 使用共享机器人、相机命名和 `EpisodeRecorder` Raw schema；
-2. 在 `collect.py` 注册任务命令、seed 和 outcome 检查；
+2. 在 `src/kaihand_tactile_env/pipeline/catalog.py` 注册任务名，并在
+   `pipeline/collection.py` 的 `COLLECTION_SPECS` 注册命令构造、seed、配置和 outcome 检查；
+   `scripts/collect/collect.py` 负责共享调度，不直接维护任务专属命令；
 3. 保存 `metadata_json.scene`、随机参数、任务结果和三路相机；
 4. 保留任务控制器、专属状态及成功判定，不把动作逻辑写进统一调度器；
 5. 增加命令构造、Raw 验证、中断和续采测试。

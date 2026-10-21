@@ -1,8 +1,7 @@
 # 分阶段评估：当前判据、时间与归档边界
 
-本文对应 `kaitactilesim_unified` 当前代码的 `staged_v1`，不是对历史记录的重新判分。
-原生成功与专家完整流程成功见[各任务成功判定](../tasks/success_criteria.md)；
-在线运行见[模型评估](model_evaluation.md)，离线导入见[统一评估与观察台](unified_evaluation.md)。
+本页唯一维护 `staged_v1` 的阶段名称、阈值、连续计时、缺测和归档可比较性；
+原生成功见[任务判据](../tasks/success_criteria.md)，运行参数见[模型评估](model_evaluation.md)，离线流程见[统一观察台](unified_evaluation.md)。
 
 ## 先区分四种结果
 
@@ -43,9 +42,11 @@
 `pick-place`、`vase-wipe`、`sponge-grasp` **未注册 staged**。它们仍有自己的原生成功判据和可视化，
 但不能强行套用本表或传入 staged 开关；`StagedEvaluationMonitor` 对未注册任务直接拒绝。
 
-该开关目前接入的是 **π0.5** 的 shared / USB insert / Poker runner；
-任务已注册 staged 不表示所有模型族的 runner 都支持它。EgoSteer、EgoTouch、T-Rex、LingBot 等
-是否支持普通评估，另查 `evaluate.py --list-support`，不要把普通 runner 覆盖与 staged 覆盖混为一谈。
+该开关已接入 **π0.5** 的 shared / USB insert / Poker runner，也接入复用这些执行器的
+Poker CPM/FTP-1 和相应的共享 FTP-1 runner；模型特有环境与 frozen K 见[模型专项](model_specific_evaluation.md#tactile-policy)。
+任务注册 staged 不表示所有模型族的 runner 都支持它；共享 FTP-1 仍仅能对本表注册的任务启用阶段观测。
+EgoSteer、EgoTouch、T-Rex、LingBot 等是否支持普通评估，另查 `evaluate.py --list-support`；
+该查询列普通 runner 注册，不是 staged 能力查询。接口存在也不代表已有匹配权重或真实模型验收。
 
 ## 共同测量定义
 
@@ -109,7 +110,7 @@ Stage3 **不检查**原生 `tightening_verified`、松手或回 home，不可改
 五指各 ≥ 4 N，且实际到座、无非指腹/其它机器人支撑；释放由原生 monitor 验证无机器人接触下到座稳定 ≥ 0.20 s。
 这些是原生独立证据，不是把通用 `grasp_hold_s=0.15` 改成了 0.10。
 灯亮、固定拧动次数、手已经回原位均不能替代证据。`home_return_verified` 单列，不属于 staged 第五阶段。
-详见[独立任务说明](../tasks/bulb_screw_inplace.md)。
+详见[独立任务说明](../tasks/bulb_tasks.md#bulb-screw-inplace)。
 
 ### RAM install：拿取并安装内存条
 
@@ -285,25 +286,25 @@ Stage1 的间隙上限没有额外新增穿透下限；穿透保护是独立 gua
 
 ## 启用命令与记录产物
 
-以下在统一工程根目录执行；本机使用统一工程自己的 Pixi Python，不依赖原两份工程的环境。
-当前缓存安装暂缺 pyarrow（物理/规则检查不需要）；转换训练数据前须补齐完整依赖。
-使用 Pixi 时写 `pixi run --as-is ...`，避免离线环境重复尝试安装缺失包。
+以下在当前 `kaitactilesim` 根目录执行，使用本仓库 Pixi Python；
+环境安装、`--as-is` 与缺包要求见[环境与工作目录](environment.md)。
 
 只读检查不连接模型、不开仿真：
 
 ```bash
-cd /cpfs_infra/user/chenxianchi/code/kaitactilesim_unified
+cd /cpfs_infra/user/chenxianchi/code/kaitactilesim
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 .pixi/envs/default/bin/python -B scripts/analysis/evaluate_unified.py rules
 .pixi/envs/default/bin/python -B scripts/evaluate/evaluate.py --list-support
 PYTHONPATH=src .pixi/envs/default/bin/python -B scripts/workcell/run_shared_task_pi05_policy.py --help
 ```
 
-下面是**未来有匹配新任务 checkpoint/deployment 时**的单 seed staged 评估模板，
-不是已有新任务模型结果，也不表示只运行本文档就应立即启动评估。
+下面是使用匹配 `bulb-screw-inplace` checkpoint/deployment 的单 seed staged 评估模板。
+模板不自动选择已有权重；应换入当前源码 prepare/verify 通过的 manifest 和新输出目录。
 新任务只能使用自己的 `shared_task_pi05_deployment_v2` manifest，不允许修改旧 `bulb-screw` manifest 的 task 冒充：
 
 ```bash
-cd /cpfs_infra/user/chenxianchi/code/kaitactilesim_unified
+cd /cpfs_infra/user/chenxianchi/code/kaitactilesim
 .pixi/envs/default/bin/python -B scripts/evaluate/evaluate.py \
   --task bulb-screw-inplace --model-family pi05 \
   --deployment-manifest /path/to/new_inplace/deployment_manifest.json \
@@ -340,23 +341,8 @@ seed_NNN/
 
 ## 历史归档、H50 筛选与可比较性
 
-### 当前代码上的 10000/15000 五次批次
-
-使用独立入口 `scripts/evaluate/evaluate_pi05_stage_batch.py`，完整命令见
-[流水线速查第 7 节](pipeline_quickstart.md#7-九任务-1000015000-checkpoints-的五次阶段诊断)。
-该入口先只读预检所有 18 个 checkpoint；只有显式 `--run` 才会启动串行的 90 条诊断轨迹。
-它不复用旧的硬编码 20000/24999、每组 20 条的归档控制器，也不改旧网站。
-
-对旧 `usb-unplug/1010_200` 模型，必须另加
-`--allow-usb-unplug-protocol-transfer-diagnostic`。
-模型的旧训练提示词和 checkpoint 保持不变，当前 observer/原生 monitor 使用
-`fully_extracted → extracted_and_held_2s` 两秒手持规则。
-训练/评分协议分别归档；缺少显式迁移证据、未绑定模型、未知协议或场景变化均拒绝。
-这不是“把旧模型认证成新规则模型”，不能与旧放回释放成绩直接合并。
-
-每组必须五条有效、seed 0..4、90 秒实际仿真及连续状态/录像齐全才能验收。
-统计读取新批次自身的阶段布尔值；只输出每任务每 checkpoint 的阶段到达率，
-不把缺失当零、不混合 checkpoint、不将白板拿起阶段当清洁完成。
+固定 checkpoint 作业、plan/run/resume 与逐组验收见[π0.5 阶段批次档案](../archive/pipeline_batches_202609_202610.md#pi05-stage-batches)。
+旧 USB 策略按新协议诊断的训练/评分绑定见[模型专项](model_specific_evaluation.md#usb-拔出协议迁移)。
 
 ### 历史归档读取
 

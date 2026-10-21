@@ -8,8 +8,15 @@ from pathlib import Path
 import re
 import shlex
 import stat
+import sys
 import tempfile
 from urllib.parse import quote
+
+_PROJECT = Path(__file__).resolve().parents[3]
+if str(_PROJECT / "src") not in sys.path:
+    sys.path.insert(0, str(_PROJECT / "src"))
+
+from kaihand_tactile_env.shared.task_demo import locate_demo_root, resolve_demo_path
 
 from evaluation_progress_experiment.adapters import MAX_JSON_BYTES, MAX_SOURCE_BYTES, _SHA, _parse, _path, _read
 from evaluation_tactile_load_extension.export import _copy_checked
@@ -236,16 +243,35 @@ def _validate_payloads(report_path, stable_site):
 
 def _expert_attachment(manifest_path):
     """Validate the audited video and explicit reference membership, not HDF data."""
-    manifest_path = _path(manifest_path)
     audit = _EXPERT_AUDIT
-    if str(manifest_path) != audit["manifest"]["path"]:
+    demo_root = locate_demo_root(manifest_path)
+    manifest_path = _path(resolve_demo_path(manifest_path, demo_root=demo_root,
+                                          expected_sha256=audit["manifest"]["sha256"]))
+    demo_root = locate_demo_root(manifest_path)
+    audited_manifest = resolve_demo_path(audit["manifest"]["path"], demo_root=demo_root,
+                                        expected_sha256=audit["manifest"]["sha256"])
+    if manifest_path != audited_manifest:
         raise ValueError("Expert manifest path is not an explicitly audited media binding")
     provenance = []
+    if demo_root is not None:
+        provenance.append({**_digest(demo_root / "migration_manifest.json"),
+                           "role": "expert_video_migration_manifest"})
+    selected = {}
     for key in ("manifest", "video", "membership", "report"):
-        actual = _digest(audit[key]["path"])
+        # Only migrated task-demo artifacts are relocated. The archived
+        # reference report/membership remain mandatory original audit inputs.
+        selected[key] = (resolve_demo_path(audit[key]["path"], demo_root=demo_root,
+                                          expected_sha256=audit[key]["sha256"])
+                         if key in {"manifest", "video"} else Path(audit[key]["path"]))
+        if demo_root is not None and key in {"manifest", "video"} and not selected[key].is_relative_to(demo_root):
+            raise ValueError("Audited media has no exact local task-demo mapping; refusing a NAS fallback")
+        actual = _digest(selected[key])
         if actual["sha256"] != audit[key]["sha256"]:
             raise ValueError(f"Expert {key} SHA256 differs from the audited binding")
-        provenance.append({**actual, "role": "expert_video_" + key})
+        row = {**actual, "role": "expert_video_" + key}
+        if actual["path"] != audit[key]["path"]:
+            row["original_path"] = audit[key]["path"]
+        provenance.append(row)
     replay = _document(manifest_path)
     if (replay.get("schema_version") != "kaihand-offline-multimodal-replay-v1"
             or replay.get("task") != "whiteboard-wipe" or replay.get("completed") is not True
@@ -266,7 +292,7 @@ def _expert_attachment(manifest_path):
     # 607 MB HDF is not reread merely to attach its existing offline video.
     reference_rows = _rows(reference.get("provenance"))
     for path, sha, role in ((audit["source_hdf5"], audit["source_sha256"], "expert_hdf5"),
-                           (str(manifest_path), audit["manifest"]["sha256"], "explicit_task_demo_replay_selection")):
+                           (audit["manifest"]["path"], audit["manifest"]["sha256"], "explicit_task_demo_replay_selection")):
         matching = [row for row in reference_rows if row["path"] == path and row.get("role") == role]
         if len(matching) != 1 or matching[0]["sha256"] != sha:
             raise ValueError("Expert reference HDF/replay provenance binding disagrees")
@@ -296,7 +322,7 @@ def _expert_attachment(manifest_path):
         "media_views": {"status": "verified", "sha256": audit["video"]["sha256"], "source_width": 1920, "source_height": 1080,
                         "views": [{"id": "head", "label": "头部视角", "x": 10, "y": 108, "width": 632, "height": 456}]},
     }
-    return expert, _path(audit["video"]["path"])
+    return expert, _path(selected["video"])
 
 
 def _render(html, config):
@@ -585,8 +611,12 @@ def export_workbench(source_report: Path, output: Path, *, expert_manifest=None,
                                 + shlex.quote(str(output / "rollback.json")),
     }
     if expert:
-        rollback.update(expert_manifest=str(_path(expert_manifest)), previous_workbench=str(previous),
+        selected_manifest = next(row["path"] for row in expert["provenance"]
+                                 if row.get("role") == "expert_video_manifest")
+        rollback.update(expert_manifest=str(expert_manifest), previous_workbench=str(previous),
                         previous_workbench_url=f"../{quote(previous.name, safe='')}/{quote(source.parent.name, safe='')}/report.html")
+        if str(expert_manifest) != selected_manifest:
+            rollback["expert_manifest_local"] = selected_manifest
     if diagnostic or example:
         rollback["diagnostic_sources"] = diagnostic_provenance
     for rows in (protected, implementation):

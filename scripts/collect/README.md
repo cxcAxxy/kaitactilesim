@@ -1,49 +1,21 @@
-# Unified collection command
+# 统一采集入口
 
-The canonical collection guide is [docs/workflows/data_collection.md](../../docs/workflows/data_collection.md).
+本目录提供 Raw 采集的命令入口；采集配置、调度、发布和续采只在工作流说明维护。
+模型数据格式与离线回放分别由对应文档负责。
 
-The public collector covers all eleven registered tasks. Inspect the supported
-task profiles without loading MuJoCo or starting a recorder:
+正式说明见[统一数据采集](../../docs/workflows/data_collection.md)，环境与导入来源检查见
+[环境与工作目录](../../docs/workflows/environment.md)。
 
-```bash
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run collect -- --list-support
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run collect -- --describe vase-wipe
-```
-
-Start a production collection from the repository root:
+采集器注册了十三个任务。下面的查询不会启动 MuJoCo 或 recorder：
 
 ```bash
-__EGL_VENDOR_LIBRARY_FILENAMES=/cpfs_infra/user/chenxianchi/.config/kaitactilesim/nvidia_egl_vendor.json \
-  /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run collect -- \
-  --task vase-wipe \
-  --profile production-v1 \
-  --render-backend hardware \
-  --output-dir /nas/chenxianchi/datasets/vase-wipe-v1
+cd /cpfs_infra/user/chenxianchi/code/kaitactilesim
+PYTHONPATH=src pixi run --as-is collect -- --help
+PYTHONPATH=src pixi run --as-is collect -- --list-support
+PYTHONPATH=src pixi run --as-is collect -- --describe vase-wipe
 ```
 
-The vendor JSON only selects the host NVIDIA EGL implementation for hardware
-rendering. It is not a collection profile or a model runtime configuration;
-the recorder still writes the actual physics and tactile `runtime_contract_json`.
-
-`production-v1` is the default. `legacy-compatible` is an exact alias that
-keeps the pre-profile recorder command, argument order, cameras, camera rate,
-randomization, and task-owned outcome gate unchanged. `--fixed-stains` still
-only affects VaseWipe stain seeds and WhiteboardWipe ink seeds.
-
-Each new `collection.json` records the canonical profile, the fully resolved
-per-task profile, and the concrete first production command (including its
-derived seed and staging path). Every `status.json` records the exact command
-for that attempt. A successful status also copies the recorder-authored
-`runtime_contract_json` from each HDF5 root; an older HDF5 without that
-attribute is reported as `unknown`, never filled with inferred physics or
-tactile values.
-
-Legacy-shape `collection.json` files remain readable by `--resume` only when
-their complete old contract, including `source_sha256`, still matches. Adding
-or changing source files therefore still requires a new collection directory.
-
-For all options:
-
-```bash
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run collect -- --help
-```
+任务配置、三相机合同、硬件/软件预检、成功数采集、输出与续采规则集中在正式说明中维护。
+默认配置为 `production-v1`；旧名称 `legacy-compatible` 是同一配置的兼容别名。
+新增任务时修改 `src/kaihand_tactile_env/pipeline/catalog.py` 与
+`pipeline/collection.py::COLLECTION_SPECS`，再补任务配置和对应测试。

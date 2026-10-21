@@ -40,6 +40,8 @@ MUJOCO_LOG.TXT
 *.webm
 checkpoints/
 runs/
+/task_demo/
+/.task_demo-migrating-*/
 wandb/
 *.pt
 *.pth

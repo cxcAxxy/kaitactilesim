@@ -223,6 +223,46 @@ class ExpertBindingsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "publication does not bind"):
             self.prepare()
 
+    def migrated_publication(self):
+        old = self.root / "old_nas_demo"
+        self.audit["publication"] = "publication.json"
+        declaration = {"schema": "kaihand_task_demo_publication_v1", "task": "whiteboard-wipe",
+                       "video_sha256": sha(self.video), "replay_sha256": sha(self.replay),
+                       "canonical_video": str(old / self.video.relative_to(self.demo)),
+                       "source_review_dir": str(old / self.replay.parent.relative_to(self.demo))}
+        write_json(self.demo / "publication.json", declaration)
+        entries = [{"path": str(path.relative_to(self.demo)), "original_path": str(old / path.relative_to(self.demo)),
+                    "sha256": sha(path), "size": path.stat().st_size}
+                   for path in (self.video, self.replay, self.frames)]
+        write_json(self.demo / "migration_manifest.json", {"schema": "kaihand-task-demo-migration-v1",
+            "original_root": str(old), "files": entries, "raw_sources": []})
+        return declaration
+
+    def test_migrated_publication_preserves_exact_old_path_binding(self):
+        declaration = self.migrated_publication()
+        descriptor = experts.expert_for_case(self.summary, self.prepare())
+        self.assertEqual(descriptor["status"], "available")
+        publication = next(row for row in descriptor["provenance"] if row["role"] == "expert_current_publication")
+        self.assertEqual(publication["declared_paths"]["canonical_video"], declaration["canonical_video"])
+        self.assertEqual(publication["resolved_paths"]["canonical_video"], str(self.video))
+        self.assertTrue(any(row["role"] == "expert_demo_migration_manifest" for row in descriptor["provenance"]))
+
+    def test_migrated_publication_does_not_guess_directory_prefixes(self):
+        declaration = self.migrated_publication()
+        declaration["source_review_dir"] += "-same-content"
+        write_json(self.demo / "publication.json", declaration)
+        with self.assertRaisesRegex(ValueError, "publication does not bind"):
+            self.prepare()
+
+    def test_migrated_publication_does_not_accept_unregistered_same_bytes(self):
+        declaration = self.migrated_publication()
+        duplicate = self.demo / "copied.mp4"
+        duplicate.write_bytes(self.video.read_bytes())
+        declaration["canonical_video"] = str(duplicate)
+        write_json(self.demo / "publication.json", declaration)
+        with self.assertRaisesRegex(ValueError, "publication does not bind"):
+            self.prepare()
+
     def test_symlink_and_registry_path_escape_are_rejected(self):
         target = self.video.with_name("target.mp4")
         self.video.rename(target)

@@ -3,6 +3,13 @@
 import argparse
 import json
 from pathlib import Path
+import sys
+
+PROJECT = Path(__file__).resolve().parents[2]
+if str(PROJECT / "src") not in sys.path:
+    sys.path.insert(0, str(PROJECT / "src"))
+
+from kaihand_tactile_env.shared.task_demo import DEFAULT_DEMO_ROOT
 
 from evaluation_workbench.suite import discover_trials, export_suite, verify_suite
 
@@ -14,7 +21,7 @@ def main(argv=None):
     parser.add_argument("--trial-dir", type=Path, action="append", default=[])
     parser.add_argument("--output", type=Path)
     parser.add_argument("--previous-workbench", type=Path)
-    parser.add_argument("--task-demo-root", type=Path, default=Path("/nas/chenxianchi/datasets/sim/task_demo"))
+    parser.add_argument("--task-demo-root", type=Path, default=DEFAULT_DEMO_ROOT)
     parser.add_argument("--workers", type=int, default=4, help="Offline CPU readers, not simulator/GPU jobs")
     parser.add_argument("--verify", type=Path)
     parser.add_argument("--complete-model-plots", type=Path, help="Fill missing USB figures in an existing new suite using model-only native records")

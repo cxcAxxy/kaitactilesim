@@ -1,64 +1,57 @@
 # 统一模型部署
 
-公共入口为 `scripts/deploy/deploy.py`，Pixi 命令为 `deploy-policy`。
-它调用现有模型后端，覆盖 checkpoint 准备、冻结合同核验、模型启动与仿真评估。
-完整数据流程见[统一命令速查](pipeline_quickstart.md)。
+本页维护 prepare / verify / serve / run 生命周期、manifest 和进程管理；
+运行参数与统计见[模型评估](model_evaluation.md)，模型特有资产和合同见[模型专项](model_specific_evaluation.md)。
 
-以下命令均从 `/cpfs_infra/user/chenxianchi/code/kaitactilesim_unified` 执行。
-本节点使用 `pixi run --as-is` 复用已安装环境，避免因缺失 pyarrow 自动重装；
-这不替代完整依赖检查，模型服务仍必须使用对应的完整模型 Python。
-环境状态见[环境与工作目录](pipeline_quickstart.md#环境与工作目录)，
-各任务成功定义见[成功判据总表](../tasks/success_criteria.md)，诊断阶段见[分阶段评估](staged_evaluation.md)。
-
-USB 插入的 bound checkpoint 支持 `pi05_kaihand`/H30 与 `pi05_kaihand_h50`/H50。
-准备与服务从 checkpoint 的训练记录读取 `normalizer_asset_id`，不从数据目录借用旧统计；
-H50 手指尾部修复使用独立资产 `normalizer_h50_usb_insert_hand_tail_v1`。
-这类 bound checkpoint 生成 `usb_pi05_deployment_v2`，统一部署、批量评估与单次 runner
-均验证其身份。旧无训练 provenance 的 H30 `normalizer`/v1 部署保持原行为，不能改名
-伪装成 H50。新旧统计与 checkpoint 不覆盖、不混用；具体训练流程见
-[USB H50 归一化](../../../openpi/examples/kaihand/README.md#usb-插入-h50手指尾部安全归一化)。
+公共入口为 `scripts/deploy/deploy.py`，Pixi 命令为 `deploy-policy`。它是无模型依赖的协调层，
+调用 `scripts/workcell` 专项后端，不导入模型包，也不替换原任务/模型校验器。
+命令从当前仓库执行；仿真/模型 Python 和依赖要求见[运行环境](environment.md)。
 
 ```bash
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is deploy-policy -- --help
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is deploy-policy -- --list-support
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is deploy-policy -- prepare --help
-/cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is deploy-policy -- run --help
+cd /cpfs_infra/user/chenxianchi/code/kaitactilesim
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+pixi run --as-is deploy-policy -- --list-support
+pixi run --as-is deploy-policy -- prepare --help
+pixi run --as-is deploy-policy -- verify --help
+pixi run --as-is deploy-policy -- serve --help
+pixi run --as-is deploy-policy -- run --help
 ```
 
-能力查询分别列出 prepare、verify、serve、run/evaluate 的支持情况。
-某个模型有评估 runner，并不意味着本仓库能够为它生成新的 deployment。
-π0.5 的十三个任务有完整准备与服务后端；其他模型按查询结果使用。
-新增 `usb-unplug`、`whiteboard-wipe-horizontal`、`bulb-unscrew`、
-`whiteboard-wipe-horizontal-line`、`bulb-screw-inplace` 五个变体必须使用新任务
-训练来源绑定的 checkpoint；冻结合同会核对 task、mechanics version 和场景指纹，
-旧任务 checkpoint 不能仅通过改任务名变成新任务模型。
-未实现的阶段明确报错，已有模型和训练 provenance 的校验仍由专项后端执行。
+能力查询分别列出 prepare、verify、serve、run/evaluate。评估 runner 已注册不代表支持所有生命周期阶段，
+未实现的阶段会明确拒绝。三种服务形态如下：
 
-`bulb-screw-inplace` 从灯座入口开始，不是原 `bulb-screw` 的 checkpoint 别名。
-它只接受 `shared_task_pi05_deployment_v2`：训练来源必须绑定该任务的新数据、
-`recorded-controller-target-v1`、一致的 instruction/mechanics/场景指纹。
-OpenPI 的独立 H50 配置为 `pi05_kaihand_bulb_screw_inplace_controller_target_h50_v1`；
-旧拿取旋入的 `pi05_kaihand_bulb_controller_target[_h50]_v1` 只用于原 `bulb-screw`，不得互换。
-旧 v1 manifest 或旧抓取旋入 checkpoint 不能重标为原位旋入。
-当前已通过的是新任务专家与接口验证，尚无本次新增任务的模型训练或闭环成绩；
-准备前应先完成独立采集、转换和训练，见[专项命令](pipeline_quickstart.md#6-灯泡原位旋入任务)。
+| 形态 | 生命周期 |
+|---|---|
+| `websocket-sidecar` | managed run 启动并回收自己的模型服务；external 只接入调用者管理的服务 |
+| `local-worker` | evaluator 用声明的模型 Python 创建私有 worker，不提供独立 serve |
+| `embedded` | 模型在 rollout runner 内加载，不提供独立 serve；组合模型的 prepare 能力须查注册表 |
 
-### USB 拔出：旧策略按新规则的显式诊断
+具体模型属于哪种形态以支持查询为准；运行时环境和专项资产见[模型专项](model_specific_evaluation.md)。
 
-旧 `1010_200` USB 拔出模型绑定“拔出、放回、释放”的训练提示词，不能默认为当前
-`usb-unplug-held-clear-2s-v2` 的匹配模型。默认 prepare 仍拒绝这种协议不一致。
-只有显式传给 shared prepare 后端 `--allow-usb-unplug-protocol-transfer-diagnostic` 时，
-才允许已绑定、源哈希重算、mechanics/场景指纹完全相同的旧策略按新两秒保持规则评分。
+## Deployment manifest
 
-此入口不改 checkpoint、提示词、动作语义、normalizer 或训练来源；模型仍收到原训练指令。
-迁移证据记录在被 deployment ID 认证的
-`training_provenance.completion_protocol_transfer` 中，包含训练/评估协议、两套场景身份和明确原因。
-prepare、verify、server metadata 与 runner 必须一致，且始终
-`diagnostic_only=true`、`formal_metrics_valid=false`，不能用作新任务正式成功率。
-`--allow-legacy-unbound-diagnostic` 不能代替这个入口；未绑定来源、未知协议、物理场景变化仍拒绝。
+专项 prepare 冻结 checkpoint、normalizer、输入/动作、模型与评估源码身份。
+统一评估入口至少读取下列字段，专项后端还会要求自身完整 schema，不能把此最小示例作为可运行 deployment：
 
-九任务 10000/15000、每组五条的完整新批次命令见
-[阶段诊断批次](pipeline_quickstart.md#7-九任务-1000015000-checkpoints-的五次阶段诊断)。
+```json
+{
+  "deployment_id": "usb_pi05_example",
+  "task": "usb-insert",
+  "model_family": "pi0.5",
+  "observation_contract": {
+    "cameras": ["head", "right_wrist"]
+  }
+}
+```
+
+manifest 的 task/model_family 必须与评估参数一致；`pi0.5` 与 `pi05` 归为同族。
+`observation_contract.cameras` 是冻结训练合同，支持规范组合 `head`、`head left_wrist`、
+`head right_wrist`、`head left_wrist right_wrist`。实际模型支持的组合与请求键见[模型专项](model_specific_evaluation.md)。
+新增训练输入视角须重新转换、训练并 prepare，不能手改旧 manifest。
+
+prepare 保留专项 `deployment_manifest.json`，另保存 `pipeline_deployment.json`，记录准备命令、
+runtime config 身份、原 manifest SHA/deployment ID 和 verify 结果。
+既有 π0.5 哈希与训练 provenance 仍由 `verify_pi05_deployment` 等专项校验器检查，不降级为泛化检查。
 
 ## 命名运行环境
 
@@ -101,11 +94,8 @@ WebSocket sidecar 与 local worker 使用对应模型 Python，仿真评估器�
 ```
 
 核对实际命令后移除 `--dry-run`。输出目录必须是新目录。
-`deployment_manifest.json` 保留原模型的冻结合同；统一层额外保存
-`pipeline_deployment.json`，记录入口、运行环境和原始 manifest 的身份。
 normalizer、binding、预训练视觉模型等专属资产通过 `--` 后的后端参数传入。
-例如 EgoSteer 仍需要 `--model-config`、`--normalizer`、`--pretrained-vlm`；
-PickPlace EgoTouch 仍需要 `--binding`。
+专项资产和绑定参数见[模型专项](model_specific_evaluation.md)。
 
 ```bash
 /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is deploy-policy -- verify \
@@ -118,10 +108,9 @@ PickPlace EgoTouch 仍需要 `--binding`。
 源码与当前 checkout 不匹配时会拒绝执行；应使用对应源码版本，或按正式流程准备
 新部署。未注册的 schema 不会被当作兼容格式猜测。历史诊断选项继续由原后端显式处理。
 
-本次保护策略调整修改了评估源码：旧冻结 deployment 如报源码身份或 SHA-256
-不匹配，需要从原 checkpoint 在**新的输出目录**重新 `prepare`，再 `verify` 和
-`run`。不要手改旧 manifest 的 hash、覆盖原目录或绕过核验；历史部署与评估保留原样。
-这与修改本次运行的时限、保护模式或 action 执行步数不同，后者本身不要求重新准备。
+源码或模型资产变化导致旧 deployment 身份不符时，从原 checkpoint 在新目录重新 prepare/verify；
+不要手改旧 hash、覆盖部署或绕过校验。运行参数和冻结字段的区别见[模型评估](model_evaluation.md#action-chunk-执行长度)，
+后端特有冻结项见[模型专项](model_specific_evaluation.md)。
 
 ## 自动接入仿真
 
@@ -136,50 +125,42 @@ PickPlace EgoTouch 仍需要 `--binding`。
   --dry-run
 ```
 
-确认计划后移除 `--dry-run`。默认管理模式会启动模型服务、等待 WebSocket
-metadata、核对部署身份与输入输出合同，再运行统一评估器，最后回收自己启动的进程。
-`--num-trials 1 --video-count 1` 可先做单次完整 smoke。
-默认执行步数沿用评估器：PickPlace EgoTouch 为 5，其余使用冻结的预测 horizon；
-可用 `--execute-steps` 显式选择后端允许的值。上例为 π0.5，显式执行完整 horizon。
-若要每次只执行 8 步，把 `--execute-steps horizon` 改为 `--execute-steps 8`。
-π0.5 的合法范围为 `1 ≤ K ≤ prediction_horizon`；例如 H50/K8，模型仍预测
-50 步，执行前 8 步后重新观测和推理，剩余 42 步丢弃。此参数不改变 checkpoint
-或冻结 manifest，也不需要重新 prepare。
-`deploy-policy run` 一次只接受一个执行长度，参数放在 `--` 分隔符之前。
-需要同 seed 对比多个执行长度时，使用独立 `evaluate-policy`，见
-[Action chunk 执行长度](model_evaluation.md#action-chunk-执行长度)。
+`run` 默认只执行一条且不录像（`--num-trials 1 --video-count 0`）。此例显式覆盖次数，
+完整 trial、时限、保护和执行长度参数统一见[模型评估](model_evaluation.md)。
+`run --execute-steps` 一次只接受一个值；多值矩阵使用独立 `evaluate-policy`。
+额外 evaluator 参数放在 `--` 后，不能覆盖统一入口已拥有的参数。
 
-### 评估时限、保护与指标
+managed run 验证部署、启动模型服务、等待 metadata 后才执行评估，结束时回收自己启动的进程。
+就绪检查通过 WebSocket 握手核对 deployment ID、checkpoint SHA、observation/action 合同及 horizon/dimension；
+服务声明 task/model_family 时也一并核对。只监听 TCP 端口不算就绪，`--server-timeout` 控制服务等待上限。
+模型请求绕过 HTTP 代理，但保留模型下载所需的代理环境，不全局清空代理设置。
 
-`run` 与独立 `evaluate-policy` 默认都是 `--max-sim-seconds 90 --guard-mode observe`。
-时限是每次 trial 的**仿真时间**，不是墙钟运行时间，必须是有限正数；例如改成
-`--max-sim-seconds 120` 即允许最多 120 秒仿真。这些统一参数放在 `--` 分隔符之前，
-不能作为后端参数传入；改变它们不会修改 checkpoint 或冻结 manifest。
+owned prepare、verify、server、evaluation 子进程使用独立进程组，SIGINT/SIGTERM 时统一回收。
+sidecar 与私有 stdin/stdout local worker 使用模型环境；仿真 evaluator 保持仿真环境，local worker 继承所选 profile。
+只有注册为 embedded 的后端在 rollout 内加载模型。
 
-`observe` 用于诊断：力过大、碰撞、掉落等任务保护记录后继续仿真与录像；已识别的
-无效/不可达动作保持上一条完整有效控制指令，丢弃当前 action chunk 并重新推理。
-达到时限结束本次 rollout；任务成功、数值故障或基础设施故障仍可提前结束。
-录像只保存已有有效帧，不冻结补足 90 秒；数值故障后不再渲染坏状态。
-后端的推理请求上限等 watchdog 也保留，详见[评估停止原因](model_evaluation.md)。
+### 短时服务与录像检查
 
-需要原来的任务保护终止规则时，显式加 `--guard-mode strict`。`observe` 的结果标为
-`diagnostic_only=true`、`formal_metrics_valid=false`，即使任务完成，也不能混入历史
-strict 成功率；正式比较应使用 `strict`，并核对每次结果的有效性、任务版本和运行配置。
-strict 只是请求正式指标，不保证存在数值或基础设施故障的 trial 仍有效。
+`--num-trials 1 --video-count 1 --smoke-seconds 10` 用于检查短时闭环。
+`--smoke-seconds` 仅属于 deploy run，会覆盖 `--max-sim-seconds`，即使选择 strict 也标为诊断；
+独立评估使用 `--max-sim-seconds`，完整停止和有效性解释见[模型评估](model_evaluation.md)。
 
-首次可用 `--num-trials 1 --video-count 1` 检查完整闭环；若只想做短时服务/录像检查，
-再加 `--smoke-seconds 10`。该选项仅属于 `deploy-policy run`，会覆盖
-`--max-sim-seconds` 的实际时限；即使同时选择 `strict`，这次运行仍标为诊断，
-不作为正式任务指标。独立评估没有 `--smoke-seconds`，直接设置 `--max-sim-seconds`。
+### 运行记录
 
-输出根目录保存 `run_manifest.json`，评估结果在 `evaluation/`。运行记录保存有效
-`max_sim_seconds`、`guard_mode`、`diagnostic_only` 与 `formal_metrics_requested`；
-trial 的停止原因和保护事件在评估结果中检查。仅 managed
-sidecar 生成根目录下的 `server.log`；local worker 的模型日志由对应 evaluator
-写入评估目录。错误和子进程退出码保留在运行记录中。
-运行时 endpoint 与设备选择属于本次运行，不修改冻结的模型 manifest。
+每次使用不存在的新根目录：
 
-接入已经启动的模型服务：
+```text
+run_root/
+├── run_manifest.json          # deployment ID/路径、runtime、参数、错误与子进程退出码
+├── server.log                # 仅 managed WebSocket sidecar
+└── evaluation/               # 对应 evaluator 的输出
+```
+
+运行记录保存实际 `max_sim_seconds`、`guard_mode`、`diagnostic_only` 和 `formal_metrics_requested`。
+local worker 日志由 evaluator 写入评估目录；endpoint 和设备是本次运行选择，不改冻结模型 manifest。
+trial 结果与后端目录差异见[评估结果](model_evaluation.md#结果字段与统计口径)。
+
+## 接入外部模型服务
 
 ```bash
 /cpfs_infra/user/chenxianchi/miniconda3/bin/pixi run --as-is deploy-policy -- run \
@@ -189,15 +170,10 @@ sidecar 生成根目录下的 `server.log`；local worker 的模型日志由对�
   --num-trials 20 --video-count 20
 ```
 
-外部模式同样检查服务 metadata，退出时不停止外部服务。远程地址或 `wss://`
-TLS 服务必须使用 external；此模式不要求提供 `--runtime-config/--runtime`，
-仿真 evaluator 不会继承模型 profile 的 CUDA/PYTHONPATH 覆盖。
-冻结部署的本地资产与源码核验仍会执行；部分后端仍需要 manifest 声明的
-模型项目和校验环境，不代表可以只凭远程 endpoint 跳过部署核验。
-EgoTouch 使用本地 stdin/stdout worker，T-Rex 在 rollout 进程内加载模型；
-这两类后端没有单独的 `serve` 阶段。T-Rex 需要显式
-`--model-family pi05+trex` 选择其 π0.5 base manifest，并传入触觉 expert 等专项资产；
-当前尚未提供组合模型的统一 prepare。
+外部模式核对同样的 metadata，退出时从不停止或发送信号给外部服务。
+远程地址和 `wss://` TLS 必须使用 external；managed 连接 endpoint 仅允许 loopback 明文 `ws://`。
+external 不要求 runtime config，仿真 evaluator 不继承模型 profile 的 CUDA/PYTHONPATH 覆盖。
+本地模型资产、源码和专项校验环境仍按 manifest 核验，远程 endpoint 不绕过部署完整性。
 
 ## 单独启动服务与独立评估
 

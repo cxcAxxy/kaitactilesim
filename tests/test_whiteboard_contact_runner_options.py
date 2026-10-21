@@ -27,6 +27,28 @@ def _load(monkeypatch, filename):
     ("run_shared_task_pi05_policy.py", ["--server", "ws://localhost:10000"]),
     ("run_shared_task_egosteer_policy.py", ["--server", "ws://localhost:10000"]),
     ("run_shared_task_egotouch_policy.py", ["--model-python", "python", "--model-project", "/missing/model"]),
+    ("evaluate_shared_task_policy_batch.py", []),
+  ],
+)
+def test_contact_demo_defaults_to_project_data_without_reading_it(
+  monkeypatch, filename, model_args,
+):
+  runner = _load(monkeypatch, filename)
+  common = ["--deployment-manifest", "/missing/deployment.json",
+            "--output-dir", "/missing/output", *model_args]
+  if filename == "evaluate_shared_task_policy_batch.py":
+    _, args, _ = runner.parse_args([*common, "--seeds", "1", "--video-count", "0"])
+  else:
+    args = runner.parse_args([*common, "--task", "whiteboard-wipe", "--seed", "1"])
+  assert args.contact_demo_root == ROOT / "task_demo"
+
+
+@pytest.mark.parametrize(
+  ("filename", "model_args"),
+  [
+    ("run_shared_task_pi05_policy.py", ["--server", "ws://localhost:10000"]),
+    ("run_shared_task_egosteer_policy.py", ["--server", "ws://localhost:10000"]),
+    ("run_shared_task_egotouch_policy.py", ["--model-python", "python", "--model-project", "/missing/model"]),
   ],
 )
 @pytest.mark.parametrize("task", ["whiteboard-wipe", "whiteboard-wipe-horizontal"])

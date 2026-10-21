@@ -1,10 +1,12 @@
 # Pick and place 当前示例
 
-原生成功的几何、释放代理与 0.1 秒稳态门槛，以及它与专家结果的区别，见
-[取放成功判定](success_criteria.md#pick-place)。本页主要介绍动作与示例产物。
+本页负责 `pick-place` 的专家动作、场景分布与示例产物；原生成功数值及专家区别见
+[取放成功判定](success_criteria.md#pick-place)。通用命令见[流水线速查](../workflows/pipeline_quickstart.md)，
+模型专项配置见[模型专项评估](../workflows/model_specific_evaluation.md)。
 
 场景继承 shared 的机器人、双臂初姿、桌面和相机。任务物体为浅灰圆柱和白色盒子。
 自动控制器从 shared home 连续运动，不在 reset 中预定位。
+`ready` 稳定后才继续实际接近，不把共享 home 作为预抓取状态。
 
 抓取前的抬高路点由 20 cm 降到 4 cm，搬运抬升由 30 cm 降到 18 cm，
 释放后只抬手 9 cm 再收臂。手臂目标每个 2 ms 物理步更新；相邻五次曲线段保持

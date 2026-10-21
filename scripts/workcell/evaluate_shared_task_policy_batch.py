@@ -31,6 +31,7 @@ from kaihand_tactile_env.shared.pi05_deployment_integrity import (
   stable_file_bytes,
   validate_shared_deployment_semantics,
 )
+from kaihand_tactile_env.shared.task_demo import DEFAULT_DEMO_ROOT
 
 ROOT = Path(__file__).resolve().parents[2]
 EGL_VENDOR = ROOT / "scripts/collect/nvidia_egl_vendor.json"
@@ -315,7 +316,7 @@ def parse_args(argv=None):
   )
   parser.add_argument(
     "--contact-demo-root", type=Path,
-    default=Path("/nas/chenxianchi/datasets/sim/task_demo"),
+    default=DEFAULT_DEMO_ROOT,
     help="Whiteboard contact metrics: directory containing expert demo metadata",
   )
   parser.add_argument("--execute-steps", type=int, default=5)

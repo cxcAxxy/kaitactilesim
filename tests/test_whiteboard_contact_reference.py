@@ -1,8 +1,10 @@
+import hashlib
 import json
 
 import h5py
 import numpy as np
 import pytest
+from kaihand_tactile_env.shared import whiteboard_contact_reference as reference_module
 from kaihand_tactile_env.shared.whiteboard_contact_reference import (
   load_historical_whiteboard_contact_trial,
   load_whiteboard_contact_reference,
@@ -103,6 +105,120 @@ def test_replay_resolution_preserves_declared_not_verified_hash(tmp_path):
   assert trace.metadata["source_replay_json"] == str(replay)
   assert trace.metadata["declared_source_sha256"] == "declared"
   assert trace.metadata["source_sha256_verified"] is False
+
+
+def test_relocated_replay_resolves_exact_source_and_declared_hash(tmp_path, monkeypatch):
+  expert = _expert(tmp_path / "local_expert.h5")
+  folder = tmp_path / "_metadata" / "whiteboard-wipe"
+  folder.mkdir(parents=True)
+  replay = folder / "replay.json"
+  original = "/nas/chenxianchi/datasets/sim/whiteboard-wipe/raw/source.h5"
+  digest = "a" * 64
+  payload = json.dumps({"task": "whiteboard-wipe", "completed": True,
+                        "source_hdf5": original, "source_sha256": digest}).encode()
+  replay.write_bytes(payload)
+  calls = []
+
+  def resolve(path, *, demo_root, expected_sha256):
+    calls.append((str(path), demo_root, expected_sha256))
+    return expert
+
+  monkeypatch.setattr(reference_module, "resolve_demo_path", resolve)
+  trace = load_whiteboard_contact_reference(demo_root=tmp_path)
+  assert calls == [(original, tmp_path, digest)]
+  assert trace.metadata["source_hdf5"] == str(expert)
+  assert trace.metadata["original_source_hdf5"] == original
+  assert trace.metadata["declared_source_sha256"] == digest
+  assert trace.metadata["source_sha256_verified"] is False
+  assert replay.read_bytes() == payload
+
+
+@pytest.mark.parametrize("matches", [True, False])
+def test_reference_uses_local_migration_manifest_without_opening_nas(
+  tmp_path, monkeypatch, matches,
+):
+  root = tmp_path / "task_demo"
+  expert = root / "raw_sources" / "expert.h5"
+  expert.parent.mkdir(parents=True)
+  _expert(expert)
+  digest = hashlib.sha256(expert.read_bytes()).hexdigest()
+  original = "/nas/chenxianchi/datasets/sim/whiteboard-wipe/raw/source.h5"
+  (root / "migration_manifest.json").write_text(json.dumps({
+    "schema": "kaihand-task-demo-migration-v1",
+    "original_root": "/nas/chenxianchi/datasets/sim/task_demo",
+    "files": [], "raw_sources": [{"path": "raw_sources/expert.h5",
+      "original_path": original, "size": expert.stat().st_size, "sha256": digest}],
+  }))
+  folder = root / "_metadata" / "whiteboard-wipe"
+  folder.mkdir(parents=True)
+  replay = folder / "replay.json"
+  payload = json.dumps({
+    "task": "whiteboard-wipe", "completed": True,
+    "source_hdf5": original, "source_sha256": digest if matches else "0" * 64,
+  }).encode()
+  replay.write_bytes(payload)
+  opened = []
+  original_open = h5py.File
+
+  def local_only(path, *args, **kwargs):
+    assert str(path) == str(expert)
+    opened.append(path)
+    return original_open(path, *args, **kwargs)
+
+  monkeypatch.setattr(reference_module.h5py, "File", local_only)
+  if matches:
+    trace = load_whiteboard_contact_reference(demo_root=root)
+    assert trace.metadata["source_hdf5"] == str(expert)
+    assert trace.metadata["original_source_hdf5"] == original
+    assert trace.metadata["source_sha256_verified"] is False
+    assert len(opened) == 1
+  else:
+    with pytest.raises(ValueError, match="source SHA-256"):
+      load_whiteboard_contact_reference(demo_root=root)
+    assert opened == []
+  assert replay.read_bytes() == payload
+
+
+def test_explicit_reference_path_does_not_use_replay_relocation(tmp_path, monkeypatch):
+  expert = _expert(tmp_path / "explicit.h5")
+
+  def unexpected(*_args, **_kwargs):
+    pytest.fail("an explicit reference must retain the caller's chosen path")
+
+  monkeypatch.setattr(reference_module, "resolve_demo_path", unexpected)
+  trace = load_whiteboard_contact_reference(reference_hdf5=expert, demo_root=tmp_path)
+  assert trace.metadata["source_hdf5"] == str(expert)
+  assert trace.metadata["original_source_hdf5"] is None
+
+
+@pytest.mark.parametrize("missing", ["mapping", "manifest"])
+def test_migrated_reference_never_falls_back_when_migration_evidence_is_missing(
+  tmp_path, monkeypatch, missing,
+):
+  root = tmp_path / "task_demo"
+  folder = root / "_metadata" / "whiteboard-wipe"
+  folder.mkdir(parents=True)
+  (folder / "replay.json").write_text(json.dumps({
+    "task": "whiteboard-wipe", "completed": True,
+    "source_hdf5": "/nas/chenxianchi/datasets/sim/whiteboard-wipe/raw/source.h5",
+    "source_sha256": "a" * 64,
+  }))
+  if missing == "mapping":
+    (root / "migration_manifest.json").write_text(json.dumps({
+      "schema": "kaihand-task-demo-migration-v1",
+      "original_root": "/nas/chenxianchi/datasets/sim/task_demo",
+      "files": [], "raw_sources": [],
+    }))
+  else:
+    monkeypatch.setattr(reference_module, "DEFAULT_DEMO_ROOT", root)
+
+  def unexpected(*_args, **_kwargs):
+    pytest.fail("missing migration evidence must not open a NAS HDF5")
+
+  monkeypatch.setattr(reference_module.h5py, "File", unexpected)
+  message = "refusing external fallback" if missing == "mapping" else "manifest is missing"
+  with pytest.raises(ValueError, match=message):
+    load_whiteboard_contact_reference(demo_root=root)
 
 
 @pytest.mark.parametrize("success,task", [(False, "whiteboard-wipe"), (True, "whiteboard-wipe-horizontal")])

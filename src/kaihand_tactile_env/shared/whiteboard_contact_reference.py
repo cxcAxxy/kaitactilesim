@@ -14,10 +14,10 @@ import h5py
 import numpy as np
 
 from .policy_tasks import WHITEBOARD_TASKS
+from .task_demo import DEFAULT_DEMO_ROOT, locate_demo_root, resolve_demo_path
 from .whiteboard_contact_intensity import ContactTrace, contact_phases
 
 FINGERS = ("thumb", "index", "middle", "ring", "pinky")
-DEFAULT_DEMO_ROOT = Path("/nas/chenxianchi/datasets/sim/task_demo")
 
 
 def _text(value: Any) -> str:
@@ -118,7 +118,9 @@ def load_whiteboard_contact_reference(
 
   The replay's hash is retained as declared provenance, not independently
   verified: hashing a multi-GB video-containing HDF5 is unnecessary for this
-  force-only report. Different task variants cannot silently share references.
+  force-only report. Relocated recordings use the demo manifest's exact
+  source-path/SHA binding without changing the archived replay bytes.
+  Different task variants cannot silently share references.
   """
   if task not in WHITEBOARD_TASKS:
     raise ValueError(f"not a Whiteboard task: {task}")
@@ -126,6 +128,13 @@ def load_whiteboard_contact_reference(
   replay: dict[str, Any] = {}
   if reference_hdf5 is None:
     root = Path(demo_root).expanduser()
+    migration_root = locate_demo_root(root)
+    if (
+      migration_root is None
+      and root.resolve() == DEFAULT_DEMO_ROOT.resolve()
+      and (root / "_metadata").is_dir()
+    ):
+      raise ValueError("project task-demo migration manifest is missing")
     candidates = (
       root / "_metadata" / task / "replay.json",
       root / "_metadata" / task / "review" / "replay.json",
@@ -141,9 +150,24 @@ def load_whiteboard_contact_reference(
     source = replay.get("source_hdf5")
     if not isinstance(source, str) or not source:
       raise ValueError(f"{replay_path}: missing source_hdf5")
-    reference_hdf5 = Path(source).expanduser()
-    if not reference_hdf5.is_absolute():
-      reference_hdf5 = replay_path.parent / reference_hdf5
+    declared_source = Path(source).expanduser()
+    if not declared_source.is_absolute():
+      declared_source = replay_path.parent / declared_source
+    reference_hdf5 = resolve_demo_path(
+      declared_source,
+      demo_root=migration_root if migration_root is not None else root,
+      expected_sha256=replay.get("source_sha256"),
+    )
+    if migration_root is not None:
+      mapped = Path(reference_hdf5).expanduser().absolute()
+      if (
+        not mapped.is_relative_to(migration_root)
+        or not mapped.resolve(strict=True).is_relative_to(migration_root.resolve())
+      ):
+        raise ValueError(
+          "expert source is not inside the migrated task-demo root; "
+          "refusing external fallback"
+        )
   source_path = Path(reference_hdf5).expanduser().resolve(strict=True)
   with h5py.File(source_path, "r") as file:
     metadata = _json_attribute(file.attrs, "metadata_json")
@@ -248,6 +272,7 @@ def load_whiteboard_contact_reference(
       "task": task,
       "source_kind": "expert_hdf5",
       "source_hdf5": str(source_path),
+      "original_source_hdf5": replay.get("source_hdf5"),
       "source_replay_json": str(replay_path) if replay_path else None,
       "declared_source_sha256": replay.get("source_sha256"),
       "source_sha256_verified": False,

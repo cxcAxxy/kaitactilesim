@@ -15,6 +15,13 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
+
+_PROJECT = Path(__file__).resolve().parents[3]
+if str(_PROJECT / "src") not in sys.path:
+    sys.path.insert(0, str(_PROJECT / "src"))
+
+from kaihand_tactile_env.shared.task_demo import locate_demo_root, resolve_demo_path
 
 _SCHEMA = "kaihand-offline-multimodal-replay-v1"
 _SHA = re.compile(r"[0-9a-f]{64}")
@@ -269,6 +276,8 @@ def _artifact(root, relative, expected, limit, role):
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError("Unsafe expert registry artifact path")
     path = root / relative
+    path = resolve_demo_path(path, demo_root=locate_demo_root(root) or root,
+                             expected_sha256=expected)
     if not path.resolve(strict=True).is_relative_to(root):
         raise ValueError("Expert artifact escapes the audited demo root")
     data, row = _read(path, limit)
@@ -420,9 +429,35 @@ def _verify_registered(root, audit):
         if (publication.get("schema") != "kaihand_task_demo_publication_v1"
                 or publication.get("task") != audit["task"]
                 or publication.get("video_sha256") != video_row["sha256"]
-                or publication.get("replay_sha256") != replay_row["sha256"]
-                or publication.get("canonical_video") != str(root / audit["video"])
-                or publication.get("source_review_dir") != str((root / audit["replay"]).parent)):
+                or publication.get("replay_sha256") != replay_row["sha256"]):
+            raise ValueError("Expert publication does not bind the selected current replay/video")
+        declared_video = publication.get("canonical_video")
+        declared_review = publication.get("source_review_dir")
+        migration_root = locate_demo_root(root)
+        if migration_root is None:
+            matches = (declared_video == str(root / audit["video"])
+                       and declared_review == str((root / audit["replay"]).parent))
+        else:
+            if (not isinstance(declared_video, str) or not Path(declared_video).is_absolute()
+                    or not isinstance(declared_review, str) or not Path(declared_review).is_absolute()):
+                raise ValueError("Expert publication does not bind absolute replay/video paths")
+            _, migration_row = _read(migration_root / "migration_manifest.json", _MAX_JSON)
+            selected_video = resolve_demo_path(declared_video, demo_root=migration_root,
+                                               expected_sha256=video_row["sha256"])
+            # Directories are not migration aliases: bind the exact replay file.
+            selected_replay = resolve_demo_path(Path(declared_review) / Path(audit["replay"]).name,
+                                                demo_root=migration_root,
+                                                expected_sha256=replay_row["sha256"])
+            matches = (str(selected_video) == video_row["path"]
+                       and str(selected_replay) == replay_row["path"])
+            if _read(migration_root / "migration_manifest.json", _MAX_JSON)[1] != migration_row:
+                raise ValueError("Expert demo migration manifest changed during publication binding")
+            publication_row["declared_paths"] = {
+                "canonical_video": declared_video, "source_review_dir": declared_review}
+            publication_row["resolved_paths"] = {
+                "canonical_video": str(selected_video), "source_review_dir": str(selected_replay.parent)}
+            provenance.append({**migration_row, "role": "expert_demo_migration_manifest"})
+        if not matches:
             raise ValueError("Expert publication does not bind the selected current replay/video")
         publication_row["role"] = "expert_current_publication"
         provenance.append(publication_row)

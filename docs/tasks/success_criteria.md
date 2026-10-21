@@ -1,6 +1,6 @@
 # 十三个任务的成功判定
 
-本页按当前 unified 源码核对（2026-10-15），说明模型闭环评估实际使用的条件，
+本页说明 `kaitactilesim` 源码中模型闭环评估实际使用的条件（判据初次核对日期为 2026-10-15），
 不是建议中的更严格规则，也不用于重算、改写历史 H50 标签。
 命令见[流水线速查](../workflows/pipeline_quickstart.md)；
 阶段诊断另见 [staged_v1](../workflows/staged_evaluation.md)。
@@ -68,13 +68,16 @@
 终态至少高出 **8 cm**；朝向余弦各 **≥0.8**、检查位置误差 **<3 cm**。
 末态仍需拇指在下、四指在上，拇指和对侧总法向载荷各 **≥0.05 N**，
 四指 pad 对齐余弦均 **≥0.94**、拇指 **≥0.84**、夹牌指尖平面角 **≤21°**。
-全程掌面朝下约束为最大掌面法向 Z **<-0.95**；拖牌朝机器人位移 **>8 cm**、
+初始 `clear_card` 转掌后的拖牌工作阶段，最大掌面法向 Z 须 **<-0.95**；拖牌朝机器人位移 **>8 cm**、
 横向漂移 **<15 mm**，受桌支撑时最低离面 **≥-0.6 mm**，牌背最低间隙 **>0**。
+该姿态检查使用 `ready_card`、`hover_card`、`precontact_card`、`four_finger_press`、`slide_card`、`edge_hold` 的内部工作阶段最大值；
+公开导出的 `maximum_palm_normal_z` 还包含初态与 `clear_card`，不能直接代替此检查。
 
 专家最终 `success = task_completed AND (strict_force_quality OR acceptance_policy == task-completion-v1)`。
-默认 `strict-force-v1` 还要求滑动有样本、每指及四指同时接触比例 **100%**、
+专家 API 默认的 `strict-force-v1` 还要求滑动有样本、每指及四指同时接触比例 **100%**、
 每指目标带内比例 **≥95%**、四指同时带内比例 **≥90%**、每指均值误差 **≤0.035 N**、
 最大接触缺口 **0 s**；力带容差默认 **±0.075 N**。
+统一采集的 `production-v1` 显式采用 `task-completion-v1`，实际准入策略应读取采集元数据。
 基础示例目标每指 **0.35 N**，中档示例 **0.50 N**，属于控制/专家质量参数，**不是模型原生成功条件**。
 当前 `tip-pad-v7` 的拖牌角上限为 **50°**，夹牌仍 **21°**；历史 `legacy-flat-v1` 拖牌上限 **21°**，
 不能用新版本改判旧数据。中档专家另有真实桌沿停稳与交接验收。
@@ -198,7 +201,7 @@
 `BulbScrewInplaceMonitor.update` / `_update_tightening` / `_extra`；
 [参数](../../src/kaihand_tactile_env/tasks/bulb_screw_inplace/config.py)；
 [专家](../../src/kaihand_tactile_env/tasks/bulb_screw_inplace/execution.py) `_motion` / `execute`。
-初态、五步流程、命令与实测产物见[任务页](bulb_screw_inplace.md)。
+初态、五步流程、命令与实测产物见[任务页](bulb_tasks.md#bulb-screw-inplace)。
 
 ## bulb-unscrew
 
@@ -297,7 +300,7 @@
 网页另显示平均清洁进度的 100% 理想参考与最大单元墨迹余量 `≤1e-9` 的擦净条件，
 不能用平均进度足够高替代逐块擦净。接触时刻/接触期间平均贴合面积比属于已有归档的
 刚体几何诊断，不是真实形变接触面积，也没有通用成功百分比；未接触时均值不适用。
-展示公式、来源和导出命令见[目标参考与白板贴合诊断](../workflows/unified_evaluation.md#白板接触期间贴合面积比)。
+展示公式、来源和导出命令见[目标参考与白板贴合诊断](../archive/evaluation_workbench_release_history_20261015_20261021.md#白板接触期间贴合面积比)。
 
 专家完整结果还要求正确的张手/上方/垂直下降/闭合/抬升顺序；张手误差 **<0.06 rad**、
 上方腕位置误差 **<8 mm**、下降横偏和深度误差各 **<1 cm**、闭手前板擦位移 **<2 mm**；

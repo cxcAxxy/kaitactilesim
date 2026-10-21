@@ -16,8 +16,8 @@ import numpy as np
 
 from .config import FINGERTIP_LINK_NAMES
 from .policy_tasks import WHITEBOARD_TASKS
+from .task_demo import DEFAULT_DEMO_ROOT
 
-DEFAULT_DEMO_ROOT = Path("/nas/chenxianchi/datasets/sim/task_demo")
 FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 CHANNEL_NAMES = (
   *(f"finger_{finger}_normal_n" for finger in FINGERS),

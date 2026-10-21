@@ -13,6 +13,13 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sys
+
+_PROJECT = Path(__file__).resolve().parents[3]
+if str(_PROJECT / "src") not in sys.path:
+    sys.path.insert(0, str(_PROJECT / "src"))
+
+from kaihand_tactile_env.shared.task_demo import DEFAULT_DEMO_ROOT, locate_demo_root, resolve_demo_path
 
 import h5py
 import numpy as np
@@ -118,6 +125,8 @@ def _implementation():
              root / "evaluation_v1/tactile.py", root / "evaluation_v1/protocol.py"]
     files = [{"path": str(path.relative_to(root)), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
              for path in paths if path.is_file()]
+    resolver = _PROJECT / "src/kaihand_tactile_env/shared/task_demo.py"
+    files.append({"path": str(resolver), "sha256": hashlib.sha256(resolver.read_bytes()).hexdigest()})
     return {"sha256": content_hash(files), "files": files, "numpy": np.__version__, "h5py": h5py.__version__}
 
 
@@ -131,7 +140,9 @@ def load_expert_report(replay_json: str | Path, protocol: dict | None = None) ->
     """
     protocol = make_protocol(protocol)
     implementation = _implementation()
-    replay_path = Path(replay_json).resolve(strict=True)
+    replay_path = resolve_demo_path(replay_json).resolve(strict=True)
+    if replay_path.is_relative_to(DEFAULT_DEMO_ROOT) and locate_demo_root(replay_path) is None:
+        raise ValueError("Project task_demo requires migration_manifest.json; refusing a NAS fallback")
     replay_before = _signature(replay_path)
     if replay_before[2] > 2_000_000:
         raise ValueError("Replay metadata exceeds the small-input size limit")
@@ -147,18 +158,36 @@ def load_expert_report(replay_json: str | Path, protocol: dict | None = None) ->
     source_name = replay.get("source_hdf5")
     if not isinstance(source_name, str) or not Path(source_name).is_absolute():
         raise ValueError("Replay source_hdf5 must be an explicit absolute local path")
-    source = Path(source_name).resolve(strict=True)
     expected = replay.get("source_sha256")
     if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
         raise ValueError("Replay must declare the original HDF5 SHA-256")
+    demo_root = locate_demo_root(replay_path)
+    migration_row = None
+    if demo_root is not None:
+        resolve_demo_path(replay_path, demo_root=demo_root,
+                          expected_sha256=hashlib.sha256(replay_bytes).hexdigest())
+        migration_path = demo_root / "migration_manifest.json"
+        migration_hash, migration_before = _file_hash(migration_path)
+        migration_row = {"path": str(migration_path), "sha256": migration_hash,
+                         "size": migration_before[2], "role": "task_demo_migration_manifest"}
+    source = resolve_demo_path(source_name, demo_root=demo_root, expected_sha256=expected)
+    if demo_root is not None and not source.is_relative_to(demo_root):
+        raise ValueError("Migrated replay source has no local task-demo mapping; refusing a NAS fallback")
+    source = source.resolve(strict=True)
     source_hash, source_before = _file_hash(source)
     if source_hash != expected.lower():
         raise ValueError("Replay source SHA-256 mismatch; refusing an unbound reference")
     provenance = [
         {"path": str(replay_path), "sha256": hashlib.sha256(replay_bytes).hexdigest(),
          "size": len(replay_bytes), "role": "explicit_task_demo_replay_selection"},
-        {"path": str(source), "sha256": source_hash, "size": source_before[2], "role": "expert_hdf5"},
+        {"path": source_name, "sha256": source_hash, "size": source_before[2], "role": "expert_hdf5"},
     ]
+    if source != Path(source_name):
+        # A migration is not a filesystem alias: the original NAS copy can
+        # still exist. Keep this separate from workbench's symlink guard.
+        provenance[-1]["local_path"] = str(source)
+    if migration_row is not None:
+        provenance.append(migration_row)
     warnings, geometry_hashes, names = [], {}, []
     force_time, state_time, normal, grid, tangent, geometry = (None,) * 6
     spatial_meta = {}
@@ -243,6 +272,8 @@ def load_expert_report(replay_json: str | Path, protocol: dict | None = None) ->
         source_schema = _text(file.attrs.get("schema_version"))
     if source_before != _signature(source) or replay_before != _signature(replay_path):
         raise ValueError("Reference source changed while evaluating; no report is valid")
+    if migration_row is not None and _file_hash(migration_path)[0] != migration_row["sha256"]:
+        raise ValueError("Task-demo migration manifest changed while evaluating")
     if _implementation() != implementation:
         raise ValueError("Expert evaluator source changed during evaluation")
     labels = [{"field": key, "value": outcome_raw[key]} for key in ("success", "task_success") if type(outcome_raw.get(key)) is bool]
@@ -254,7 +285,7 @@ def load_expert_report(replay_json: str | Path, protocol: dict | None = None) ->
     state_span = float(state_time[-1] - state_time[0]) if state_time is not None else None
     report = {
         "schema_version": SCHEMA_VERSION,
-        "trial": {"trial_id": trial_id, "task": task, "source": str(source), "seed": metadata.get("seed"),
+        "trial": {"trial_id": trial_id, "task": task, "source": source_name, "seed": metadata.get("seed"),
                   "cohort": {"task": task, "controller": "recorded_task_demo_not_independently_certified",
                              "control_hz": declared_control_hz, "tactile_sample_interval_s": cadence,
                              "tactile_channels": names, "formal_metrics_valid": None, "diagnostic_only": None}},
@@ -286,6 +317,8 @@ def load_expert_report(replay_json: str | Path, protocol: dict | None = None) ->
             "phase_conditions": {}, "reason": "Independent task/phase and calibration/bandwidth compatibility must be explicitly audited; overall is not auto-certified"},
         "limitations": list(_LIMITATIONS),
     }
+    if source != Path(source_name):
+        report["trial"]["resolved_source"] = str(source)
     content_hash(report)
     return report
 
@@ -299,18 +332,21 @@ def export_reference(replay_jsons, output, *, reference_id, declared_by, selecti
                         ("selection_rule", selection_rule), ("selection_evidence", selection_evidence)):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"Explicit {name} is required")
-    paths = [Path(path).resolve(strict=True) for path in replay_jsons]
+    requested = list(replay_jsons)
+    paths = [resolve_demo_path(path).resolve(strict=True) for path in requested]
     if not paths or len(set(paths)) != len(paths):
         raise ValueError("Supply distinct task-demo replay metadata paths")
     destination = Path(output).resolve()
     if destination.exists():
         raise FileExistsError(f"Reference output already exists: {destination}")
-    reports = [load_expert_report(path, protocol) for path in paths]
+    reports = [load_expert_report(path, protocol) for path in requested]
     sources = [report["trial"]["source"] for report in reports]
     hashes = [next(row["sha256"] for row in report["provenance"] if row["role"] == "expert_hdf5") for report in reports]
     if len(set(sources)) != len(sources) or len(set(hashes)) != len(hashes):
         raise ValueError("Duplicate source recording or observation SHA cannot be counted as independent reference episodes")
-    original_dirs = [path.parent for path in paths] + [Path(source).parent for source in sources]
+    original_dirs = ([path.parent for path in paths] + [Path(source).parent for source in sources]
+                     + [Path(report["trial"].get("resolved_source", report["trial"]["source"])).parent
+                        for report in reports])
     if any(destination == parent or destination.is_relative_to(parent) for parent in original_dirs):
         raise ValueError("Reference output must be outside original metadata/HDF5 directories")
     manifest = {"schema_version": "conditional-reference-manifest-v1", "reference_id": reference_id,
@@ -337,7 +373,8 @@ def export_reference(replay_jsons, output, *, reference_id, declared_by, selecti
     pages = [render_report(report) for report in reports]
     for report in reports:
         for row in report["provenance"]:
-            actual, _ = _file_hash(Path(row["path"]))
+            resolved = Path(row.get("local_path", row["path"]))
+            actual, _ = _file_hash(resolved)
             if actual != row["sha256"]:
                 raise ValueError("Reference input changed before export")
         if report["implementation"] != _implementation():

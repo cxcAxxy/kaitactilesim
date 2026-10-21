@@ -497,6 +497,55 @@ class WorkbenchExportTests(unittest.TestCase):
                                    expert_manifest=alternate, previous_workbench=self.output)
         self.assertFalse(self.expert_output.exists())
 
+    def migrate_expert_media(self):
+        self.expert_fixture()
+        original_root = self.expert_manifest.parent
+        local_root = self.root / "task_demo"
+        local_root.mkdir()
+        entries = []
+        for key in ("manifest", "video"):
+            original = Path(self.expert_audit[key]["path"])
+            selected = local_root / original.name
+            selected.write_bytes(original.read_bytes())
+            entries.append({"path": selected.name, "original_path": str(original),
+                            "sha256": digest(selected)["sha256"], "size": selected.stat().st_size})
+            original.unlink()  # A real move: old task-demo media cannot be opened.
+        write_json(local_root / "migration_manifest.json", {"schema": "kaihand-task-demo-migration-v1",
+            "original_root": str(original_root), "files": entries, "raw_sources": []})
+        self.expert_manifest = local_root / self.expert_manifest.name
+        return local_root
+
+    def test_migrated_legacy_attachment_keeps_frozen_audit_identity(self):
+        local = self.migrate_expert_media()
+        config = self.export_expert()
+        expert = config["expert_video"]
+        manifest = next(row for row in expert["provenance"] if row["role"] == "expert_video_manifest")
+        self.assertEqual(manifest["path"], str(self.expert_manifest))
+        self.assertEqual(manifest["original_path"], self.expert_audit["manifest"]["path"])
+        self.assertEqual((self.expert_output / "009_case/media/expert.mp4").read_bytes(),
+                         (local / Path(self.expert_audit["video"]["path"]).name).read_bytes())
+        self.assertTrue(export.verify_rollback(self.expert_output / "rollback.json")["verified"])
+        self.assertFalse(Path(self.expert_audit["source_hdf5"]).exists())
+
+    def test_migration_does_not_replace_missing_frozen_reference_report(self):
+        self.migrate_expert_media()
+        Path(self.expert_audit["report"]["path"]).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.export_expert()
+        self.assertFalse(self.expert_output.exists())
+
+    def test_migration_missing_media_mapping_refuses_old_video_fallback(self):
+        local = self.migrate_expert_media()
+        original = Path(self.expert_audit["video"]["path"])
+        original.write_bytes((local / original.name).read_bytes())
+        manifest_path = local / "migration_manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["files"] = [row for row in manifest["files"] if row["original_path"] != str(original)]
+        write_json(manifest_path, manifest)
+        with self.assertRaisesRegex(ValueError, "refusing a NAS fallback"):
+            self.export_expert()
+        self.assertFalse(self.expert_output.exists())
+
     def test_expert_wrong_video_or_manifest_hash_fails_before_creation(self):
         self.expert_fixture()
         video = Path(self.expert_audit["video"]["path"])

@@ -14,6 +14,8 @@ import sys
 PROJECT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT / "src"))
 
+from kaihand_tactile_env.shared.task_demo import DEFAULT_DEMO_ROOT
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -27,7 +29,7 @@ def main(argv=None):
     export.add_argument("--extra-root", action="append", type=Path, default=[])
     export.add_argument("--output", type=Path, required=True)
     export.add_argument("--previous-workbench", type=Path)
-    export.add_argument("--task-demo-root", type=Path, default=Path("/nas/chenxianchi/datasets/sim/task_demo"))
+    export.add_argument("--task-demo-root", type=Path, default=DEFAULT_DEMO_ROOT)
     export.add_argument("--workers", type=int, default=4)
     export.add_argument("--trial-limit", type=int)
     export.add_argument("--no-model-plots", action="store_true")

@@ -8,6 +8,7 @@ from pathlib import Path
 from evaluation_workbench.export import _digest, _document, _rows, _verify, _verify_inventory, verify_rollback
 from evaluation_workbench.suite import export_suite, verify_suite
 from .staged import discover_staged_trials
+from kaihand_tactile_env.shared.task_demo import DEFAULT_DEMO_ROOT
 
 
 PROJECT = Path(__file__).resolve().parents[3]
@@ -130,7 +131,7 @@ def stage_groups(entries):
 
 
 def export_staged(source_root, output, *, extra_roots=(), previous=DEFAULT_PREVIOUS,
-                  task_demo_root=Path("/nas/chenxianchi/datasets/sim/task_demo"), workers=4,
+                  task_demo_root=DEFAULT_DEMO_ROOT, workers=4,
                   generate_model_plots=True, trial_limit=None):
     output = Path(output).absolute()
     extra_roots = tuple(extra_roots)

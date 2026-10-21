@@ -39,6 +39,7 @@ from kaihand_tactile_env.shared.policy_tasks import (
   create_task_policy_adapter,
 )
 from kaihand_tactile_env.shared.rendering import WorkcellRenderer
+from kaihand_tactile_env.shared.task_demo import DEFAULT_DEMO_ROOT
 from kaihand_tactile_env.shared.whiteboard_contact_recorder import (
   finish_whiteboard_contact_recording,
   start_whiteboard_contact_recording,
@@ -84,7 +85,7 @@ def parse_args(argv=None):
   )
   parser.add_argument(
     "--contact-demo-root", type=Path,
-    default=Path("/nas/chenxianchi/datasets/sim/task_demo"),
+    default=DEFAULT_DEMO_ROOT,
     help="Whiteboard contact metrics: directory containing expert demo metadata",
   )
   parser.add_argument("--review-width", type=int, default=1920)

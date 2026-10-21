@@ -20,6 +20,7 @@ import numpy as np
 
 from evaluation_v2.expert import _node
 from evaluation_v2.horizon import inspect_prediction_horizon
+from kaihand_tactile_env.shared.task_demo import DEFAULT_DEMO_ROOT, locate_demo_root, resolve_demo_path
 
 
 MAX_JSON_BYTES = 20_000_000
@@ -351,16 +352,40 @@ def load_reference_episode(reference_report_path: Path) -> dict:
         raise ValueError("Reference source provenance must be an array")
     hdf_rows = [row for row in rows if isinstance(row, dict) and row.get("role") == "expert_hdf5"]
     replay_rows = [row for row in rows if isinstance(row, dict) and row.get("role") == "explicit_task_demo_replay_selection"]
-    if len(rows) != 2 or len(hdf_rows) != 1 or len(replay_rows) != 1:
+    migration_rows = [row for row in rows if isinstance(row, dict) and row.get("role") == "task_demo_migration_manifest"]
+    if len(rows) != 2 + len(migration_rows) or len(migration_rows) > 1 or len(hdf_rows) != 1 or len(replay_rows) != 1:
         raise ValueError("Reference requires exactly one bound HDF and task-demo replay")
-    source, replay_path = _path(hdf_rows[0].get("path")), _path(replay_rows[0].get("path"))
-    if str(source) != trial.get("source") or source.suffix.lower() not in {".h5", ".hdf5"} or replay_path.name != "replay.json":
+    source_name, replay_name = hdf_rows[0].get("path"), replay_rows[0].get("path")
+    if (not isinstance(source_name, str) or not Path(source_name).is_absolute()
+            or source_name != trial.get("source") or Path(source_name).suffix.lower() not in {".h5", ".hdf5"}):
         raise ValueError("Reference source identity or file type mismatch")
-    _verify_rows(rows, lambda path, role: (path == source and role == "expert_hdf5") or
-                 (path == replay_path and role == "explicit_task_demo_replay_selection"), provenance, signatures)
+    replay_path = _path(resolve_demo_path(replay_name, expected_sha256=replay_rows[0].get("sha256")))
+    demo_root = locate_demo_root(replay_path)
+    if demo_root is None and replay_path.is_relative_to(DEFAULT_DEMO_ROOT):
+        raise ValueError("Project task_demo requires migration_manifest.json; refusing a NAS fallback")
+    source = _path(resolve_demo_path(source_name, demo_root=demo_root,
+                                    expected_sha256=hdf_rows[0].get("sha256")))
+    if replay_path.name != "replay.json" or (demo_root is not None and not source.is_relative_to(demo_root)):
+        raise ValueError("Reference replay/source has no exact local task-demo mapping")
+    if ("local_path" in hdf_rows[0] and (demo_root is None or hdf_rows[0]["local_path"] != str(source))
+            or "resolved_source" in trial and trial["resolved_source"] != str(source)):
+        raise ValueError("Reference local source differs from its SHA-bound migration mapping")
+    migration_path = demo_root / "migration_manifest.json" if demo_root is not None else None
+    if migration_rows and (migration_path is None or migration_rows[0].get("path") != str(migration_path)):
+        raise ValueError("Reference migration manifest is not bound to the selected local replay")
+    normalized = [{**hdf_rows[0], "path": str(source)}, {**replay_rows[0], "path": str(replay_path)}, *migration_rows]
+    start = len(provenance)
+    _verify_rows(normalized, lambda path, role: (path == source and role == "expert_hdf5") or
+                 (path == replay_path and role == "explicit_task_demo_replay_selection") or
+                 (path == migration_path and role == "task_demo_migration_manifest"), provenance, signatures)
+    for row, original in zip(provenance[start:], (source_name, replay_name)):
+        if row["path"] != original:
+            row["original_path"] = original
+    if migration_path is not None and not migration_rows:
+        _json(migration_path, provenance, signatures, "task_demo_migration_manifest")
     replay = _json(replay_path, provenance, signatures, "progress_replay_metadata")
     if (replay.get("schema_version") != "kaihand-offline-multimodal-replay-v1" or replay.get("completed") is not True
-            or replay.get("task") != "whiteboard-wipe" or replay.get("source_hdf5") != str(source)
+            or replay.get("task") != "whiteboard-wipe" or replay.get("source_hdf5") != source_name
             or replay.get("source_sha256") != hdf_rows[0]["sha256"]):
         raise ValueError("Replay task/completion/HDF SHA256 binding mismatch")
     manifest = _json(report_path.parent.parent / "reference_manifest.json", provenance, signatures, "progress_reference_membership")
@@ -372,7 +397,7 @@ def load_reference_episode(reference_report_path: Path) -> dict:
     if not isinstance(members, list) or len(members) > 10000:
         raise ValueError("Invalid reference membership list")
     matching = [row for row in members if isinstance(row, dict) and row.get("trial_id") == trial["trial_id"]]
-    if len(matching) != 1 or matching[0].get("source") != str(source) or matching[0].get("observation_sha256") != hdf_rows[0]["sha256"]:
+    if len(matching) != 1 or matching[0].get("source") != source_name or matching[0].get("observation_sha256") != hdf_rows[0]["sha256"]:
         raise ValueError("Reference report is not a unique checksum-bound declared member")
     with h5py.File(source, "r") as file:
         if file.attrs.get("schema_version") != "kaihand_tactile_episode_v1":
@@ -424,8 +449,10 @@ def load_reference_episode(reference_report_path: Path) -> dict:
         progress_definition="Derived mean(1 - /whiteboard_wipe/ink_remaining, axis=1); not an archived cleaned_fraction field",
         progress_definition_note="Formula audited against current whiteboard source; historical policy-source binding and cross-scene equivalence remain unverified",
         selection_bias=manifest["selection_rule"], expert_role_evidence=manifest["declared_by"],
-        reference_id=manifest.get("reference_id"), source_hdf5=str(source),
+        reference_id=manifest.get("reference_id"), source_hdf5=source_name,
         membership_semantics="Explicit selection only; no expertise, outcome or compatibility inferred")
+    if str(source) != source_name:
+        episode["metadata"]["local_source_hdf5"] = str(source)
     warnings.append("单条成功筛选专家示范不构成专家总体分布或无偏成功率；进度定义关联不证明同场景、同动力学或因果关系。")
     _stable(signatures)
     return episode
